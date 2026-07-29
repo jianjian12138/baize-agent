@@ -1,0 +1,15 @@
+{
+  "current_stage": "需求分析",
+  "current_task": "初始化需求目录",
+  "current_cycle": "planning",
+  "retry_count": 0,
+  "max_retries": 3,
+  "last_failed_by": "",
+  "blocking_issues": [],
+  "evidence_paths": [],
+  "next_action": "补充需求文档",
+  "release_decision": "NEEDS_WORK",
+  "last_updated": null,
+  "checks": {},
+  "history": []
+}

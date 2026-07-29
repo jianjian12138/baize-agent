@@ -1,0 +1,10 @@
+[run]
+source = baize
+branch = True
+
+[report]
+show_missing = True
+exclude_lines =
+    pragma: no cover
+    if __name__ ==
+    raise SystemExit

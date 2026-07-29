@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "case_id": "{{REQUEST_KEY}}",
+  "case_name": "{{REQUEST_TITLE}}",
+  "date": "{{CURRENT_DATE}}",
+  "request_type": "{{REQUEST_TYPE}}",
+  "owner": "{{OWNER}}",
+  "mode": "picasso-dev-skill-v1",
+  "workflow_profile": {
+    "task_slice_minutes": "30-60",
+    "execution_loop": "dev->qa->ui->product->rework",
+    "evidence_first": true,
+    "default_release_decision": "NEEDS_WORK",
+    "max_dev_qa_retries": 3
+  },
+  "environment_policy": {
+    "boundary_mode": "local-only",
+    "allowed_runtime_profiles": [
+      "local",
+      "dev"
+    ],
+    "forbidden_runtime_profiles": [
+      "test",
+      "uat",
+      "prod"
+    ],
+    "doctor_commands": {
+      "docs": "bash install/doctor.sh --capability docs",
+      "dev": "bash install/doctor.sh --capability dev",
+      "db": "bash install/doctor.sh --capability db",
+      "deploy": "bash install/doctor.sh --capability deploy"
+    }
+  },
+  "runtime_orchestration": {
+    "auto_start_local_services": true,
+    "auto_stop_local_services": true,
+    "auto_fetch_access_token": true,
+    "ready_timeout_sec": 180,
+    "backend": {
+      "workdir": "${PICASSO_BACKEND_START_WORKDIR}",
+      "start_command": "${PICASSO_BACKEND_START_CMD}",
+      "base_url": "${PICASSO_BACKEND_BASE_URL}",
+      "health_url": "${PICASSO_BACKEND_HEALTH_URL}",
+      "expect_text": "${PICASSO_BACKEND_EXPECT_TEXT}"
+    },
+    "frontend": {
+      "workdir": "${PICASSO_FRONTEND_START_WORKDIR}",
+      "start_command": "${PICASSO_FRONTEND_START_CMD}",
+      "ready_url": "${PICASSO_FRONTEND_READY_URL}",
+      "expect_text": "${PICASSO_FRONTEND_EXPECT_TEXT}"
+    },
+    "auth": {
+      "api_prefix": "${PICASSO_API_PREFIX}",
+      "login_url": "${PICASSO_LOGIN_URL}",
+      "login_method": "${PICASSO_LOGIN_METHOD}",
+      "tenant_id": "${PICASSO_LOGIN_TENANT_ID}",
+      "tenant_header": "${PICASSO_LOGIN_TENANT_HEADER}",
+      "request_body_template": "${PICASSO_LOGIN_REQUEST_BODY_TEMPLATE}",
+      "token_path": "${PICASSO_LOGIN_TOKEN_PATH}"
+    }
+  },
+  "generation_policy": {
+    "default_bundle_only": true,
+    "default_total_files": 20,
+    "default_markdown_docs": 17,
+    "default_auxiliary_files": [
+      "manifest.json",
+      "stage-status.json",
+      "{{REQUEST_TITLE}}-冒烟测试脚本.sh"
+    ],
+    "instantiate_legacy_by_default": false
+  },
+  "entrypoints": {
+    "overview": "00-需求总览.md",
+    "requirement": "{{REQUEST_TITLE}}-需求文档.md",
+    "task_breakdown": "{{REQUEST_TITLE}}-任务分解.md",
+    "tech": "{{REQUEST_TITLE}}-技术方案.md",
+    "ui": "{{REQUEST_TITLE}}-UI交互设计规范.md",
+    "test": "{{REQUEST_TITLE}}-测试用例.md"
+  },
+  "control_docs": {
+    "traceability": [
+      "{{REQUEST_TITLE}}-实现控制总表.md"
+    ],
+    "acceptance": [
+      "{{REQUEST_TITLE}}-页面接口验收总表.md"
+    ],
+    "execution": [
+      "{{REQUEST_TITLE}}-开发放行报告.md",
+      "{{REQUEST_TITLE}}-覆盖率报告.md",
+      "{{REQUEST_TITLE}}-前端关键流程覆盖清单.md",
+      "{{REQUEST_TITLE}}-代码审查报告.md",
+      "{{REQUEST_TITLE}}-冒烟测试报告.md",
+      "{{REQUEST_TITLE}}-QA验收报告.md",
+      "{{REQUEST_TITLE}}-UI验收报告.md",
+      "{{REQUEST_TITLE}}-产品验收报告.md",
+      "{{REQUEST_TITLE}}-发布记录.md"
+    ]
+  },
+  "stage_docs": {
+    "dev_report": "{{REQUEST_TITLE}}-开发放行报告.md",
+    "coverage_report": "{{REQUEST_TITLE}}-覆盖率报告.md",
+    "fe_checklist": "{{REQUEST_TITLE}}-前端关键流程覆盖清单.md",
+    "review_report": "{{REQUEST_TITLE}}-代码审查报告.md",
+    "smoke_report": "{{REQUEST_TITLE}}-冒烟测试报告.md",
+    "smoke_script": "{{REQUEST_TITLE}}-冒烟测试脚本.sh",
+    "qa_report": "{{REQUEST_TITLE}}-QA验收报告.md",
+    "ui_acceptance_report": "{{REQUEST_TITLE}}-UI验收报告.md",
+    "product_acceptance_report": "{{REQUEST_TITLE}}-产品验收报告.md",
+    "release_report": "{{REQUEST_TITLE}}-发布记录.md"
+  },
+  "required_public_rules": [
+    "shared/references/requirements/README.md",
+    "shared/references/requirements/异步导入导出开发规范.md",
+    "shared/references/requirements/动态规则编码生成.md",
+    "shared/references/requirements/内部编码生成.md",
+    "shared/references/requirements/枚举类创建规范.md",
+    "shared/references/requirements/Codex CLI 标准执行输入.md"
+  ],
+  "platforms": {
+    "backend": true,
+    "pc": true,
+    "miniapp": false,
+    "mobile_app": false
+  }
+}

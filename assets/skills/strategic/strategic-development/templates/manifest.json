@@ -1,0 +1,20 @@
+{
+  "request_key": "",
+  "title": "",
+  "type": "new-feature|change-request|bugfix|ui-optimization",
+  "priority": "P0|P1|P2|P3",
+  "status": "draft|analysis|design|development|testing|acceptance|released",
+  "created_at": "",
+  "updated_at": "",
+  "platforms": ["backend", "pc", "miniapp", "mobile_app"],
+  "owner": "",
+  "assignee": "",
+  "due_date": "",
+  "milestones": {
+    "requirement": "",
+    "design": "",
+    "development": "",
+    "testing": "",
+    "release": ""
+  }
+}

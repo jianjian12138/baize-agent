@@ -1,0 +1,27 @@
+# Runtime state (generated locally, never committed)
+persistence/
+legacy/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+.coverage
+htmlcov/
+.coverage.*
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Example business projects (Agent-generated demos, not part of the engine).
+# Kept on local disk for reference; excluded from the delivered repo to stay lean.
+projects/
+
+# WorkBuddy project data (tool internals, not part of the deliverable)
+.workbuddy/
