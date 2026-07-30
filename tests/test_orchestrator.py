@@ -5,27 +5,9 @@ import json
 
 import pytest
 
-from baize.config import load_config
 from baize.llm import LLMClient
 from baize.orchestrator import Orchestrator, _extract_json
 from baize.tools import ToolRegistry
-
-
-@pytest.fixture()
-def env(tmp_path, monkeypatch):
-    persistence = tmp_path / "persistence"
-    assets = tmp_path / "assets"
-    (assets / "skills").mkdir(parents=True)
-    persistence.mkdir()
-    monkeypatch.setenv("BAIZE_WORKSPACE_DIR", str(tmp_path))
-    monkeypatch.setenv("BAIZE_PERSISTENCE_DIR", str(persistence))
-    monkeypatch.setenv("BAIZE_ASSETS_DIR", str(assets))
-    monkeypatch.setenv("BAIZE_INDEX_FILE", str(persistence / "skill_index.json"))
-    monkeypatch.setenv("BAIZE_SESSIONS_DIR", str(persistence / "sessions"))
-    monkeypatch.setenv("SKILL_LIBRARY_PATHS", "")
-    monkeypatch.setenv("BAIZE_MODEL_BASE_URL", "http://fake.local/v1")
-    monkeypatch.setenv("BAIZE_MODEL_NAME", "scripted")
-    return load_config()
 
 
 def scripted_client(cfg, replies):
@@ -57,7 +39,7 @@ def test_plan_fallback_when_director_rambles(env):
     orch = Orchestrator(cfg=env, client=client, registry=noop_registry())
     plan, _sid = orch.plan("build the thing")
     assert plan == [{"id": 1, "task": "build the thing",
-                     "verify": "manual review"}]
+                     "verify": "manual review", "checks": []}]
 
 
 def test_full_run_all_pass(env):

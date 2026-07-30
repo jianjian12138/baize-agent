@@ -81,8 +81,25 @@ def test_retries_exhausted(monkeypatch):
     def transport(url, headers, payload):
         raise urllib.error.URLError("down")
 
-    with pytest.raises(LLMError, match="failed after 2 attempts"):
+    with pytest.raises(LLMError, match="model call failed after 2 attempts"):
         make_client(transport).chat([{"role": "user", "content": "x"}])
+
+
+def test_arbitrary_transport_exception_is_retried_not_leaked(monkeypatch):
+    """Regression: a non-URLError exception used to escape and kill the run."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    attempts = {"n": 0}
+
+    class WeirdError(Exception):
+        pass
+
+    def transport(url, headers, payload):
+        attempts["n"] += 1
+        raise WeirdError("ssl handshake exploded")
+
+    with pytest.raises(LLMError, match="WeirdError"):
+        make_client(transport).chat([{"role": "user", "content": "x"}])
+    assert attempts["n"] == 2          # retried, not leaked on first failure
 
 
 def test_malformed_response():

@@ -32,6 +32,32 @@ _DEFAULTS = {
     "BAIZE_WORKSPACE_DIR": str(ROOT),    # tool sandbox root
     "BAIZE_ALLOW_OUTSIDE_WORKSPACE": "0",
     "BAIZE_SESSIONS_DIR": str(ROOT / "persistence" / "sessions"),
+    # --- V20 runtime ---
+    "BAIZE_PLUGINS_ENABLED": "1",
+    "BAIZE_OBSERVABILITY": "1",
+    "BAIZE_METRICS_PORT": "9090",
+    "BAIZE_MODEL_ROUTER": "",                 # JSON array of {name,base_url,api_key,weight} or empty
+    "BAIZE_RATE_LIMIT_RPM": "60",
+    "BAIZE_RATE_LIMIT_TPM": "60000",
+    "BAIZE_SERVE_HOST": "127.0.0.1",
+    "BAIZE_SERVE_PORT": "8787",
+    "BAIZE_VECTOR_BACKEND": "tfidf",         # tfidf | embedding(reserved)
+    "BAIZE_EMBEDDING_URL": "",               # reserved embedding endpoint
+    "BAIZE_DASHBOARD_HOST": "127.0.0.1",
+    "BAIZE_DASHBOARD_PORT": "8788",
+    "BAIZE_TEAM_MEMORY_BACKEND": "local",    # local | shared(reserved)
+    "BAIZE_VAULT_URL": "",                   # reserved secret backend
+    # --- V20 agent enhancement ---
+    "BAIZE_REFLECT_EVERY": "6",              # self-reflection every N steps (0=off)
+    "BAIZE_LOOP_DETECT_WINDOW": "3",         # identical tool-call repeats before warning
+    "BAIZE_CONTEXT_COMPRESS_CHARS": "60000", # compress old observations past this size
+    "BAIZE_MEMORY_COMPRESS_DAYS": "30",      # distill logs older than N days
+    # --- V20 engineering ---
+    "BAIZE_LOG_LEVEL": "INFO",               # DEBUG|INFO|WARNING|ERROR|CRITICAL
+    "BAIZE_LOG_FORMAT": "text",              # text | json
+    "BAIZE_CHAOS_ENABLED": "0",              # fault injection (testing only)
+    "BAIZE_CHAOS_FAILURE_RATE": "0.0",       # 0.0-1.0 probability
+    "BAIZE_CHAOS_SEED": "",                  # fixed seed = reproducible chaos
 }
 
 

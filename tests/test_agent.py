@@ -16,23 +16,6 @@ from baize.llm import LLMClient
 from baize.tools import ToolRegistry
 
 
-@pytest.fixture()
-def env(tmp_path, monkeypatch):
-    persistence = tmp_path / "persistence"
-    assets = tmp_path / "assets"
-    (assets / "skills").mkdir(parents=True)
-    persistence.mkdir()
-    monkeypatch.setenv("BAIZE_WORKSPACE_DIR", str(tmp_path))
-    monkeypatch.setenv("BAIZE_PERSISTENCE_DIR", str(persistence))
-    monkeypatch.setenv("BAIZE_ASSETS_DIR", str(assets))
-    monkeypatch.setenv("BAIZE_INDEX_FILE", str(persistence / "skill_index.json"))
-    monkeypatch.setenv("BAIZE_SESSIONS_DIR", str(persistence / "sessions"))
-    monkeypatch.setenv("SKILL_LIBRARY_PATHS", "")
-    monkeypatch.setenv("BAIZE_MODEL_BASE_URL", "http://fake.local/v1")
-    monkeypatch.setenv("BAIZE_MODEL_NAME", "scripted")
-    return load_config()
-
-
 def scripted_client(cfg, replies):
     """Build an LLMClient whose transport pops scripted assistant messages."""
     queue = list(replies)

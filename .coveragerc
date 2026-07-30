@@ -1,6 +1,10 @@
 [run]
 source = baize
 branch = True
+# Pure entry-point shim: `python -m baize` just calls cli.main(). Counting it
+# would inflate coverage noise without testing anything meaningful.
+omit =
+    baize/__main__.py
 
 [report]
 show_missing = True

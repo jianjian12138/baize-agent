@@ -20,4 +20,4 @@ Usage:
     python -m baize sessions [<session-id>]
 """
 
-__version__ = "19.0.0"
+__version__ = "20.0.0"

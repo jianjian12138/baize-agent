@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # The engine itself is stdlib-only; pytest is the only dev dependency.
+      - name: Install dev tooling
+        run: python -m pip install --upgrade pip pytest pytest-cov
+
+      - name: Verify zero runtime dependencies
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          stdlib = set(sys.stdlib_module_names)
+          bad = []
+          for f in pathlib.Path("baize").rglob("*.py"):
+              tree = ast.parse(f.read_text(encoding="utf-8"))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      mods = [a.name.split(".")[0] for a in node.names]
+                  elif isinstance(node, ast.ImportFrom):
+                      mods = [(node.module or "").split(".")[0]] if node.level == 0 else []
+                  else:
+                      continue
+                  for m in mods:
+                      if m and m not in stdlib and m != "baize":
+                          bad.append(f"{f}: {m}")
+          if bad:
+              print("Third-party imports found in runtime package:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("OK: baize/ imports stdlib only")
+          PY
+
+      - name: Doctor
+        run: python -m baize doctor
+
+      - name: Tests with coverage
+        run: python -m pytest tests/ -q --cov=baize --cov-report=term-missing --cov-report=xml
+
+      - name: Benchmarks
+        run: python -m baize bench
+
+      - name: Coverage threshold
+        shell: bash
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET, sys, os
+          rate = float(ET.parse("coverage.xml").getroot().get("line-rate", 0)) * 100
+          # 80% is the agreed floor. The engine is deliberately defensive: many
+          # branches are fail-closed paths (network/transport faults, sandbox
+          # escapes, model misconfiguration) that are hard to exercise in unit
+          # tests without resorting to mocks, and the entry-point shim
+          # (baize/__main__.py) is omitted from measurement.
+          threshold = float(os.environ.get("TEST_COVERAGE_THRESHOLD", "80"))
+          print(f"coverage {rate:.1f}% (threshold {threshold}%)")
+          sys.exit(0 if rate >= threshold else 1)
+          PY
+
+  install-smoke:
+    name: one-command install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bootstrap
+        run: python install/bootstrap.py
+
+      - name: CLI is usable after install
+        run: |
+          python -m baize --version
+          python -m baize doctor
+          python -m baize index build
+
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t baize:ci .
+      - name: Smoke test the image
+        run: |
+          docker run --rm baize:ci --version
+          docker run --rm baize:ci doctor

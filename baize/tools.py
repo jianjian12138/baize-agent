@@ -40,6 +40,10 @@ class ToolRegistry:
                  fn: Callable[..., str]) -> None:
         self._tools[name] = Tool(name, description, parameters, fn)
 
+    def unregister(self, name: str) -> None:
+        """Remove a previously registered tool (used at runtime and in tests)."""
+        self._tools.pop(name, None)
+
     def names(self) -> list[str]:
         return sorted(self._tools)
 
@@ -196,36 +200,46 @@ def _tool_save_skill(name: str, description: str, body_markdown: str) -> str:
     return f"skill saved and indexed -> {skill_file}"
 
 
+# Process-wide singleton. The agent loop, the orchestrator, and tools registered
+# via the tool_sdk decorator all consult this one registry, so a custom tool
+# registered anywhere is visible to every Agent/Orchestrator instance. Building
+# built-ins once (lazily) also keeps registration O(1) per call.
+_DEFAULT_REGISTRY: ToolRegistry | None = None
+
+
 def default_registry() -> ToolRegistry:
-    reg = ToolRegistry()
-    _s = lambda **props: {  # noqa: E731 - tiny schema helper
-        "type": "object",
-        "properties": props,
-        "required": [k for k, v in props.items() if not v.pop("_opt", False)],
-    }
-    reg.register("read_file", "Read a text file from the workspace.",
-                 _s(path={"type": "string"}), _tool_read_file)
-    reg.register("write_file", "Write/overwrite a text file in the workspace.",
-                 _s(path={"type": "string"}, content={"type": "string"}),
-                 _tool_write_file)
-    reg.register("list_dir", "List entries of a workspace directory.",
-                 _s(path={"type": "string", "_opt": True}), _tool_list_dir)
-    reg.register("bash", "Run a shell command inside the workspace "
-                 "(deny-list gated, 60s timeout).",
-                 _s(command={"type": "string"}), _tool_bash)
-    reg.register("search_skills", "Search the baize skill index by keyword.",
-                 _s(keyword={"type": "string"}), _tool_search_skills)
-    reg.register("load_skill", "Load the full SKILL.md content on demand "
-                 "(progressive disclosure).",
-                 _s(skill_file={"type": "string"}), _tool_load_skill)
-    reg.register("memory_recall", "Search persistent memory.",
-                 _s(keyword={"type": "string"},
-                    tags={"type": "string", "_opt": True}), _tool_memory_recall)
-    reg.register("memory_log", "Persist an event to memory.",
-                 _s(text={"type": "string"},
-                    tags={"type": "string", "_opt": True}), _tool_memory_log)
-    reg.register("save_skill", "Persist a newly learned reusable skill "
-                 "(self-evolving loop).",
-                 _s(name={"type": "string"}, description={"type": "string"},
-                    body_markdown={"type": "string"}), _tool_save_skill)
-    return reg
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        reg = ToolRegistry()
+        _s = lambda **props: {  # noqa: E731 - tiny schema helper
+            "type": "object",
+            "properties": props,
+            "required": [k for k, v in props.items() if not v.pop("_opt", False)],
+        }
+        reg.register("read_file", "Read a text file from the workspace.",
+                     _s(path={"type": "string"}), _tool_read_file)
+        reg.register("write_file", "Write/overwrite a text file in the workspace.",
+                     _s(path={"type": "string"}, content={"type": "string"}),
+                     _tool_write_file)
+        reg.register("list_dir", "List entries of a workspace directory.",
+                     _s(path={"type": "string", "_opt": True}), _tool_list_dir)
+        reg.register("bash", "Run a shell command inside the workspace "
+                     "(deny-list gated, 60s timeout).",
+                     _s(command={"type": "string"}), _tool_bash)
+        reg.register("search_skills", "Search the baize skill index by keyword.",
+                     _s(keyword={"type": "string"}), _tool_search_skills)
+        reg.register("load_skill", "Load the full SKILL.md content on demand "
+                     "(progressive disclosure).",
+                     _s(skill_file={"type": "string"}), _tool_load_skill)
+        reg.register("memory_recall", "Search persistent memory.",
+                     _s(keyword={"type": "string"},
+                        tags={"type": "string", "_opt": True}), _tool_memory_recall)
+        reg.register("memory_log", "Persist an event to memory.",
+                     _s(text={"type": "string"},
+                        tags={"type": "string", "_opt": True}), _tool_memory_log)
+        reg.register("save_skill", "Persist a newly learned reusable skill "
+                     "(self-evolving loop).",
+                     _s(name={"type": "string"}, description={"type": "string"},
+                        body_markdown={"type": "string"}), _tool_save_skill)
+        _DEFAULT_REGISTRY = reg
+    return _DEFAULT_REGISTRY

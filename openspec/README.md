@@ -11,11 +11,24 @@ openspec/
     baize-doctor/       环境门禁规格
     baize-skill-index/  技能索引规格
     baize-manifest/     流水线门禁规格
-    baize-memory/       持久记忆规格
-    baize-agent/        自主 Agent 循环规格（V19）
-    baize-llm/          模型无关客户端规格（V19）
-    baize-tools/        工具注册表与沙箱规格（V19）
-    baize-orchestrator/ 多 Agent 编排规格（V19）
+    baize-memory/       持久记忆规格（V20：新增长程压缩）
+    baize-agent/        自主 Agent 循环规格（V20：反思规划 + 长程压缩）
+    baize-llm/          模型无关客户端规格（V20：速率限制/退避 + 异常全捕获）
+    baize-tools/        工具注册表与沙箱规格（V20：SDK 单例注册表）
+    baize-orchestrator/ 多 Agent 编排规格（V20：Verifier 硬化）
+    # V20 新增规格
+    baize-vector/       向量检索规格（TF-IDF 默认，embedding 预留）
+    baize-rag/          RAG 检索增强 + 技能评分规格
+    baize-graph/        知识图谱三元组规格
+    baize-bench/        确定性基准套件规格
+    baize-ui/           TUI 进度规格
+    baize-dashboard/    Web 仪表盘 + REST 规格
+    baize-team-memory/  协作记忆白板规格
+    baize-observability/ 可观测性 + Prometheus 规格
+    baize-logging/      结构化日志 + 脱敏规格
+    baize-chaos/        混沌工程韧性规格
+    baize-config-schema/ 配置强类型校验规格
+    baize-plugin/       可插拔插件（验证钩子/指标）规格
 ```
 
 ## 工作流程

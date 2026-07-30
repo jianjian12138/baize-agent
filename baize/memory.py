@@ -109,6 +109,58 @@ def recall(query: str, cfg: dict | None = None, limit: int = 20,
     return hits[:limit]
 
 
+def compress(days: int | None = None, cfg: dict | None = None) -> dict:
+    """Long-term memory compression (V20).
+
+    Distills daily logs older than ``days`` into a compact summary appended to
+    notes.md (event count + tag histogram + up to 5 representative entries per
+    file), then deletes the old log files. Keeps memory bounded over months of
+    operation instead of growing forever.
+
+    Returns {"compressed_files": N, "events_distilled": M, "notes": path}.
+    """
+    cfg = cfg or load_config()
+    if days is None:
+        days = int(cfg.get("BAIZE_MEMORY_COMPRESS_DAYS", "30"))
+    p = _persistence_dir(cfg)
+    cutoff = time.strftime(
+        "%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    notes = p / "notes.md"
+    compressed_files = 0
+    events_distilled = 0
+
+    for log_file in sorted((p / "logs").glob("*.jsonl")):
+        day = log_file.stem                      # YYYY-MM-DD
+        if day >= cutoff:                        # string compare works for ISO dates
+            continue
+        records: list[dict] = []
+        for line in log_file.read_text(encoding="utf-8").splitlines():
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        if records:
+            tag_hist: dict[str, int] = {}
+            for r in records:
+                for t in r.get("tags", []):
+                    tag_hist[t] = tag_hist.get(t, 0) + 1
+            top_tags = ", ".join(
+                f"{t}x{n}" for t, n in
+                sorted(tag_hist.items(), key=lambda kv: -kv[1])[:6]) or "untagged"
+            samples = "; ".join(
+                str(r.get("text", ""))[:80] for r in records[:5])
+            with notes.open("a", encoding="utf-8") as f:
+                f.write(f"- [compressed {day}] {len(records)} events "
+                        f"({top_tags}). Samples: {samples}\n")
+            events_distilled += len(records)
+        log_file.unlink()
+        compressed_files += 1
+
+    return {"compressed_files": compressed_files,
+            "events_distilled": events_distilled,
+            "notes": str(notes)}
+
+
 def stats(cfg: dict | None = None) -> dict:
     """Real counts of what memory actually contains."""
     p = _persistence_dir(cfg)
