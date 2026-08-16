@@ -20,17 +20,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import __version__
 from . import dashboard
 from .agent import Agent, Session
+from .component import get_runtime
 from .config import load_config
 from .llm import LLMClient
 from .observability import obs
 from .orchestrator import Orchestrator
 from .plugin import registry
+from . import sessions as sessions_mod
+from . import bench as bench_mod
+from . import bench_public as bench_public_mod
+from . import gate as gate_mod
 
 MAX_BODY = 1 << 20  # 1 MiB
 
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # Assembled ONCE at server start (see serve()); consulted per-request so we
+    # never rebuild the kernel. Falls back to a fresh singleton if unset.
+    runtime = None
 
     def _send(self, code: int, obj) -> None:
         """Send a JSON body."""
@@ -64,8 +72,31 @@ class Handler(BaseHTTPRequestHandler):
             # Prometheus exposition format - plain text, NOT JSON-encoded
             return self._send_text(200, obs.prometheus(),
                                    "text/plain; version=0.0.4; charset=utf-8")
-        if self.path.startswith("/sessions"):
+        if self.path == "/bench":
+            return self._send(200, {
+                "bench": bench_mod.run_all(),
+                "public": bench_public_mod.coverage_report(),
+            })
+        if self.path == "/gate":
+            return self._send(200, gate_mod.run_gate())
+        if self.path == "/sessions" or self.path.startswith("/sessions?"):
             return self._send(200, {"sessions": Session.list_sessions()})
+        if self.path.startswith("/sessions/"):
+            sid = self.path[len("/sessions/"):]
+            if not sid or "/" in sid:
+                return self._send(400, {"error": "bad session id"})
+            try:
+                recs = sessions_mod._read_records(sid)
+            except FileNotFoundError:
+                return self._send(404, {"error": "session not found"})
+            lineage = sessions_mod.list_lineage().get(sid)
+            return self._send(200, {
+                "session_id": sid,
+                "messages": [r.get("message", r) for r in recs
+                             if r.get("kind") == "message"],
+                "fork_of": lineage.get("parent") if lineage else None,
+                "fork_at_index": lineage.get("at_index") if lineage else None,
+            })
         return self._send(404, {"error": "not found"})
 
     def do_HEAD(self):
@@ -90,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_run(data)
         if self.path == "/team":
             return self._handle_team(data)
+        if self.path == "/sessions/fork":
+            return self._handle_fork(data)
+        if self.path == "/sessions/compress":
+            return self._handle_compress(data)
         return self._send(404, {"error": "not found"})
 
     def _handle_run(self, data: dict) -> None:
@@ -128,6 +163,34 @@ class Handler(BaseHTTPRequestHandler):
             ],
         })
 
+    def _handle_fork(self, data: dict) -> None:
+        parent = (data.get("parent") or "").strip()
+        if not parent:
+            return self._send(400, {"error": "missing parent session id"})
+        raw = data.get("at_index")
+        at_index = None
+        if raw is not None and str(raw) != "":
+            try:
+                at_index = int(raw)
+            except (ValueError, TypeError):
+                return self._send(400, {"error": "at_index must be an integer"})
+        try:
+            new_id = sessions_mod.fork_session(parent, at_index)
+        except FileNotFoundError:
+            return self._send(404, {"error": "parent session not found"})
+        self._send(200, {"new_session_id": new_id, "fork_of": parent,
+                         "at_index": at_index})
+
+    def _handle_compress(self, data: dict) -> None:
+        sid = (data.get("id") or "").strip()
+        if not sid:
+            return self._send(400, {"error": "missing session id"})
+        try:
+            report = sessions_mod.compress_session(sid)
+        except FileNotFoundError:
+            return self._send(404, {"error": "session not found"})
+        self._send(200, report)
+
 
 def serve(host: str | None = None, port: int | None = None) -> None:
     """Start the service. Explicit host/port win over config defaults."""
@@ -138,6 +201,8 @@ def serve(host: str | None = None, port: int | None = None) -> None:
         registry.discover()
     except Exception:  # defensive: serving must not depend on plugins
         pass
+    # Assemble the composition kernel exactly once for the whole server lifetime.
+    Handler.runtime = get_runtime()
     httpd = ThreadingHTTPServer((host, port), Handler)
     print(f"baize serve listening on http://{host}:{port}  (Ctrl+C to stop)")
     try:

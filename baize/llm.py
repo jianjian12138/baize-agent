@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 import http.client
 from dataclasses import dataclass
-from random import choices
+from random import shuffle
 from typing import Callable, Iterator
 
 from .config import load_config
@@ -41,6 +41,7 @@ class ModelSpec:
     base_url: str
     api_key: str = ""
     weight: float = 1.0
+    provider: str = "openai"   # openai | anthropic | ollama
 
 
 class RateLimiter:
@@ -71,6 +72,16 @@ class RateLimiter:
             self._tokens.append((time.time(), tokens))
 
 
+def _infer_provider(base_url: str) -> str:
+    """Best-effort provider detection from the endpoint URL (zero deps)."""
+    u = (base_url or "").lower()
+    if "anthropic" in u or "claude" in u:
+        return "anthropic"
+    if "ollama" in u or ":11434" in u:
+        return "ollama"
+    return "openai"
+
+
 def _http_transport(url: str, headers: dict, payload: dict) -> dict:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -78,15 +89,124 @@ def _http_transport(url: str, headers: dict, payload: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# Provider adapters (request shape + response parsing). All use the same
+# urllib transport; only the JSON envelope differs. Zero third-party deps.
+# ---------------------------------------------------------------------------
+
+def _endpoint(spec: "ModelSpec") -> str:
+    if spec.provider == "anthropic":
+        return f"{spec.base_url.rstrip('/')}/v1/messages"
+    return f"{spec.base_url.rstrip('/')}/chat/completions"  # openai / ollama
+
+
+def _build_request(spec: "ModelSpec", messages: list[dict],
+                   tools: list[dict] | None, temperature: float | None) -> dict:
+    if spec.provider == "anthropic":
+        return _anthropic_request(spec, messages, tools, temperature)
+    return _openai_request(spec, messages, tools, temperature)
+
+
+def _openai_request(spec: "ModelSpec", messages: list[dict],
+                    tools: list[dict] | None, temperature: float | None) -> dict:
+    p: dict = {"model": spec.name, "messages": messages}
+    if tools:
+        p["tools"] = tools
+    if temperature is not None:
+        p["temperature"] = temperature
+    return p
+
+
+def _anthropic_request(spec: "ModelSpec", messages: list[dict],
+                       tools: list[dict] | None, temperature: float | None) -> dict:
+    sys_msgs = [m for m in messages
+                if m.get("role") == "system"
+                and isinstance(m.get("content"), str)]
+    convo = [{"role": m["role"], "content": m["content"]}
+             for m in messages if m.get("role") in ("user", "assistant")]
+    body: dict = {"model": spec.name, "max_tokens": 4096, "messages": convo}
+    if sys_msgs:
+        # P3-4: if a system block carries cache_control, render it as an
+        # Anthropic cacheable text block (enables prompt caching). Otherwise
+        # the legacy plain-string system field is preserved (no behavior change).
+        if any(m.get("cache_control") for m in sys_msgs):
+            body["system"] = [
+                {"type": "text", "text": m["content"],
+                 "cache_control": m["cache_control"]}
+                for m in sys_msgs
+            ]
+        else:
+            body["system"] = "\n\n".join(m["content"] for m in sys_msgs)
+    if tools:
+        body["tools"] = [_to_anthropic_tool(t) for t in tools]
+    if temperature is not None:
+        body["temperature"] = temperature
+    return body
+
+
+def _to_anthropic_tool(openai_tool: dict) -> dict:
+    fn = openai_tool.get("function", openai_tool)
+    return {"name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "input_schema": fn.get("parameters", {"type": "object", "properties": {}})}
+
+
+def _parse_response(raw: dict, provider: str = "openai") -> dict:
+    if provider == "anthropic":
+        return _anthropic_parse(raw)
+    return _openai_parse(raw)
+
+
+def _openai_parse(raw: dict) -> dict:
+    try:
+        choice = raw["choices"][0]
+        msg = choice["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMError(f"malformed model response: {exc}: "
+                       f"{str(raw)[:300]}") from exc
+    out = {"role": "assistant", "content": msg.get("content")}
+    if msg.get("tool_calls"):
+        out["tool_calls"] = msg["tool_calls"]
+    return out
+
+
+def _anthropic_parse(raw: dict) -> dict:
+    """Normalize an Anthropic /v1/messages response to our message shape."""
+    blocks = raw.get("content", [])
+    if not isinstance(blocks, list):
+        raise LLMError(f"malformed anthropic response: {str(raw)[:300]}")
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "text":
+            text_parts.append(b.get("text", ""))
+        elif b.get("type") == "tool_use":
+            tool_calls.append({
+                "id": b.get("id"),
+                "type": "function",
+                "function": {
+                    "name": b.get("name", ""),
+                    "arguments": json.dumps(b.get("input", {}), ensure_ascii=False),
+                },
+            })
+    out: dict = {"role": "assistant", "content": "".join(text_parts)}
+    if tool_calls:
+        out["tool_calls"] = tool_calls
+    return out
+
+
 def _http_stream_transport(url: str, headers: dict, payload: dict) -> Iterator[dict]:
     """Real SSE reader for OpenAI-style streaming chat completions."""
     parsed = urllib.parse.urlparse(url)
     payload = dict(payload, stream=True)
     body = json.dumps(payload).encode("utf-8")
-    port = 443 if parsed.scheme == "https" else 80
-    conn = http.client.HTTPSConnection(parsed.netloc, port, timeout=120) \
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    conn = http.client.HTTPSConnection(host, port, timeout=120) \
         if parsed.scheme == "https" else \
-        http.client.HTTPConnection(parsed.netloc, port, timeout=120)
+        http.client.HTTPConnection(host, port, timeout=120)
     try:
         conn.request("POST", parsed.path, body=body, headers=headers)
         resp = conn.getresponse()
@@ -127,11 +247,13 @@ class LLMClient:
         if router:
             try:
                 for m in json.loads(router):
+                    provider = m.get("provider") or _infer_provider(m["base_url"])
                     self.models.append(ModelSpec(
                         name=m["name"],
                         base_url=str(m["base_url"]).rstrip("/"),
                         api_key=m.get("api_key", ""),
                         weight=float(m.get("weight", 1)),
+                        provider=provider,
                     ))
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 obs.record_error("router_config_errors")
@@ -141,7 +263,9 @@ class LLMClient:
             name = self.cfg.get("BAIZE_MODEL_NAME", "")
             key = self.cfg.get("BAIZE_MODEL_API_KEY", "")
             if base and name:
-                self.models.append(ModelSpec(name, base, key))
+                provider = self.cfg.get("BAIZE_MODEL_PROVIDER") \
+                    or _infer_provider(base)
+                self.models.append(ModelSpec(name, base, key, provider=provider))
 
     @property
     def configured(self) -> bool:
@@ -151,27 +275,63 @@ class LLMClient:
     def model_count(self) -> int:
         return len(self.models)
 
-    def _select(self) -> ModelSpec:
-        if len(self.models) == 1:
-            return self.models[0]
-        return choices(self.models, weights=[m.weight for m in self.models], k=1)[0]
-
     @staticmethod
     def _headers(spec: ModelSpec) -> dict:
         h = {"Content-Type": "application/json"}
-        if spec.api_key:
+        if spec.provider == "anthropic":
+            if spec.api_key:
+                h["x-api-key"] = spec.api_key
+            h["anthropic-version"] = "2023-06-01"
+        elif spec.api_key:
             h["Authorization"] = f"Bearer {spec.api_key}"
         return h
 
     @staticmethod
     def _payload(spec: ModelSpec, messages: list[dict],
                  tools: list[dict] | None, temperature: float | None) -> dict:
-        p: dict = {"model": spec.name, "messages": messages}
-        if tools:
-            p["tools"] = tools
-        if temperature is not None:
-            p["temperature"] = temperature
-        return p
+        return _build_request(spec, messages, tools, temperature)
+
+    @staticmethod
+    def provider_capabilities(provider: str) -> dict:
+        """Declared capability of a provider (drives routing)."""
+        # All three adapters support streaming + tool calling through urllib.
+        return {"stream": True, "tools": True}
+
+    # --- P3-4: prompt-cache-friendly message shaping ----------------------
+    @staticmethod
+    def cache_prefix(system_prompt: str,
+                     tool_schemas: list[dict] | None = None) -> list[dict]:
+        from . import prompt_cache
+        return prompt_cache.cacheable_prefix(system_prompt, tool_schemas)
+
+    @staticmethod
+    def build_messages(system_prompt: str, tool_schemas: list[dict] | None,
+                       conversation: list[dict]) -> list[dict]:
+        from . import prompt_cache
+        return prompt_cache.build_cacheable_messages(
+            system_prompt, tool_schemas, conversation)
+
+    def _select(self, tools: list[dict] | None = None) -> list[ModelSpec]:
+        """Return models in priority order (every model tried exactly once).
+
+        When tools are requested and multiple models are configured, models
+        that lack tool support are deprioritized (excluded from the fallback
+        set so the run prefers a tool-capable endpoint). The remaining set is
+        shuffled WITHOUT replacement so each model appears exactly once across
+        the cross-model fallback loop (sampling with replacement could drop a
+        model entirely and break recovery).
+        """
+        specs = list(self.models)
+        if tools and len(specs) > 1:
+            capable = [s for s in specs
+                       if self.provider_capabilities(s.provider)["tools"]]
+            if capable:
+                specs = capable
+        if len(specs) == 1:
+            return specs
+        order = specs[:]
+        shuffle(order)
+        return order
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              temperature: float | None = None, stream: bool = False) -> dict | Iterator[dict]:
@@ -184,17 +344,22 @@ class LLMClient:
         if stream:
             return self._stream(messages, tools, temperature)
         last_err: Exception | None = None
-        for spec in self.models:  # cross-model fallback loop
+        cache_on = self.cfg.get("BAIZE_PROMPT_CACHE") == "1"
+        for spec in self._select(tools):  # cross-model fallback loop
             for attempt in range(self.max_retries + 1):
                 try:
                     self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
+                    req_msgs = messages
+                    if cache_on and spec.provider == "anthropic" and tools:
+                        from . import prompt_cache
+                        req_msgs = prompt_cache.mark_cacheable(messages, "anthropic")
                     raw = self.transport(
-                        f"{spec.base_url}/chat/completions",
+                        _endpoint(spec),
                         self._headers(spec),
-                        self._payload(spec, messages, tools, temperature),
+                        _build_request(spec, req_msgs, tools, temperature),
                     )
                     obs.inc("llm_calls")
-                    return self._parse_response(raw)
+                    return _parse_response(raw, spec.provider)
                 except Exception as exc:
                     # Deliberately broad. A transport is pluggable and the real
                     # HTTP stack raises a long tail (ssl.SSLError,
@@ -214,13 +379,19 @@ class LLMClient:
 
     def _stream(self, messages: list[dict], tools: list[dict] | None,
                 temperature: float | None) -> Iterator[dict]:
-        spec = self._select()
+        spec = self._select()[0]
+        # Anthropic SSE differs; we don't reimplement it here - fall back to a
+        # single non-streamed yield (honest: streaming reserved for openai/ollama).
+        if spec.provider == "anthropic":
+            full = self.chat(messages, tools, temperature, stream=False)
+            yield {"delta": full.get("content") or ""}
+            return
         self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
-        url = f"{spec.base_url}/chat/completions"
+        url = _endpoint(spec)
         try:
             for chunk in self.stream_transport(
                 url, self._headers(spec),
-                self._payload(spec, messages, tools, temperature),
+                _build_request(spec, messages, tools, temperature),
             ):
                 delta = chunk.get("choices", [{}])[0].get("delta", {})
                 if delta.get("content") is not None:

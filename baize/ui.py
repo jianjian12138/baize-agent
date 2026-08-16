@@ -21,7 +21,8 @@ import os
 import sys
 import time
 
-__all__ = ["supports_color", "Palette", "ProgressUI"]
+__all__ = ["supports_color", "Palette", "ProgressUI",
+           "render_fork_tree", "render_compress_report"]
 
 
 def supports_color(stream=None) -> bool:
@@ -140,3 +141,66 @@ class ProgressUI:
         filled = int(width * min(done, total) / total)
         return (f"[{'#' * filled}{'.' * (width - filled)}] "
                 f"{done}/{total}")
+
+
+# ---------------------------------------------------------------------------
+# P2-4: session fork tree + compression report (text renderers)
+# ---------------------------------------------------------------------------
+
+
+def render_fork_tree(lineage: dict, palette: Palette | None = None) -> str:
+    """Render the session fork lineage as an ASCII tree.
+
+    ``lineage`` maps child_id -> {parent, at_index, created_at}. The oldest
+    ancestors (no parent pointing at them) start each branch.
+    """
+    p = palette or Palette(enabled=False)
+    children_ids = {cid for cid, meta in lineage.items() if meta.get("parent")}
+    roots = [cid for cid in lineage if cid not in children_ids] or list(lineage)
+    children: dict = {}
+    for cid, meta in lineage.items():
+        par = meta.get("parent")
+        if par:
+            children.setdefault(par, []).append(cid)
+
+    lines: list[str] = [p.paint("bold", "会话分叉树")]
+    seen: set[str] = set()
+
+    def walk(cid: str, prefix: str) -> None:
+        if cid in seen:
+            return
+        seen.add(cid)
+        meta = lineage.get(cid, {})
+        at = meta.get("at_index")
+        fork_tag = f" (fork @#{at})" if at is not None else ""
+        lines.append(f"{prefix}{p.paint('cyan', cid)}{fork_tag}")
+        for child in children.get(cid, []):
+            walk(child, prefix + "  ├─ ")
+
+    for root in roots:
+        walk(root, "└─ ")
+    if not lineage:
+        lines.append(p.paint("dim", "(暂无分叉)"))
+    return "\n".join(lines)
+
+
+def render_compress_report(report: dict, palette: Palette | None = None) -> str:
+    """Render a compress_session() report as readable text."""
+    p = palette or Palette(enabled=False)
+    s = report.get("summary", {})
+    rows = [
+        f"{p.paint('bold', '会话 ' + str(report.get('session_id')))}",
+        f"  压缩前 tokens : {report.get('before_tokens')}",
+        f"  压缩后 tokens : {report.get('after_tokens')}",
+        (f"  节省 tokens   : {p.paint('green', str(report.get('saved_tokens')))}"
+         f"  (比率 {report.get('compression_ratio')})"),
+        (f"  保留消息      : {report.get('retained_messages')}"
+         f" / {s.get('total_messages')}"),
+        f"  角色分布      : {s.get('roles')}",
+        f"  目标          : {', '.join(s.get('goals', [])) or '无'}",
+        f"  工具调用      : {', '.join(s.get('tool_calls', [])) or '无'}",
+        (f"  Verifier 结论 : "
+         f"{p.paint('magenta', ' | '.join(s.get('verdicts', [])) or '无')}"),
+        f"  错误数        : {s.get('errors')}",
+    ]
+    return "\n".join(rows)

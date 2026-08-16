@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from .config import load_config
+from .logging_setup import redact
 
 
 def _persistence_dir(cfg: dict | None = None) -> Path:
@@ -31,7 +32,7 @@ def log_event(text: str, tags: list[str] | None = None,
     log_file = p / "logs" / f"{day}.jsonl"
     record = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "text": text,
+        "text": redact(text),
         "tags": tags or [],
     }
     with log_file.open("a", encoding="utf-8") as f:
@@ -45,7 +46,7 @@ def remember(text: str, cfg: dict | None = None) -> Path:
     notes = p / "notes.md"
     stamp = time.strftime("%Y-%m-%d")
     with notes.open("a", encoding="utf-8") as f:
-        f.write(f"- [{stamp}] {text}\n")
+        f.write(f"- [{stamp}] {redact(text)}\n")
     return notes
 
 
@@ -148,7 +149,7 @@ def compress(days: int | None = None, cfg: dict | None = None) -> dict:
                 f"{t}x{n}" for t, n in
                 sorted(tag_hist.items(), key=lambda kv: -kv[1])[:6]) or "untagged"
             samples = "; ".join(
-                str(r.get("text", ""))[:80] for r in records[:5])
+                redact(str(r.get("text", ""))[:80]) for r in records[:5])
             with notes.open("a", encoding="utf-8") as f:
                 f.write(f"- [compressed {day}] {len(records)} events "
                         f"({top_tags}). Samples: {samples}\n")

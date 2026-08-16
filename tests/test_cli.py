@@ -224,3 +224,236 @@ def test_cli_sessions_list_and_show(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert rc == 1
     assert "not found" in out
+
+
+# ---------------------------------------------------------------------------
+# Coverage expansion: index / memory / rag / team-memory / bench / serve /
+# plugins edge paths + defensive "unknown action" branches (argparse-guarded,
+# so they are exercised by calling the cmd_* handler directly).
+# ---------------------------------------------------------------------------
+from dataclasses import dataclass  # noqa: E402
+
+from baize.cli import (cmd_index, cmd_memory, cmd_rag,  # noqa: E402
+                       cmd_team_memory)
+from baize.team_memory import TeamMemory  # noqa: E402
+
+
+def test_cli_index_search_no_keyword(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    rc = main(["index", "search"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "usage" in out
+
+
+def test_cli_index_search_no_hits(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    rc = main(["index", "search", "zzz-no-such-skill"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "no skills matched" in out
+
+
+def test_cli_index_unknown_action(capsys):
+    class A:
+        action = "frobnicate"
+    rc = cmd_index(A())
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "unknown index action" in out
+
+
+def test_cli_memory_compress(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    rc = main(["memory", "compress", "--days", "5"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "days" in out or "compressed" in out or "kept" in out
+
+
+def test_cli_memory_unknown_action(capsys):
+    class A:
+        action = "bogus"
+        text = ""
+        tags = ""
+        days = 0
+    rc = cmd_memory(A())
+    assert rc == 2
+
+
+def test_cli_rag_search_no_query(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    rc = main(["rag", "search"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "usage" in out
+
+
+def test_cli_rag_search_no_hits(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("baize.rag.retrieve", lambda q, top_k=5: [])
+    rc = main(["rag", "search", "anything"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "no context matched" in out
+
+
+def test_cli_rag_search_hits(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("baize.rag.retrieve", lambda q, top_k=5: [
+        {"score": 0.91, "meta": {"name": "skill-x", "kind": "skill"}}])
+    rc = main(["rag", "search", "anything"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "skill-x" in out
+
+
+def test_cli_rag_scores(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("baize.rag.skill_scores", lambda: {"demo": 0.5})
+    rc = main(["rag", "scores"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "demo" in out
+
+
+def test_cli_rag_unknown_action(capsys):
+    class A:
+        action = "bogus"
+        query = ""
+        top_k = 5
+    rc = cmd_rag(A())
+    assert rc == 2
+
+
+def test_cli_team_memory_show_empty(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    rc = main(["team-memory", "show"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "empty" in out
+
+
+def test_cli_team_memory_lifecycle(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    tm = TeamMemory(team_id="cli-test")
+    tm.post("executor", "found a bug", tags=["finding"])
+    rc = main(["team-memory", "show", "cli-test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "found a bug" in out
+
+    rc = main(["team-memory", "stats", "cli-test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "notes" in out
+
+    rc = main(["team-memory", "clear", "cli-test"])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    rc = main(["team-memory", "show", "cli-test"])
+    out = capsys.readouterr().out
+    assert rc == 1
+
+
+def test_cli_team_memory_unavailable(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("BAIZE_TEAM_MEMORY_BACKEND", "shared")
+    rc = main(["team-memory", "show"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "unavailable" in out
+
+
+def test_cli_team_memory_unknown_action(capsys):
+    class A:
+        action = "bogus"
+        team_id = "default"
+    rc = cmd_team_memory(A())
+    assert rc == 2
+
+
+def test_cli_bench(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    rc = main(["bench"])
+    out = capsys.readouterr().out
+    assert rc in (0, 1)
+    assert "benchmarks passed" in out
+
+
+def test_cli_serve(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    called = {}
+
+    def fake_serve(host=None, port=None):
+        called["host"] = host
+        called["port"] = port
+
+    monkeypatch.setattr("baize.cli.serve_mod.serve", fake_serve)
+    rc = main(["serve", "--host", "127.0.0.1", "--port", "9999"])
+    assert rc == 0
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 9999
+
+
+class _FakePlugin:
+    def __init__(self, name):
+        self.name = name
+
+
+def test_cli_plugins_empty(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("baize.cli.registry.plugins", [])
+    monkeypatch.setattr("baize.cli.registry.discover", lambda: 0)
+    rc = main(["plugins"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0 plugins" in out
+
+
+def test_cli_plugins_loaded(tmp_path, capsys, monkeypatch):
+    _make_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("baize.cli.registry.plugins", [_FakePlugin("demo")])
+    monkeypatch.setattr("baize.cli.registry.discover", lambda: 3)
+    rc = main(["plugins"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "demo" in out
+
+
+@dataclass
+class _FakeSubtaskReport:
+    task_id: int = 1
+    task: str = "do X"
+    verdict: str = "fail"
+    issues: list = None
+    retried: bool = True
+
+
+@dataclass
+class _FakeOrchResult:
+    success: bool = False
+    session_ids: list = None
+    reports: list = None
+
+
+def test_cli_team_with_issues(tmp_path, capsys, monkeypatch):
+    _make_agent_env(tmp_path, monkeypatch)
+
+    class FakeOrch:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, goal):
+            return _FakeOrchResult(
+                success=False, session_ids=["s1"],
+                reports=[_FakeSubtaskReport(issues=["issue-a", "issue-b"])])
+
+    monkeypatch.setattr("baize.cli.Orchestrator", FakeOrch)
+    rc = main(["team", "goal with failure"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "issue-a" in out
+    assert "issue-b" in out
+    assert "(retried)" in out

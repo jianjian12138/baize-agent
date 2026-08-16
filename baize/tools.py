@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import ROOT, load_config
+from .logging_setup import redact
 from . import memory as memory_mod
 from . import skill_index
 
@@ -74,9 +75,18 @@ class ToolRegistry:
 # ---------------------------------------------------------------------------
 
 DENY_PATTERNS = [
+    # --- original patterns ---
     r"\brm\s+-rf\s+/", r"\brm\s+-rf\s+[A-Za-z]:", r"\bformat\b",
     r"\bmkfs\b", r"\bdel\s+/s\b", r"\bshutdown\b", r"\breboot\b",
     r">\s*/dev/sd", r"\bdd\s+if=",
+    # --- bypass closures (V21 P0-1, expert review) ---
+    r"--no-preserve-root",                 # defeats `rm -rf /`
+    r"\brm\s+-rf\s+~",                     # rm -rf $HOME
+    r"\brm\s+-rf\s+\$HOME",                # rm -rf $HOME (expanded later)
+    r"\brm\s+-rf\s+/home",                 # rm -rf /home/*
+    r"\bdd\s",                             # dd if= or dd of= (disk wipe)
+    r":\(\)\s*\{.*\|:",                    # fork bomb  :(){ :|:& };:
+    r"\b(?:curl|wget)\b[^\n|]*\|[^\n]*(?:sh|bash)\b",  # curl|sh / wget|bash
 ]
 
 
@@ -142,14 +152,64 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
     ok, reason = command_allowed(command)
     if not ok:
         return f"ERROR: command rejected - {reason}"
+    cfg = load_config()
+    workspace = str(_workspace_root(cfg))
+    if cfg.get("BAIZE_SANDBOX_ENABLED", "0") == "1":
+        # Honor a custom sandbox component (BAIZE_COMPONENTS) without editing
+        # agent.py; default path returns the same sandbox.run result.
+        from . import component
+        result = component.resolve_sandbox(
+            command, cwd=workspace, timeout=timeout, cfg=cfg)
+        out = (result.stdout or "") + (
+            ("\n[stderr]\n" + result.stderr) if result.stderr else "")
+        out = redact(out)
+        prefix = "[sandbox: degraded to logical-only] " if result.degraded else ""
+        return prefix + f"exit={result.returncode}\n{out[:8000]}"
     try:
         proc = subprocess.run(
             command, shell=True, capture_output=True, text=True,
-            timeout=timeout, cwd=str(_workspace_root()),
+            timeout=timeout, cwd=workspace,
             encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return f"ERROR: command timed out after {timeout}s"
     out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+    out = redact(out)
+    return f"exit={proc.returncode}\n{out[:8000]}"
+
+
+# Safe-subset git primitive (V21 P0-1). Executed with shell=False so there is
+# no shell-injection surface; only a whitelist of read/commit ops is permitted,
+# and option injection (e.g. `-c`, `--exec-path`) is rejected. Confined to the
+# workspace by cwd. This makes karpathy_coding's "Git 纯净化" programmatic.
+_GIT_ALLOWED = ("status", "add", "commit", "diff", "log", "show", "branch",
+                "tag", "mv", "restore", "stash")
+
+
+def _tool_git(args: str, timeout: int = 60) -> str:
+    tokens = args.split()
+    if not tokens:
+        return "ERROR: git requires a subcommand"
+    sub = tokens[0]
+    if sub not in _GIT_ALLOWED:
+        return (f"ERROR: git subcommand '{sub}' not permitted "
+                f"(allowed: {', '.join(_GIT_ALLOWED)})")
+    # Reject option injection that could alter git's execution environment.
+    for tok in tokens[1:]:
+        if (tok == "-c" or tok.startswith("--upload-pack") or
+                tok.startswith("--receive-pack") or tok.startswith("--exec") or
+                "core.pager" in tok):
+            return f"ERROR: git option injection blocked: {tok}"
+    cfg = load_config()
+    workspace = str(_workspace_root(cfg))
+    try:
+        proc = subprocess.run(
+            ["git", *tokens], shell=False, capture_output=True, text=True,
+            timeout=timeout, cwd=workspace,
+            encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        return f"ERROR: git timed out after {timeout}s"
+    out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+    out = redact(out)
     return f"exit={proc.returncode}\n{out[:8000]}"
 
 
@@ -182,6 +242,35 @@ def _tool_memory_log(text: str, tags: str = "") -> str:
     tag_list = [t for t in tags.split(",") if t]
     path = memory_mod.log_event(text, tag_list)
     return f"logged -> {path}"
+
+
+def _tool_run_skill(name: str, steps_json: str = "[]",
+                    verify_json: str = "[]",
+                    dependencies_json: str = "[]") -> str:
+    """Execute a learned/declared skill via the honest self-evolution loop.
+
+    Parses a structured skill draft, gates it through ``verify_skill_draft``
+    (rejects low-quality drafts), runs its steps through the real tool
+    registry, verifies, and records the *actual* outcome via
+    ``rag.record_skill_outcome``. This is the real call site the self-evolution
+    metrics depend on - no success is ever assumed.
+    """
+    try:
+        steps = json.loads(steps_json)
+        verify = json.loads(verify_json)
+        deps = json.loads(dependencies_json)
+    except json.JSONDecodeError as e:
+        return f"ERROR: invalid JSON in skill args: {e}"
+    draft = {"name": name, "steps": steps, "verify": verify,
+             "dependencies": deps}
+    from .skill_runner import verify_skill_draft, SkillRunner
+    ok, reasons = verify_skill_draft(draft)
+    if not ok:
+        return "ERROR: skill draft rejected: " + "; ".join(reasons)
+    runner = SkillRunner(cfg=load_config())
+    res = runner.run(draft)
+    return (f"skill '{name}' executed: success={res['success']} "
+            f"evidence={res['evidence']}")
 
 
 def _tool_save_skill(name: str, description: str, body_markdown: str) -> str:
@@ -226,6 +315,10 @@ def default_registry() -> ToolRegistry:
         reg.register("bash", "Run a shell command inside the workspace "
                      "(deny-list gated, 60s timeout).",
                      _s(command={"type": "string"}), _tool_bash)
+        reg.register("git", "Run a restricted, safe-subset git command inside "
+                     "the workspace (shell=False, whitelist only).",
+                     _s(args={"type": "string"},
+                        timeout={"type": "integer", "_opt": True}), _tool_git)
         reg.register("search_skills", "Search the baize skill index by keyword.",
                      _s(keyword={"type": "string"}), _tool_search_skills)
         reg.register("load_skill", "Load the full SKILL.md content on demand "
@@ -241,5 +334,12 @@ def default_registry() -> ToolRegistry:
                      "(self-evolving loop).",
                      _s(name={"type": "string"}, description={"type": "string"},
                         body_markdown={"type": "string"}), _tool_save_skill)
+        reg.register("run_skill", "Execute a declared skill through the honest "
+                     "self-evolution loop (verify + record outcome).",
+                     _s(name={"type": "string"},
+                        steps_json={"type": "string", "_opt": True},
+                        verify_json={"type": "string", "_opt": True},
+                        dependencies_json={"type": "string", "_opt": True}),
+                     _tool_run_skill)
         _DEFAULT_REGISTRY = reg
     return _DEFAULT_REGISTRY

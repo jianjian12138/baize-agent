@@ -1,4 +1,4 @@
-# AGENT.md — Baize Agent 操作协议 V19.0.0
+# AGENT.md — Baize Agent 操作协议 V22.0.0
 
 本协议适用于两类使用者：
 - **外部 AI 客户端**（Claude Code / Codex / WorkBuddy 等）接入本仓库时；
@@ -77,3 +77,21 @@ manifest 门禁通过 `bash` 工具执行 `python -m baize manifest validate <pa
 3. `python -m baize memory log "<本次完成事项>"`；重要结论另行 `remember`。
 4. baize Agent 会话转录自动保存在 `persistence/sessions/*.jsonl`，
    可用 `python -m baize sessions <id>` 审计，`--resume <id>` 续跑。
+
+## 7. V22 插件化架构（可选扩展，不破零依赖与 fail-closed）
+
+V22 引入统一组件契约 + 组合内核，把每个核心单元（model / tool / skill / session /
+sandbox / loop / scheduler / ui / storage）描述成可配置的组件，由 `CompositionKernel`
+从 `BAIZE_COMPONENTS` 装配。**默认行为不变**；仅当你显式要替换某内置单元时才介入。
+
+- **组件（Component）**：一份 `KIND` + `build(cfg)` 工厂契约，实例需满足对应 `Protocol`。
+  写自定义组件三步：声明 `KIND` → 方法签名符合协议 → 提供 `build` 工厂。
+  完整最小可运行示例与注册方式见 **[教程 08 · 写一个 baize 组件](../docs/tutorials/08-写一个baize组件.md)**。
+- **两套隔离语义（关键）**：
+  - 经 `BAIZE_COMPONENTS` 的**显式覆盖**构建/类型失败 → **整体 fail-closed，启动阻断**（绝不静默降级到内置）；
+  - `baize/plugins/` + `BAIZE_PLUGINS_DIR` 的**自动发现**组件失败 → **记录 + 跳过**，host 不崩（**绝不默认可信**）。
+- **命名模式 = 组件集**：`BAIZE_MODE` ∈ {`coding`/`eval`/`autonomous`/`safe-review`}
+  是预设的（组件集 + 自治级别 + 工具 allow-list + plan_mode）配置 bundle；
+  显式 `BAIZE_MODE` **优先于标量自治滑块**，未指定时回退滑块。
+- **诚实自检**：扩展后跑 `python -m baize gate`，门禁会真实装配默认 runtime、校验 9 类
+  `Protocol`、验证 4 种模式 bundle，并复测覆盖率（≥85%）——不假绿。

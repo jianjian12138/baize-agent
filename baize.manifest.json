@@ -1,0 +1,159 @@
+{
+  "project": "baize-agent",
+  "version": "22.1.0",
+  "phases": [
+    {
+      "id": "V68",
+      "name": "Hooks 生命周期事件体系",
+      "status": "done",
+      "evidence": ["baize/hooks.py", "tests/test_hooks.py"]
+    },
+    {
+      "id": "V69",
+      "name": "MCP 客户端（纯 stdlib）",
+      "status": "done",
+      "evidence": ["baize/mcp.py", "tests/test_mcp.py"]
+    },
+    {
+      "id": "V70",
+      "name": "子 Agent 声明格式 + 隔离",
+      "status": "done",
+      "evidence": ["baize/subagent.py", "tests/test_subagent.py"]
+    },
+    {
+      "id": "V71",
+      "name": "诚实技能自进化（rubric 门 + SkillRunner）",
+      "status": "done",
+      "evidence": ["baize/skill_runner.py", "tests/test_skill_runner.py"]
+    },
+    {
+      "id": "V72",
+      "name": "Plan Mode + 自治滑块（成本上限降级）",
+      "status": "done",
+      "evidence": ["baize/autonomy.py", "tests/test_autonomy.py"]
+    },
+    {
+      "id": "V73",
+      "name": "多 Provider 模型广度（OpenAI/Anthropic/Ollama）",
+      "status": "done",
+      "evidence": ["baize/llm.py", "tests/test_multi_provider.py"]
+    },
+    {
+      "id": "V74",
+      "name": "Automations 定时任务（stdlib 调度）",
+      "status": "done",
+      "evidence": ["baize/automations.py", "tests/test_automations.py"]
+    },
+    {
+      "id": "V75",
+      "name": "会话分叉/压缩 UI 增强",
+      "status": "done",
+      "evidence": ["baize/sessions.py", "baize/serve.py", "baize/dashboard.py", "tests/test_sessions.py"]
+    },
+    {
+      "id": "V76",
+      "name": "公开基准 + 本地 bench（真实端到端）",
+      "status": "done",
+      "evidence": ["baize/bench.py", "baize/bench_public.py", "tests/test_bench.py"]
+    },
+    {
+      "id": "V77",
+      "name": "上下文/长程管理增强（证据保全 + 热温冷分层）",
+      "status": "done",
+      "evidence": ["baize/context.py", "baize/agent.py", "tests/test_context.py"]
+    },
+    {
+      "id": "V78",
+      "name": "NO FAKE DONE 门禁产品化（cli gate / 徽标 / manifest 校验）",
+      "status": "done",
+      "evidence": ["baize/gate.py", "baize/cli.py", "baize/serve.py", "baize/dashboard.py", "tests/test_gate.py"]
+    },
+    {
+      "id": "V79",
+      "name": "prompt cache 友好 + token 效率",
+      "status": "done",
+      "evidence": ["baize/prompt_cache.py", "baize/llm.py", "tests/test_prompt_cache.py"]
+    },
+    {
+      "id": "V47",
+      "name": "早期验收规划-读文档（由 #68-#79 实质覆盖收口）",
+      "status": "done",
+      "evidence": ["docs/baize-agent-P1-P3实施计划.md", "baize/hooks.py"]
+    },
+    {
+      "id": "V48",
+      "name": "早期验收规划-读源码（由 #68-#79 实质覆盖收口）",
+      "status": "done",
+      "evidence": ["baize/agent.py", "baize/orchestrator.py"]
+    },
+    {
+      "id": "V49",
+      "name": "早期验收规划-运行验证（全量 406 tests + 诚实门禁覆盖）",
+      "status": "done",
+      "evidence": ["tests/test_subagent.py", "tests/test_automations.py", "tests/test_sessions.py"]
+    },
+    {
+      "id": "V50",
+      "name": "早期验收规划-验收意见（诚实门禁 + 覆盖率诚实门禁收口）",
+      "status": "done",
+      "evidence": ["baize/gate.py", "scripts/coverage_gate.py"]
+    },
+    {
+      "id": "V95",
+      "name": "V22-0 统一插件契约 + 组合内核",
+      "status": "done",
+      "evidence": ["baize/component.py", "tests/test_component.py", "baize/config_schema.py"]
+    },
+    {
+      "id": "V96",
+      "name": "V22-1 Agent Loop 抽成可替换策略",
+      "status": "done",
+      "evidence": ["baize/agent.py", "baize/modes.py", "tests/test_modes.py"]
+    },
+    {
+      "id": "V97",
+      "name": "V22-2 命名模式 = 插件集（mode = component-set）",
+      "status": "done",
+      "evidence": ["baize/modes.py", "tests/test_modes.py"]
+    },
+    {
+      "id": "V98",
+      "name": "V22-3 沙箱 / 存储 / UI 统一暴露为组件",
+      "status": "done",
+      "evidence": ["baize/component.py", "baize/tools.py"]
+    },
+    {
+      "id": "V99",
+      "name": "V22-4 组件发现 / 市场机制增强（严格隔离）",
+      "status": "done",
+      "evidence": ["baize/plugin.py", "tests/test_plugin_discovery.py"]
+    },
+    {
+      "id": "V100",
+      "name": "V22-5 文档 / 规格升级 + 写一个 baize component 教程",
+      "status": "done",
+      "evidence": ["docs/tutorials/08-写一个baize组件.md", "examples/logged_sandbox.py", "README.md", "AGENT.md", "SKILL.md", "openspec/specs/baize-agent/spec.md"]
+    },
+    {
+      "id": "V101",
+      "name": "V22-6 测试验证 + 诚实门禁收口",
+      "status": "done",
+      "evidence": ["baize/gate.py", "baize/bench.py", "tests/test_component.py", "tests/test_modes.py", "tests/test_config_schema.py", "tests/test_plugin_discovery.py"]
+    },
+    {
+      "id": "V102",
+      "name": "V22-7 根基加固 F1-F5（信任边界 + 配置校验 + 门禁真实实例化 + 内核接线 + 覆盖率）",
+      "status": "done",
+      "evidence": [
+        "baize/component.py",
+        "baize/config_schema.py",
+        "baize/gate.py",
+        "baize/agent.py",
+        "tests/test_component.py",
+        "tests/test_plugin_discovery.py",
+        "tests/test_config_schema.py",
+        "tests/test_f5_gap.py"
+      ]
+    }
+  ]
+}

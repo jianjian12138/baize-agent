@@ -1,4 +1,4 @@
-# Baize Engine (白泽引擎) V20.0.0
+# Baize Engine (白泽引擎) V22.0.0
 
 一套面向 AI Agent 的**白盒工程化研发操作系统**：**方法论技能包 + 真实 Agent 运行时** 双层架构。
 V20 在 V19「规约 + 校验工具 + 自主运行时」基础上，吸收 hermes-agent（自主循环 / 模型无关客户端 /
@@ -37,12 +37,20 @@ V20 在 V19「规约 + 校验工具 + 自主运行时」基础上，吸收 herme
 │    ui           TUI 进度渲染（阶段/工具/反思/计划）       │
 │    dashboard + serve  Web 仪表盘 + REST 服务             │
 │                                                          │
+│  ◆ 组合内核（V22 新增）                                 │
+│    component     统一组件契约 + CompositionKernel        │
+│                  （9 类 Kind，配置驱动装配，fail-closed） │
+│    modes         命名模式 = 组件集                       │
+│                  （coding/eval/autonomous/safe-review，   │
+│                   显式 BAIZE_MODE 优先于标量滑块）        │
+│                                                          │
 │  ◆ 工程化（V20 新增）                                   │
 │    observability  span+指标+Prometheus 导出              │
 │    logging_setup  结构化 JSON 日志 + 脱敏                │
 │    chaos         故障注入韧性验证                        │
-│    plugin        可插拔验证钩子 / 指标插件               │
-│    config_schema 强类型配置校验                           │
+│    plugin        钩子体系 + 组件自动发现                 │
+│                  （防御性隔离，绝不默认可信）             │
+│    config_schema 强类型配置校验（含 BAIZE_COMPONENTS）    │
 │                                                          │
 │  ◆ 校验与记忆（保留并增强）                              │
 │    doctor       环境门禁（真实探测，真实退出码）          │
@@ -89,20 +97,26 @@ python -m baize memory compress --days 30
 
 # 9. 运行测试
 python -m pytest tests/
+
+# 10. 插件化扩展（V22）：自定义组件经 BAIZE_COMPONENTS 注册，无需改调用点
+#     教程：docs/tutorials/08-写一个baize组件.md
+export BAIZE_COMPONENTS="your_module:YourComponent"   # 可选，显式覆盖内置单元
+python -m baize gate          # 诚实门禁：真实装配 + 协议校验 + 覆盖率
 ```
 
 ## 目录结构
 
 | 目录 | 职责 |
 |------|------|
-| `baize/` | 运行时 26 模块（零第三方依赖） |
-| `tests/` | 真实测试套件（144 个 pytest，脚本化 transport 驱动） |
+| `baize/` | 运行时 40+ 模块（纯 stdlib，含 V22 组合内核 `component` / `modes`） |
+| `tests/` | 真实测试套件（448 个 pytest，脚本化 transport / 组件装配驱动） |
+| `examples/` | 可运行示例（含自定义组件最小示例 `logged_sandbox.py`） |
 | `assets/skills/` | 本地方法论技能（毛选战略、卡帕西编码、picasso-dev 系列） |
 | `install/` | 一键引导脚本（bootstrap.py / setup.sh / install.bat） |
 | `persistence/` | 持久记忆（gitignored：logs/*.jsonl、notes.md、skill_index.json、sessions/） |
 | `openspec/` | 规格库（每个运行时模块一份 spec） |
 | `benchmarks/` | 与 hermes-agent / pi 的对标基准 |
-| `docs/` | 交付文档（V20 交付文档 / V19 验收报告 / 重构报告） |
+| `docs/` | 交付文档（V20/V21/V22 交付文档、验收报告、V22 插件化计划、教程） |
 | `.github/workflows/ci.yml` | CI（跨 OS × Python 3.10–3.13、零依赖校验、覆盖率门禁、Docker） |
 | `Dockerfile` | 镜像（非 root、/data 可写、健康检查） |
 
@@ -119,6 +133,7 @@ python -m pytest tests/
 
 ## 版本
 
-- 当前版本：**V20.0.0**（所有顶层文档与 `baize.__version__` 同步）
-- 测试：**144 passed**，覆盖率 **80%**（防御式 fail-closed 分支为主，阈值 80%）
+- 当前版本：**V22.0.0**（顶层文档、`baize.manifest.json` 与 `baize.__version__` 同步）
+- 测试：**448 passed**，覆盖率 **87.6%**（诚实门禁阈值 85%，不假绿）
 - 第三方运行时依赖：**0**
+- V22 关键点：统一组件契约 + 组合内核（`component`/`modes`）、`BAIZE_COMPONENTS` 显式覆盖 fail-closed、插件目录自动发现防御性隔离、命名模式 = 组件集

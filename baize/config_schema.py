@@ -8,11 +8,16 @@ Zero third-party dependencies.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .config import load_config
 
 __all__ = ["ConfigError", "validate", "SCHEMA"]
+
+# BAIZE_COMPONENTS token formats (structural only; semantic validity of a
+# module:Class override is enforced by the composition kernel at assembly).
+_COMPONENT_TOKEN = re.compile(r"^[\w.]+:[\w]+$|^[\w]+$")
 
 
 class ConfigError(Exception):
@@ -53,6 +58,9 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_DASHBOARD_PORT": ("int_range", (0, 65535)),
     "BAIZE_TEAM_MEMORY_BACKEND": ("enum", ["local", "shared"]),
     "BAIZE_VAULT_URL": ("any", None),
+    # --- V22 composition kernel (plugin architecture) ---
+    "BAIZE_COMPONENTS": ("components", None),
+    "BAIZE_MODE": ("mode", ["coding", "eval", "autonomous", "safe-review"]),
     # --- V20 agent enhancement ---
     "BAIZE_REFLECT_EVERY": ("int_range", (0, 100)),
     "BAIZE_LOOP_DETECT_WINDOW": ("int_range", (2, 20)),
@@ -65,6 +73,20 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_CHAOS_ENABLED": ("bool", None),
     "BAIZE_CHAOS_FAILURE_RATE": ("float_range", (0.0, 1.0)),
     "BAIZE_CHAOS_SEED": ("any", None),
+    # --- V21/V22 security + trust-boundary settings (F2: previously unvalidated,
+    #     silent fail-open). Kind choices: bool / enum / path / int_range /
+    #     json_or_empty / any (empty-allowed). ---
+    "BAIZE_SANDBOX_ENABLED": ("bool", None),
+    "BAIZE_PLUGINS_DIR": ("any", None),          # may be empty (no extra root)
+    "BAIZE_HOOKS_FILE": ("any", None),           # may be empty (off by default)
+    "BAIZE_MCP_ENABLED": ("bool", None),
+    "BAIZE_MCP_SERVERS": ("json_or_empty", None),  # JSON array, may be empty
+    "BAIZE_PLAN_MODE": ("bool", None),
+    "BAIZE_AUTONOMY": ("enum", ["supervised", "balanced", "autonomous"]),
+    "BAIZE_AUTONOMY_COST_CAP": ("int_range", (0, 100000000)),
+    "BAIZE_PROMPT_CACHE": ("bool", None),
+    "BAIZE_AUTOMATIONS_FILE": ("path", None),
+    "BAIZE_AUTOMATIONS_POLL_SECONDS": ("int_range", (1, 3600)),
 }
 
 
@@ -104,6 +126,18 @@ def validate(cfg: dict | None = None) -> dict:
             elif kind == "json_or_empty":
                 if str(val).strip():
                     json.loads(str(val))
+            elif kind == "components":
+                for tok in str(val).split(","):
+                    tok = tok.strip()
+                    if not tok:
+                        continue
+                    if not _COMPONENT_TOKEN.match(tok):
+                        errors.append(
+                            f"{key} token {tok!r} is not "
+                            f"'module.path:ClassName' or a builtin kind name")
+            elif kind == "mode":
+                if val and val not in spec:  # type: ignore[operator]
+                    errors.append(f"{key}={val} not in {spec}")
             elif kind == "path":
                 _require_path(str(val))
         except ValueError as e:

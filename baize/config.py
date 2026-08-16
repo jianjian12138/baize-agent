@@ -31,9 +31,11 @@ _DEFAULTS = {
     "BAIZE_AGENT_MAX_STEPS": "24",       # hard cap per agent run
     "BAIZE_WORKSPACE_DIR": str(ROOT),    # tool sandbox root
     "BAIZE_ALLOW_OUTSIDE_WORKSPACE": "0",
+    "BAIZE_SANDBOX_ENABLED": "0",        # V21 P0-1 optional OS-level sandbox (off by default)
     "BAIZE_SESSIONS_DIR": str(ROOT / "persistence" / "sessions"),
     # --- V20 runtime ---
     "BAIZE_PLUGINS_ENABLED": "1",
+    "BAIZE_PLUGINS_DIR": "",                  # extra plugin/component root (env-var driven)
     "BAIZE_OBSERVABILITY": "1",
     "BAIZE_METRICS_PORT": "9090",
     "BAIZE_MODEL_ROUTER": "",                 # JSON array of {name,base_url,api_key,weight} or empty
@@ -47,6 +49,26 @@ _DEFAULTS = {
     "BAIZE_DASHBOARD_PORT": "8788",
     "BAIZE_TEAM_MEMORY_BACKEND": "local",    # local | shared(reserved)
     "BAIZE_VAULT_URL": "",                   # reserved secret backend
+    # --- V21 P1-1 hooks (lifecycle events, fail-closed) ---
+    "BAIZE_HOOKS_FILE": "",                  # path to .baize/hooks.json (off by default)
+    # --- V21 P1-2 MCP client (pure stdlib, fail-closed trust boundary) ---
+    "BAIZE_MCP_ENABLED": "0",                # MCP client OFF by default (explicit enable)
+    "BAIZE_MCP_SERVERS": "",                 # JSON array of {name,command,args,transport}
+                                             # whitelist, empty = no servers (reserved)
+    # --- V21 P2-1 Plan Mode + autonomy slider (fail-closed) ---
+    "BAIZE_PLAN_MODE": "0",                  # plan mode OFF by default
+    "BAIZE_AUTONOMY": "balanced",            # supervised|balanced|autonomous
+    "BAIZE_AUTONOMY_COST_CAP": "200000",     # est. token cap -> force downgrade
+    # --- V21 P3-4 prompt cache (default OFF; explicit opt-in) ---
+    "BAIZE_PROMPT_CACHE": "0",               # "1" attaches cache_control (anthropic)
+    # --- V21 P2-3 Automations (zero-dep scheduler, fail-closed) ---
+    "BAIZE_AUTOMATIONS_FILE": str(ROOT / "persistence" / "automations.json"),
+    "BAIZE_AUTOMATIONS_POLL_SECONDS": "60",
+    # --- V22 composition kernel (plugin architecture) ---
+    "BAIZE_COMPONENTS": "",                  # "module.path:ClassName" overrides
+                                             # or builtin kind names; empty=defaults
+    "BAIZE_MODE": "",                        # coding|eval|autonomous|safe-review
+                                             # (empty = scalar sliders apply)
     # --- V20 agent enhancement ---
     "BAIZE_REFLECT_EVERY": "6",              # self-reflection every N steps (0=off)
     "BAIZE_LOOP_DETECT_WINDOW": "3",         # identical tool-call repeats before warning

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import ENV_FILE, ROOT, load_config, skill_library_paths
+from . import sandbox
 
 
 @dataclass
@@ -88,6 +89,18 @@ def run_checks(cfg: dict | None = None) -> DoctorReport:
         found = shutil.which(tool) is not None
         report.add(f"tool {tool}", found, required=False,
                    detail="on PATH" if found else "not found (optional)")
+
+    # 7. OS sandbox capability (informational; never blocks).
+    #    Reports the best available mechanism; "logical-only" means the OS
+    #    shield is unavailable on this platform and baize will degrade to the
+    #    deny-list + workspace confinement (enable with BAIZE_SANDBOX_ENABLED=1).
+    mech = sandbox.platform_mechanism()
+    report.add(
+        "os sandbox", mech != "logical-only", required=False,
+        detail=f"mechanism={mech}"
+        + ("" if mech != "logical-only"
+           else " (degrades to logical-only; OS shield unavailable here)"),
+    )
 
     return report
 

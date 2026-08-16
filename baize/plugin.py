@@ -35,16 +35,21 @@ class PluginRegistry:
     def __init__(self) -> None:
         self.plugins: list[Plugin] = []
 
-    def discover(self) -> int:
+    @staticmethod
+    def _roots() -> list[Path]:
         cfg = load_config()
-        if str(cfg.get("BAIZE_PLUGINS_ENABLED", "1")).lower() in ("0", "false"):
-            return 0
         roots = [Path(__file__).resolve().parent / "plugins"]
         extra = cfg.get("BAIZE_PLUGINS_DIR", "")
         if extra:
             roots.append(Path(extra))
+        return roots
+
+    def discover(self) -> int:
+        cfg = load_config()
+        if str(cfg.get("BAIZE_PLUGINS_ENABLED", "1")).lower() in ("0", "false"):
+            return 0
         found = 0
-        for root in roots:
+        for root in self._roots():
             if not root.exists():
                 continue
             for path in sorted(root.glob("*.py")):
@@ -65,9 +70,58 @@ class PluginRegistry:
                 except Exception as e:  # defensive isolation
                     obs.record_error("plugin_load_errors")
                     print(f"[plugin] failed to load {path.name}: {e}")
+        # V22 #99: also discover components (auto-discovered, log + skip). Never
+        # trusted by default - a failing/bad component is isolated, not crashed.
+        try:
+            from .component import get_kernel
+            self._discover_components(get_kernel())
+        except Exception as e:  # isolation: component discovery must not break host
+            obs.record_error("plugin_component_discovery_errors")
+            print(f"[plugin] component discovery failed: {e}")
         if found:
             obs.inc("plugins_loaded", found)
         return found
+
+    def _discover_components(self, kernel) -> None:
+        """Auto-discover component classes from the same plugin roots.
+
+        A plugin component is any class with a ``KIND`` attribute and a
+        ``build(cfg)`` callable. Auto-discovered components are registered with
+        ``explicit=False`` so the kernel isolates them (log + skip on failure)
+        rather than trusting them the way ``BAIZE_COMPONENTS`` overrides are.
+        """
+        from .component import Component, Kind
+        for root in self._roots():
+            if not root.exists():
+                continue
+            for path in sorted(root.glob("*.py")):
+                if path.name.startswith("_"):
+                    continue
+                try:
+                    mod = self._import(path)
+                except Exception as e:  # defensive isolation
+                    obs.record_error("plugin_component_load_errors")
+                    print(f"[plugin] failed to import {path.name}: {e}")
+                    continue
+                for attr in vars(mod).values():
+                    if (isinstance(attr, type) and attr is not Component
+                            and hasattr(attr, "KIND")
+                            and hasattr(attr, "build")):
+                        try:
+                            kind_val = getattr(attr, "KIND")
+                            kind = kind_val if isinstance(kind_val, Kind) \
+                                else Kind(kind_val)
+                            build = getattr(attr, "build")
+                            comp = Component(
+                                kind, f"{path.stem}:{attr.__name__}",
+                                lambda cfg, b=build: b(cfg),
+                                provides=[kind.value], explicit=False)
+                            kernel.add_component(comp)
+                            obs.inc("plugin_components_loaded")
+                        except Exception as e:  # isolation
+                            obs.record_error("plugin_component_errors")
+                            print(f"[plugin] failed to register component "
+                                  f"{attr.__name__}: {e}")
 
     @staticmethod
     def _import(path: Path) -> ModuleType:

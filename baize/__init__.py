@@ -1,4 +1,4 @@
-"""Baize Engine - autonomous agent runtime (V19).
+"""Baize Engine - autonomous agent runtime (V22).
 
 Stdlib-only runtime that provides:
 - doctor        : environment gate (real checks, real exit codes)
@@ -7,8 +7,12 @@ Stdlib-only runtime that provides:
 - memory        : persistence read/write for cross-session memory
 - llm           : model-agnostic OpenAI-compatible client (hermes trait)
 - tools         : sandboxed tool registry - primitives, not features (pi trait)
+- sandbox       : optional OS-level sandbox adapter (Landlock/Seatbelt/Windows degrade)
 - agent         : autonomous loop with JSONL session persistence
 - orchestrator  : Director -> Executor -> Verifier multi-agent pipeline
+- component     : V22 unified component contract + CompositionKernel (Cordis-inspired, hardened)
+- modes         : V22 named modes = component-set bundles (coding/eval/autonomous/safe-review)
+- gate          : NO FAKE DONE honest gate (manifest + real coverage + composition check)
 
 Usage:
     python -m baize doctor
@@ -18,6 +22,7 @@ Usage:
     python -m baize run "<goal>" [--resume <session-id>]
     python -m baize team "<goal>"
     python -m baize sessions [<session-id>]
+    python -m baize gate
 """
 
-__version__ = "20.0.0"
+__version__ = "22.0.0"

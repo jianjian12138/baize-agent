@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -151,14 +152,123 @@ def cmd_team_memory(args) -> int:
     return 2
 
 
-def cmd_bench(_args) -> int:
+def cmd_gate(args) -> int:
+    from . import gate
+    rep = gate.run_gate(
+        getattr(args, "manifest", "baize.manifest.json"),
+        getattr(args, "coverage_data", ".coverage"))
+    print("NO FAKE DONE GATE")
+    print(f"  manifest : {'PASS' if rep['manifest_ok'] else 'FAIL'}")
+    for p in rep["manifest_problems"]:
+        print(f"    - {p}")
+    c = rep["coverage"]
+    tail = (f" ({c['total']}% >= {c['threshold']}%)"
+            if c.get("total") is not None
+            else f" ({c.get('reason')})")
+    print(f"  coverage : {c['status'].upper()}{tail}")
+    print(f"  overall  : {rep['status'].upper()}")
+    if rep["status"] == "fail":
+        return 1
+    if rep["status"] == "unknown":
+        return 2
+    return 0
+
+
+def cmd_bench(args) -> int:
     from . import bench
+    from . import bench_public
+    if getattr(args, "public", False):
+        rep = bench_public.coverage_report()
+        print("公开基准诚实覆盖对照 (baize 不运行公开 harness, 仅映射能力):")
+        for b in rep["benchmarks"]:
+            print(f"  [{b['status']:<8}] {b['name']:<16} "
+                  f"{b['measures']} -> {b['capability']}")
+        c = rep["counts"]
+        print(f"  covered={c['covered']} partial={c['partial']} "
+              f"not_run={c['not_run']}")
+        print(f"  说明: {rep['honest_note']}")
+        return 0
     report = bench.run_all()
     for c in report["cases"]:
         mark = "PASS" if c["ok"] else "FAIL"
         print(f"[{mark}] {c['name']:<8} {c['ms']:>7.1f} ms  {c['detail']}")
     print(f"{report['passed']}/{report['total']} benchmarks passed")
     return 0 if report["all_ok"] else 1
+
+
+def cmd_automations(args) -> int:
+    from . import automations as auto_mod
+
+    if args.action == "list":
+        sched = auto_mod.AutomationScheduler()
+        specs = sched.store.list()
+        if not specs:
+            print("no automations defined")
+            return 0
+        now = time.time()
+        for s in specs:
+            nxt = sched._next_fire(s, now)
+            nxt_s = auto_mod._to_iso(nxt) if nxt is not None else "-"
+            print(f"- [{s.status}] {s.id}  {s.name}")
+            sched_expr = s.rrule or s.scheduled_at or "(hourly)"
+            print(f"    {s.schedule_type}: {sched_expr}  next={nxt_s}")
+        return 0
+
+    if args.action == "add":
+        sched = auto_mod.AutomationScheduler()
+        spec = auto_mod.AutomationSpec(
+            id=args.id or f"auto-{int(time.time())}",
+            name=args.name or "untitled",
+            prompt=args.prompt or "",
+            schedule_type=args.schedule_type,
+            rrule=args.rrule or "",
+            scheduled_at=args.scheduled_at or "",
+            status="ACTIVE",
+            cwds=args.cwds or "",
+            created_at=auto_mod._to_iso(time.time()),
+        )
+        sched.store.save(spec)
+        print(f"added {spec.id} ({spec.schedule_type})")
+        return 0
+
+    if args.action == "remove":
+        if not args.id:
+            print("usage: python -m baize automations remove <id>")
+            return 2
+        auto_mod.AutomationScheduler().store.delete(args.id)
+        print(f"removed {args.id}")
+        return 0
+
+    if args.action in ("pause", "resume"):
+        status = "PAUSED" if args.action == "pause" else "ACTIVE"
+        if not args.id:
+            print(f"usage: python -m baize automations {args.action} <id>")
+            return 2
+        sched = auto_mod.AutomationScheduler()
+        spec = sched.store.get(args.id)
+        if not spec:
+            print(f"automation not found: {args.id}")
+            return 1
+        spec.status = status
+        sched.store.save(spec)
+        print(f"{args.id} -> {status}")
+        return 0
+
+    if args.action == "run-now":
+        if not args.id:
+            print("usage: python -m baize automations run-now <id>")
+            return 2
+        sched = auto_mod.AutomationScheduler()
+        spec = sched.store.get(args.id)
+        if not spec:
+            print(f"automation not found: {args.id}")
+            return 1
+        result = sched.runner(spec)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if isinstance(result, dict) and result.get("ok") else 1
+
+    print("unknown automations action")
+    return 2
 
 
 def _make_ui(args) -> ProgressUI:
@@ -300,7 +410,26 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("query", nargs="?", default="")
     rg.add_argument("--top-k", type=int, default=5)
 
-    sub.add_parser("bench", help="run deterministic core benchmarks")
+    bp = sub.add_parser("bench", help="run deterministic core benchmarks")
+    bp.add_argument("--public", action="store_true",
+                    help="show public benchmark honest coverage map")
+
+    gp = sub.add_parser("gate", help="run the NO FAKE DONE honest gate")
+    gp.add_argument("--manifest", default="baize.manifest.json")
+    gp.add_argument("--coverage-data", default=".coverage")
+
+    ap = sub.add_parser("automations", help="manage scheduled automations")
+    ap.add_argument("action",
+                    choices=["list", "add", "remove", "pause", "resume",
+                             "run-now"])
+    ap.add_argument("id", nargs="?", default="")
+    ap.add_argument("--name", default="")
+    ap.add_argument("--prompt", default="")
+    ap.add_argument("--schedule-type", default="recurring",
+                    choices=["recurring", "once"])
+    ap.add_argument("--rrule", default="")
+    ap.add_argument("--scheduled-at", default="")
+    ap.add_argument("--cwds", default="")
 
     tm = sub.add_parser("team-memory", help="inspect the shared blackboard")
     tm.add_argument("action", choices=["show", "stats", "clear"])
@@ -323,7 +452,9 @@ def main(argv: list[str] | None = None) -> int:
         "plugins": cmd_plugins,
         "rag": cmd_rag,
         "bench": cmd_bench,
+        "gate": cmd_gate,
         "team-memory": cmd_team_memory,
+        "automations": cmd_automations,
     }
     return handlers[args.command](args)
 

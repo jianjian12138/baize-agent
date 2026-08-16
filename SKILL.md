@@ -1,10 +1,10 @@
 ---
 name: baize-engine
 description: 白泽引擎主技能——12 阶段研发流水线规约与技能调度入口。适用于在本仓库内启动、推进或验收任何开发项目。
-version: 19.0.0
+version: 22.0.0
 ---
 
-# SKILL.md — 白泽 12 阶段研发流水线 V19.0.0
+# SKILL.md — 白泽 12 阶段研发流水线 V22.0.0
 
 ## 流水线定义（P1–P12）
 
@@ -57,3 +57,7 @@ version: 19.0.0
 | 自主循环与会话持久化 | `baize/agent.py` | `tests/test_agent.py` |
 | 工具沙箱与 deny-list | `baize/tools.py` | `tests/test_tools.py` |
 | 模型无关接入 | `baize/llm.py` | `tests/test_llm.py` |
+| 统一组件契约 + 组合内核（V22） | `baize/component.py` | `tests/test_component.py` |
+| 命名模式 = 组件集（V22） | `baize/modes.py` | `tests/test_modes.py` |
+| 组件自动发现 / 钩子体系（V22 硬化） | `baize/plugin.py` | `tests/test_plugin_discovery.py` |
+| 诚实门禁（含组件+模式校验，V22 扩） | `baize/gate.py` | `tests/test_gate.py` |

@@ -24,13 +24,18 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import load_config
+from .config import ROOT, load_config
+from .hooks import HookRegistry
+from .autonomy import AutonomyPolicy, READONLY_TOOLS, build_policy
+from .modes import resolve_mode
 from .llm import LLMClient, LLMError
+from .logging_setup import redact
 from .observability import obs
 from .plugin import registry as plugin_registry
 from .tools import ToolRegistry, default_registry
 from . import memory as memory_mod
 from . import skill_index
+from . import agents_rules
 
 MAX_OBSERVATION_CHARS = 8000
 COMPRESSED_OBSERVATION_CHARS = 400   # size of an observation after compression
@@ -76,8 +81,22 @@ class Session:
     def append(self, message: dict, kind: str = "message") -> None:
         if kind == "message":
             self.messages.append(message)
+        # P0-4: secrets must never land in the session JSONL in cleartext.
+        stored = message
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            stored = {**message, "content": redact(message["content"])}
         rec = {"kind": kind, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-               "message": message}
+               "message": stored}
+        with self.file.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def append_record(self, rec: dict) -> None:
+        """Write a raw record line (used by session fork lineage markers).
+
+        Unlike :meth:`append`, this does NOT redact or mutate ``rec`` - the
+        caller is responsible for its contents - and never touches
+        ``self.messages``.
+        """
         with self.file.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -107,7 +126,7 @@ def build_system_prompt(role: str = "executor",
                         registry: ToolRegistry | None = None,
                         extra: str = "") -> str:
     cfg = cfg or load_config()
-    registry = registry or default_registry()
+    registry = registry or _resolve_tool_registry()
 
     skill_hint = ""
     try:
@@ -156,6 +175,11 @@ def build_system_prompt(role: str = "executor",
     ]
     if extra:
         parts.append(extra)
+    # P0-2: inject external AGENTS.md/CLAUDE.md as untrusted reference only.
+    external_rules = agents_rules.load_external_rules(
+        cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT)))
+    if external_rules:
+        parts.append(external_rules)
     return "\n\n".join(p for p in parts if p)
 
 
@@ -204,13 +228,35 @@ def _total_chars(messages: list[dict]) -> int:
     return sum(len(str(m.get("content") or "")) for m in messages)
 
 
+def _evidence_note(content: str) -> str:
+    """Build a structured, evidence-preserving stub for an old observation.
+
+    P3-2 fix: instead of blindly truncating to N chars (which could erase a
+    Verifier verdict or error), we keep the verdict/error signal explicitly so
+    the proof a task completed survives compaction.
+    """
+    low = content.lower()
+    verdict = None
+    if "verdict" in low:
+        for tok in ("pass", "fail"):
+            if tok in low:
+                verdict = tok
+                break
+    has_error = ("error" in low) or ("traceback" in low) or ("exception" in low)
+    snippet = content[:200].replace("\n", " ")
+    return (f"[compressed old observation | verdict={verdict or 'n/a'} "
+            f"errors={'yes' if has_error else 'no'}] {snippet}")
+
+
 def compress_context(messages: list[dict],
                      keep_recent: int = KEEP_RECENT_MESSAGES) -> int:
-    """Long-horizon context compression (V20).
+    """Long-horizon context compression (V20, hardened in P3-2).
 
     Shrinks OLD tool observations in-place (in memory only - the JSONL file
     stays append-only and untouched). The system prompt, all user turns and
-    the most recent ``keep_recent`` messages are never modified.
+    the most recent ``keep_recent`` messages are never modified. Critically,
+    the compressed stub PRESERVES Verifier evidence (verdict / error signal)
+    rather than discarding it (risk #3 from the P1-P3 plan).
     Returns the number of messages compressed."""
     compressed = 0
     cutoff = max(0, len(messages) - keep_recent)
@@ -218,8 +264,7 @@ def compress_context(messages: list[dict],
         content = str(m.get("content") or "")
         if (m.get("role") == "tool"
                 and len(content) > COMPRESSED_OBSERVATION_CHARS):
-            m["content"] = (content[:COMPRESSED_OBSERVATION_CHARS]
-                            + " ...[compressed: old observation truncated]")
+            m["content"] = _evidence_note(content)
             compressed += 1
     return compressed
 
@@ -229,19 +274,72 @@ class Agent:
                  client: LLMClient | None = None,
                  registry: ToolRegistry | None = None,
                  session: Session | None = None,
-                 on_event=None):
+                 on_event=None,
+                 hooks: HookRegistry | None = None,
+                 plan_mode: bool | None = None,
+                 autonomy=None,
+                 loop_strategy=None):
         self.cfg = cfg or load_config()
         self.role = role
         self.client = client or LLMClient(self.cfg)
-        self.registry = registry or default_registry()
+        self.registry = registry or _resolve_tool_registry()
         self.session = session or Session(cfg=self.cfg)
         self.max_steps = int(self.cfg.get("BAIZE_AGENT_MAX_STEPS", "24"))
         self.reflect_every = int(self.cfg.get("BAIZE_REFLECT_EVERY", "6"))
         self.loop_window = max(2, int(self.cfg.get("BAIZE_LOOP_DETECT_WINDOW", "3")))
         self.compress_chars = int(self.cfg.get("BAIZE_CONTEXT_COMPRESS_CHARS", "60000"))
         self.on_event = on_event or (lambda *_: None)
+        # V21 P1-1: lifecycle hook bus. Default off (empty) unless a hooks file
+        # is declared via BAIZE_HOOKS_FILE - never silently on.
+        self.hooks = hooks or HookRegistry.from_config(self.cfg)
+        # V22 #97: named modes carry authority over the scalar sliders when set.
+        bundle = resolve_mode(self.cfg)
+        # V21 P2-1: Plan Mode + autonomy slider (fail-closed). Constructor
+        # params always win; otherwise the mode bundle (if BAIZE_MODE set)
+        # overrides the scalar sliders, which are the final fallback.
+        if plan_mode is None:
+            mode_set = bool((self.cfg.get("BAIZE_MODE") or "").strip())
+            self.plan_mode = bool(bundle["plan_mode"]) if mode_set \
+                else bool(self.cfg.get("BAIZE_PLAN_MODE", "0") == "1")
+        else:
+            self.plan_mode = bool(plan_mode)
+        if autonomy is None:
+            self.autonomy = build_policy(self.cfg, level=bundle["autonomy"])
+        elif isinstance(autonomy, str):
+            self.autonomy = AutonomyPolicy(level=autonomy)
+        else:
+            self.autonomy = autonomy
+        # V22 #96: loop strategy - explicit constructor param wins; otherwise
+        # the mode bundle decides (eval -> ProgrammaticLoop), else DefaultLoop.
+        if loop_strategy is not None:
+            self.loop = loop_strategy
+        elif bundle["loop"] == "programmatic":
+            self.loop = ProgrammaticLoop()
+        else:
+            self.loop = DefaultLoop()
+
+    def _emit(self, event: str, detail: str = "", **payload) -> list:
+        """Emit a legacy phase event to on_event AND the hook bus."""
+        self.on_event(event, detail)
+        return self.hooks.dispatch(event, {"detail": detail, **payload})
+
+    def _tool_permitted(self, name: str, args: dict) -> tuple[bool, str]:
+        """Plan Mode + autonomy gate (fail-closed). Returns (allow, reason)."""
+        if self.plan_mode and name not in READONLY_TOOLS:
+            return False, "plan mode allows read-only tools only"
+        return self.autonomy.allow(name, args)
 
     def run(self, goal: str, extra_system: str = "") -> AgentResult:
+        """Run the agent to completion via the active loop strategy.
+
+        V22 #96 (review downgrade): the loop is a swappable strategy rather
+        than a ``kind=loop`` component. Default strategy is ``DefaultLoop``;
+        a custom strategy may be injected via ``loop_strategy=`` (e.g.
+        ``ProgrammaticLoop`` for the opt-in / eval path).
+        """
+        return self.loop.run(self, goal, extra_system)
+
+    def _run_loop(self, goal: str, extra_system: str = "") -> AgentResult:
         sys_prompt = build_system_prompt(self.role, self.cfg,
                                          self.registry, extra_system)
         if not self.session.messages:
@@ -249,8 +347,10 @@ class Agent:
             mem = recall_context(goal, self.cfg)
             user_content = f"{mem}\n\nTASK: {goal}" if mem else goal
             self.session.append({"role": "user", "content": user_content})
+            self.hooks.user_prompt_submit(user_content)
         else:  # resumed session - just add the new user turn
             self.session.append({"role": "user", "content": goal})
+            self.hooks.user_prompt_submit(goal)
 
         tool_schemas = self.registry.schemas()
         n_tool_calls = 0
@@ -260,6 +360,8 @@ class Agent:
 
         plugin_registry.fire("on_agent_start", goal)
         obs.inc("agent_runs")
+        # V21 P1-1: lifecycle hooks fire for real (no tool gate here).
+        self.hooks.session_start(goal)
 
         for step in range(1, self.max_steps + 1):
             # V20: long-horizon context compression (in-memory only)
@@ -267,28 +369,37 @@ class Agent:
                 n = compress_context(self.session.messages)
                 if n:
                     obs.inc("context_compressions")
-                    self.on_event("compress", f"compressed {n} old observations")
+                    self.hooks.pre_compact(n)
+                    self._emit("compress", f"compressed {n} old observations")
                     self.session.append({"compressed": n}, kind="compress")
 
             try:
-                msg = self.client.chat(self.session.messages, tools=tool_schemas)
+                # P3-4: pin the cacheable prefix (system prompt first) so the
+                # stable block is unambiguous - required for prompt caching.
+                msgs = self.client.build_messages(
+                    sys_prompt, tool_schemas, self.session.messages)
+                msg = self.client.chat(msgs, tools=tool_schemas)
             except LLMError as exc:
                 plugin_registry.fire("on_error", exc)
                 obs.record_error("agent_errors")
                 self.session.append({"role": "assistant",
                                      "content": f"[error] {exc}"})
-                return AgentResult(self.session.id, str(exc), step,
-                                   n_tool_calls, "error",
-                                   self.session.messages)
+                res = AgentResult(self.session.id, str(exc), step,
+                                  n_tool_calls, "error",
+                                  self.session.messages)
+                self.hooks.session_end(res)
+                return res
             self.session.append(msg)
             obs.inc("agent_steps")
 
             calls = msg.get("tool_calls") or []
             if not calls:  # plain answer -> done
-                self.on_event("final", msg.get("content") or "")
-                return AgentResult(self.session.id, msg.get("content") or "",
-                                   step, n_tool_calls, "final",
-                                   self.session.messages)
+                self._emit("final", msg.get("content") or "")
+                res = AgentResult(self.session.id, msg.get("content") or "",
+                                  step, n_tool_calls, "final",
+                                  self.session.messages)
+                self.hooks.session_end(res)
+                return res
 
             for call in calls:
                 n_tool_calls += 1
@@ -305,15 +416,47 @@ class Agent:
                 last_sig = sig
                 if repeat_count >= self.loop_window * 2:
                     obs.inc("agent_loops_aborted")
-                    self.on_event("loop", f"aborting: {name} repeated {repeat_count}x")
+                    self._emit("loop", f"aborting: {name} repeated {repeat_count}x")
                     self.session.append({"role": "assistant", "content":
                                          f"[loop_detected] {name} repeated "
                                          f"{repeat_count} times - aborting"})
-                    return AgentResult(self.session.id,
-                                       f"stopped: identical tool call repeated "
-                                       f"{repeat_count} times ({name})",
-                                       step, n_tool_calls, "loop_detected",
-                                       self.session.messages)
+                    res = AgentResult(self.session.id,
+                                      f"stopped: identical tool call repeated "
+                                      f"{repeat_count} times ({name})",
+                                      step, n_tool_calls, "loop_detected",
+                                      self.session.messages)
+                    self.hooks.session_end(res)
+                    return res
+
+                # V21 P1-1: pre_tool_use hook gate (fail-closed). A deny blocks
+                # the tool entirely - the agent receives an observation with the
+                # reason instead of a fake "ran" result.
+                decision = self.hooks.pre_tool_use(name, args)
+                if not decision.allow:
+                    obs.inc("hook_pre_tool_blocked")
+                    self._emit("pre_tool_use_denied",
+                               f"{name}: {decision.reason}")
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": f"ERROR: blocked by pre_tool_use hook: "
+                                   f"{decision.reason}",
+                    })
+                    continue
+
+                # V21 P2-1: Plan Mode + autonomy slider (fail-closed). A deny
+                # reports an ERROR observation and the loop continues - the
+                # action never silently succeeds.
+                permit, reason = self._tool_permitted(name, args)
+                if not permit:
+                    obs.inc("tool_blocked_policy")
+                    self._emit("tool_blocked", f"{name}: {reason}")
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": f"ERROR: blocked by policy: {reason}",
+                    })
+                    continue
 
                 self.on_event("tool", f"{name}({json.dumps(args, ensure_ascii=False)[:200]})")
                 plugin_registry.fire("on_tool_call", name, args)
@@ -331,15 +474,128 @@ class Agent:
                     "tool_call_id": call.get("id", ""),
                     "content": str(observation)[:MAX_OBSERVATION_CHARS],
                 })
+                # V21 P2-1: account estimated token spend; a breach forces an
+                # autonomy downgrade (token-runaway guard).
+                try:
+                    self.autonomy.record_cost(len(str(observation)) // 4)
+                except Exception:
+                    pass
+                # V21 P1-1: fire post_tool_use (and failure variant) hooks.
+                self.hooks.post_tool_use(name, args, observation)
+                if str(observation).startswith("ERROR"):
+                    self.hooks.post_tool_use_failure(name, args, observation)
 
             # V20: periodic self-reflection checkpoint
             if (self.reflect_every > 0 and step % self.reflect_every == 0
                     and step < self.max_steps):
                 obs.inc("agent_reflections")
-                self.on_event("reflect", f"checkpoint at step {step}")
+                self._emit("reflect", f"checkpoint at step {step}")
                 self.session.append({"role": "user",
                                      "content": REFLECTION_PROMPT})
 
-        return AgentResult(self.session.id,
-                           "stopped: reached max steps", self.max_steps,
-                           n_tool_calls, "max_steps", self.session.messages)
+        res = AgentResult(self.session.id,
+                          "stopped: reached max steps", self.max_steps,
+                          n_tool_calls, "max_steps", self.session.messages)
+        self.hooks.session_end(res)
+        return res
+
+
+# ---------------------------------------------------------------------------
+# V22 #96 (review downgrade): loop strategies. The loop is NOT a kind=loop
+# component - it is tightly coupled to Agent internals (session/hooks/autonomy/
+# plugin/reflection), so it is isolated as a swappable strategy class instead.
+# ---------------------------------------------------------------------------
+
+
+class DefaultLoop:
+    """The standard reason -> tool -> observe loop, as a strategy object.
+
+    Delegates to ``Agent._run_loop`` so the existing, regression-locked loop
+    body is preserved byte-for-byte. Swapping this strategy never changes the
+    model interaction - only ``Agent.run``'s top-level dispatch does.
+    """
+
+    def run(self, agent: "Agent", goal: str, extra_system: str = "") -> "AgentResult":
+        return agent._run_loop(goal, extra_system)
+
+
+class ProgrammaticLoop:
+    """Opt-in, LLM-free loop strategy (V22 #96 / #97 ``eval`` mode).
+
+    Executes a fixed sequence of tool calls with no model call at all, collects
+    their observations, and returns an ``AgentResult``. This is real end-to-end
+    behaviour (tools actually run) with zero network - the minimal harness
+    "Minimal" analogue, used to benchmark the tool layer deterministically.
+    """
+
+    def __init__(self, steps: list[dict] | None = None):
+        self.steps = steps or []
+
+    def run(self, agent: "Agent", goal: str, extra_system: str = "") -> "AgentResult":
+        if not agent.session.messages:
+            agent.session.append({"role": "system",
+                                  "content": "programmatic loop (no LLM)"})
+            agent.session.append({"role": "user", "content": goal})
+            agent.hooks.user_prompt_submit(goal)
+        agent.hooks.session_start(goal)
+        n_tool_calls = 0
+        outcomes: list[str] = []
+        for call in self.steps:
+            name = call.get("name", "")
+            args = call.get("arguments", {}) or {}
+            permit, reason = agent._tool_permitted(name, args)
+            if not permit:
+                outcomes.append(f"{name}: BLOCKED ({reason})")
+                continue
+            n_tool_calls += 1
+            observation = agent.registry.execute(name, args)
+            outcomes.append(f"{name}: {str(observation)[:MAX_OBSERVATION_CHARS]}")
+            agent.hooks.post_tool_use(name, args, observation)
+        summary = "\n".join(outcomes)
+        res = AgentResult(agent.session.id, summary, len(self.steps),
+                          n_tool_calls, "final", agent.session.messages)
+        agent.hooks.session_end(res)
+        return res
+
+
+# ---------------------------------------------------------------------------
+# V22 #96 / #97: loop-strategy registry. Modes resolve a loop by *name*
+# ("default" / "programmatic"); this maps the name to the concrete strategy
+# class so the gate can instantiate and type-check it for real (fail-closed),
+# instead of only checking the string is present (F3).
+# ---------------------------------------------------------------------------
+
+LOOP_STRATEGIES: dict[str, type] = {
+    "default": DefaultLoop,
+    "programmatic": ProgrammaticLoop,
+}
+
+
+def get_loop_strategy(name: str) -> "DefaultLoop | ProgrammaticLoop":
+    """Instantiate a loop strategy by name. Raises ValueError for an unknown
+    name (fail-closed) so callers cannot silently accept a bogus mode."""
+    cls = LOOP_STRATEGIES.get(name)
+    if cls is None:
+        raise ValueError(f"unknown loop strategy: {name!r}")
+    return cls()
+
+
+def _resolve_tool_registry() -> "ToolRegistry":
+    """Resolve the active tool provider through the composition kernel so an
+    explicit ``BAIZE_COMPONENTS`` override of Kind.TOOL is honored (F4). Falls
+    back to the global default registry if the kernel cannot be assembled, so
+    Agent construction never breaks - the honest gate separately catches a
+    broken kernel.
+
+    In the default configuration the kernel's Kind.TOOL resolves to the very
+    same ``default_registry()`` singleton, so behaviour is unchanged; only an
+    explicit override diverges.
+    """
+    try:
+        from .component import get_runtime, Kind
+        inst = get_runtime().get(Kind.TOOL)
+        if inst is not None:
+            return inst
+    except Exception:
+        pass
+    return default_registry()

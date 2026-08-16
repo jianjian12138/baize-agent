@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from .config import load_config
+from .logging_setup import redact
 from .observability import obs
 from .vector import TfidfIndex
 from . import memory as memory_mod
@@ -37,16 +38,17 @@ def build_corpus(cfg: dict | None = None) -> TfidfIndex:
     idx = skill_index.load_index(cfg)
     for s in idx.get("skills", []):
         index.add(f"skill:{s['name']}",
-                  f"{s['name']} {s['description']}",
+                  redact(f"{s['name']} {s['description']}"),
                   {"kind": "skill", "name": s["name"],
                    "skill_file": s.get("skill_file", "")})
 
     hits = memory_mod.recall("", cfg=cfg, limit=MAX_MEMORY_DOCS)
     for i, h in enumerate(hits):
+        text = redact(str(h.get("text", "")))
         index.add(f"mem:{i}:{h.get('source', '')}",
-                  str(h.get("text", "")),
+                  text,
                   {"kind": "memory", "source": h.get("source", ""),
-                   "text": str(h.get("text", ""))[:300]})
+                   "text": text[:300]})
 
     index.build()
     obs.gauge("rag_corpus_docs", len(index))

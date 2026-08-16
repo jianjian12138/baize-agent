@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 from .agent import Agent, Session
 from .config import load_config
+from .hooks import HookRegistry
 from .llm import LLMClient
 from .observability import obs
 from .team_memory import TeamMemory
@@ -123,12 +124,16 @@ class Orchestrator:
                  max_retries_per_task: int = 1,
                  on_event=None,
                  verify_hooks: list | None = None,
-                 team_memory: TeamMemory | None = None):
+                 team_memory: TeamMemory | None = None,
+                 hooks: HookRegistry | None = None):
         self.cfg = cfg or load_config()
         self.client = client or LLMClient(self.cfg)
         self.registry = registry or default_registry()
         self.max_retries = max_retries_per_task
         self.on_event = on_event or (lambda *_: None)
+        # V21 P1-1: lifecycle hook bus, shared with spawned agents so a
+        # pre_tool_use gate applies uniformly across the whole team.
+        self.hooks = hooks or HookRegistry.from_config(self.cfg)
         # V20: pluggable custom gates: callable(sub, executor_summary) ->
         # (ok: bool, detail: str). Any hook failing = subtask fails.
         self.verify_hooks = verify_hooks or []
@@ -163,8 +168,26 @@ class Orchestrator:
 
     def _spawn(self, role: str) -> Agent:
         return Agent(role=role, cfg=self.cfg, client=self.client,
-                     registry=self.registry,
-                     session=Session(cfg=self.cfg), on_event=self.on_event)
+                     registry=self.registry, session=Session(cfg=self.cfg),
+                     on_event=self.on_event, hooks=self.hooks)
+
+    def spawn_subagent(self, defn, goal: str, client=None) -> str:
+        """Run an isolated sub-agent (V21 P1-3) as part of a team run.
+
+        The sub-agent gets its own scoped registry + Session (isolation), and
+        shares this orchestrator's hooks so a ``pre_tool_use`` gate still
+        applies uniformly. Only the final summary is returned - the sub-agent's
+        raw transcript never pollutes the parent session. Fail-closed: any
+        error surfaces as a summary string, never an unhandled crash.
+        """
+        try:
+            agent = defn.build_agent(cfg=self.cfg, client=client or self.client)
+            agent.hooks = self.hooks
+            res = agent.run(goal)
+            return res.final_text
+        except Exception as exc:  # defensive: a sub-agent crash must not kill the team
+            obs.record_error("subagent_run_failed")
+            return f"[subagent {defn.name} failed] {exc}"
 
     # -- phases -------------------------------------------------------------
 
@@ -254,6 +277,8 @@ class Orchestrator:
         for sub in plan:
             self.on_event("phase", f"executing #{sub['id']}: {sub['task'][:80]}")
             report = SubtaskReport(sub["id"], sub["task"], sub["verify"])
+            # V21 P1-1: subtask lifecycle hook (no tool gate here).
+            self.hooks.pre_subtask(sub)
 
             summary, sid = self.execute_subtask(sub)
             session_ids.append(sid)
@@ -286,12 +311,16 @@ class Orchestrator:
                 report.checks = v.get("checks", [])
 
             reports.append(report)
+            # V21 P1-1: subtask finished - report to hooks.
+            self.hooks.post_subtask(report)
 
         success = all(r.verdict == "pass" for r in reports)
+        result = OrchestrationResult(goal, plan, reports, success, session_ids)
         memory_mod.log_event(
             f"orchestration {'OK' if success else 'FAILED'}: {goal[:120]} "
             f"({sum(1 for r in reports if r.verdict == 'pass')}/{len(reports)} "
-            "subtasks passed)",
+            "subtasks passed",
             tags=["orchestration", "pass" if success else "fail"],
             cfg=self.cfg)
-        return OrchestrationResult(goal, plan, reports, success, session_ids)
+        self.hooks.session_end(result)
+        return result
