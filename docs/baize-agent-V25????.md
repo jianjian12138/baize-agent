@@ -1,7 +1,7 @@
 # Baize Agent V25 升级计划 — 生态接入 + 可见性（完整版）
 
 - **计划日期**：2026-08-19
-- **目标版本**：维持 `23.0.0`（V25 为「接入 + 可见性」维护里程碑；若 P2–P4 规模过大再评估跃迁 `24.0.0`）
+- **目标版本**：维持 `24.0.0`（V25 为「接入 + 可见性」维护里程碑；若 P2–P4 规模过大再评估跃迁 `24.0.0`）
 - **驱动背景**：GitHub 调研显示 `jianjian12138/baize-agent` 当前 `stargazers=1`、`forks=0`、`topics=[]`、repo 描述仍写「V19」。技术资产（零依赖 + NO FAKE DONE + 插件化 + skills 三库）稀缺但不可见，连 GitHub 发现机制都没进。
 - **设计红线（贯穿全程）**：
   1. **运行时零第三方依赖**：核心 `baize/` 永远纯 stdlib；所有生态接入放 `baize/ext/`，核心调用链**不得默认 import** 任何外部库，缺失时 fail-closed 提示。
@@ -34,7 +34,7 @@ P5(多智能体) ──────┘
 **具体任务**
 1. 仓库 `topics` 设为：`agent`, `ai-agents`, `llm-agent`, `autonomous-agents`, `python`, `zero-dependency`（可选追加 `llm`, `rag`, `multi-agent`）。
 2. 仓库 `description` 改为：
-   `Baize Agent V23.0.0 · zero-dependency autonomous agent runtime (NO FAKE DONE verified)`
+   `Baize Agent V24.0.0 · zero-dependency autonomous agent runtime (NO FAKE DONE verified)`
 3. `About` 区补 `Homepage`（指向仓库或未来文档站）、相关社交链接。
 4. 开启 `Discussions`（当前 `has_discussions=false`）作为社区入口；`Issues` 已开。
 5. 记录 before/after（topics 空→有、description V19→V23、star 1→）。
@@ -44,14 +44,14 @@ P5(多智能体) ──────┘
 - 方式 B（`gh`，需登录）：
   ```bash
   gh repo edit jianjian12138/baize-agent \
-    --description "Baize Agent V23.0.0 · zero-dependency autonomous agent runtime (NO FAKE DONE verified)" \
+    --description "Baize Agent V24.0.0 · zero-dependency autonomous agent runtime (NO FAKE DONE verified)" \
     --add-topic agent --add-topic ai-agents --add-topic llm-agent \
     --add-topic autonomous-agents --add-topic python --add-topic zero-dependency
   gh repo edit jianjian12138/baize-agent --enable-discussions
   ```
 
 **门禁**：无代码门禁（纯元数据）。
-**验收**：`topics` 非空且含 `agent` 类；description 显示 V23.0.0；Discussions 开启。
+**验收**：`topics` 非空且含 `agent` 类；description 显示 V24.0.0；Discussions 开启。
 
 ---
 
@@ -199,7 +199,7 @@ P5(多智能体) ──────┘
 1. 复跑门禁：`baize doctor` → PASSED；`baize gate` → manifest PASS + quality ≥ 0.8；全量 `pytest` → 422 passed / 1 skipped / 0 failed。
 2. 可见性核对清单：
    - [ ] GitHub `topics` 非空且含 `agent` 类
-   - [ ] `description` 显示 V23.0.0 且突出 zero-dependency
+   - [ ] `description` 显示 V24.0.0 且突出 zero-dependency
    - [ ] README 中英双语 + 对比表 + 失实数修正
    - [ ] 英文文档 / COMPARISON 对标
    - [ ] badges 正常

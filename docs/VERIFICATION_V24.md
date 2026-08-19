@@ -1,7 +1,7 @@
 # baize-agent V24 系统瘦身与统一化 — 验证报告
 
 - **验证日期**: 2026-08-18
-- **代码版本**: `23.0.0`（`baize/__init__.py` / `pyproject.toml` / `baize.manifest.json` 一致；V24 为瘦身/统一化**维护里程碑**，未做功能性版本提升，故版本号维持 23.0.0）
+- **代码版本**: `24.0.0`（`baize/__init__.py` / `pyproject.toml` / `baize.manifest.json` 一致；V24 完成瘦身/统一化**维护里程碑**后，于收尾阶段按用户决定将语义版本自 23.0.0 bump 至 24.0.0）
 - **验证方式**: 静态核验 + 动态执行（pytest 全量 + CLI 门禁 `doctor` / `gate`）
 - **结论**: ✅ **整体验证通过**。全量 `422 passed / 0 failed / 0 error / 1 skipped`；`doctor` → PASSED；`gate` → manifest PASS + quality 0.875 PASS（coverage 维度因无 `.coverage` 数据 UNKNOWN，属设计内诚实上报，非失败）。
 
@@ -34,11 +34,11 @@
 **`tests/test_f5_gap.py` 重写**：去掉对已删 `context` 模块的依赖，保留 cli/serve 覆盖部分（`test_observability.py` 同步删除 2 个 secrets 测试）。
 
 ### P2 · 版本号统一
-- `__init__.py` / `README.md` / `AGENT.md` / `SKILL.md` / `START-HERE.md` / `install/开发环境安装指引.md` 的「当前版本」声明统一为 `23.0.0`；`tests/test_ui.py` 改用 `__version__` 动态断言（去除硬编码）。
+- `__init__.py` / `README.md` / `AGENT.md` / `SKILL.md` / `START-HERE.md` / `install/开发环境安装指引.md` 的「当前版本」声明统一为 `24.0.0`（V24 阶段先统一到 23.0.0，收尾时按用户决定 bump 至 24.0.0）；`tests/test_ui.py` 改用 `__version__` 动态断言（去除硬编码）。
 
 ### P3 · 文档统一
 - `openspec/README.md`：标注本目录为「代表性规格子集、不被运行时加载」，目录列表改为实际落地的 8 个 spec（agent/doctor/llm/manifest/memory/orchestrator/skill-index/tools）。
-- `docs/tutorials/` 10 篇 + `README.md`：当前版本声明 `V20.0.0` → `V23.0.0`；修复指向已归档 V20 文档的断链（`docs/baize-agent-V20-交付文档.md` 等改为 `../archive/...`）。
+- `docs/tutorials/` 10 篇 + `README.md`：当前版本声明 `V20.0.0` → `V23.0.0`，收尾按用户决定统一 bump 至 `V24.0.0`；修复指向已归档 V20 文档的断链（`docs/baize-agent-V20-交付文档.md` 等改为 `../archive/...`）。
 - `docs/` 根：将 V22 过期文件（`baize-agent-V22插件化架构计划.md`、`V22-验收报告.md`）移入 `docs/archive/`，同步 `README.md` 文档导航描述（V22 → V23 当前文档）。
 
 ### P4 · 代码风格
@@ -109,7 +109,7 @@ $ baize gate
 ## 6. 总结
 
 - V24 瘦身 + 统一化全部落地；全量测试 **422 passed / 1 skipped / 0 failed**；`doctor` + `gate` 门禁通过。
-- 代码版本维持 **23.0.0**（V24 为维护里程碑，非功能性版本提升）。
+- 代码版本 **24.0.0**（V24 维护里程碑完成、经用户确认后 bump 至 24.0.0；pyproject / `baize/__init__.py` / manifest 三处一致）。
 - 验证过程中发现并修复 1 个真实回归（manifest 证据与 P1a 删除不同步），已闭环。
 
 ---

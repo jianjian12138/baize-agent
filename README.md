@@ -1,10 +1,10 @@
-# Baize Agent — zero-dependency autonomous agent runtime (白泽引擎) · V23.0.0
+# Baize Agent — zero-dependency autonomous agent runtime (白泽引擎) · V24.0.0
 
 [![tests](https://img.shields.io/badge/tests-422%20passed%20%2F%201%20skipped-brightgreen)](https://github.com/jianjian12138/baize-agent)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/licenses/MIT)
 [![python](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-lightgrey)](https://github.com/jianjian12138/baize-agent)
-[![version](https://img.shields.io/badge/version-V23.0.0-orange)](https://github.com/jianjian12138/baize-agent)
+[![version](https://img.shields.io/badge/version-V24.0.0-orange)](https://github.com/jianjian12138/baize-agent)
 
 > **EN** — A white-box, engineering-driven autonomous Agent runtime in **pure Python standard library (zero third-party runtime deps)**. Ships a method-skills layer + a real Agent runtime, verified by a **NO FAKE DONE** gate (manifest evidence + `doctor`/`gate`/pytest). V24 slimmed the system and unified files/docs/code-style/folders.
 >
@@ -22,7 +22,7 @@
 
 ## Comparison with leading frameworks (对比头部框架)
 
-Honest, dimension-by-dimension (V23.0.0). baize wins on **deps / audit surface / verification gate**; it is honest where it is behind.
+Honest, dimension-by-dimension (V24.0.0). baize wins on **deps / audit surface / verification gate**; it is honest where it is behind.
 
 | Dimension | **Baize** | LangChain | AutoGPT | CrewAI | MetaGPT | Dify |
 |-----------|-----------|-----------|---------|--------|---------|------|
@@ -210,7 +210,7 @@ V25 聚焦「生态接入 + 可见性」，**不破坏零依赖红线**：所有
 
 ## 状态与验证 (Status & Verification)
 
-- 当前版本：**V23.0.0**（顶层文档、`baize.manifest.json` 与 `baize.__version__` 同步）
+- 当前版本：**V24.0.0**（顶层文档、`baize.manifest.json` 与 `baize.__version__` 同步）
 - 测试：**422 passed / 1 skipped / 0 failed**（全量 `pytest tests/`）
 - 覆盖率：**UNKNOWN** — 当前未采集 `.coverage`，故不声称任何数字（NO FAKE DONE，不为 0 依赖项目编造覆盖率）
 - 第三方运行时依赖：**0**
