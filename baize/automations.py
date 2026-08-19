@@ -29,7 +29,10 @@ from pathlib import Path
 from typing import Callable
 
 from .config import load_config
+from .logging_setup import get_logger
 from .observability import obs
+
+log = get_logger("automations")
 
 Runner = Callable[["AutomationSpec"], object]
 
@@ -192,8 +195,8 @@ class AutomationStore:
             data = json.loads(raw)
         except (json.JSONDecodeError, OSError) as exc:
             obs.record_error("automation_store_corrupt")
-            print(f"[automations] corrupt store {self.path}: {exc} -> "
-                  f"treated as empty")
+            log.warning("[automations] corrupt store %s: %s -> treated as empty",
+                        self.path, exc)
             return []
         if isinstance(data, list):
             items = data
@@ -358,7 +361,7 @@ class AutomationScheduler:
             obs.record_error("automation_run_failed")
             spec.last_run = _to_iso(self._clock())
             self.store.save(spec)
-            print(f"[automations] run failed for {spec.id}: {exc}")
+            log.warning("[automations] run failed for %s: %s", spec.id, exc)
 
     def tick(self) -> list[str]:
         """Fire every due automation once. Returns the ids that were fired."""

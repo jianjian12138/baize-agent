@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baize-agent"
+version = "23.0.0"
+description = "Baize Agent — autonomous agent runtime (pure Python standard library, zero third-party dependencies)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Baize Agent contributors" }]
+keywords = ["agent", "autonomous-agent", "llm", "ai", "multi-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
+]
+# Zero third-party dependencies — the runtime is Python standard library only.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/jianjian12138/baize-agent"
+Repository = "https://github.com/jianjian12138/baize-agent"
+
+[project.scripts]
+baize = "baize.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["baize*"]
+
+[tool.pytest.ini_options]
+# Only the real suite lives in tests/; skill scripts under skills/ have their
+# own harness and must not be collected by the root `pytest` run.
+testpaths = ["tests"]
+norecursedirs = ["assets", "examples", "skills", "install", "benchmarks", "docs", ".github"]

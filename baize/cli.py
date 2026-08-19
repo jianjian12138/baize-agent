@@ -11,6 +11,7 @@
     python -m baize memory compress [--days N]
     python -m baize rag search <query> [--top-k N]
     python -m baize rag scores
+    python -m baize skill build | search <kw> | create <name> | audit
     python -m baize bench
 """
 from __future__ import annotations
@@ -21,6 +22,15 @@ import sys
 import time
 from pathlib import Path
 
+# Force UTF-8 on Windows consoles (PowerShell/cmd default to GBK -> UnicodeEncodeError
+# when skills contain emoji or non-ASCII chars). errors=replace prevents crashes
+# on terminals that cannot represent every codepoint.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from . import __version__
 from . import doctor as doctor_mod
 from . import manifest as manifest_mod
@@ -30,6 +40,7 @@ from . import skill_index
 from .agent import Agent, Session
 from .llm import LLMClient
 from .orchestrator import Orchestrator
+from .config_schema import ConfigError, validate
 from .plugin import registry
 from .ui import ProgressUI
 
@@ -63,6 +74,118 @@ def cmd_index(args) -> int:
         return 0
     print("unknown index action")
     return 2
+
+
+def cmd_skill(args) -> int:
+    action = args.action
+    if action == "build":
+        index = skill_index.build_index()
+        print(f"indexed {index['count']} skills "
+              f"from {len(index['libraries']) + 1} source(s)")
+        print(f"index file: {skill_index.load_config()['BAIZE_INDEX_FILE']}")
+        return 0
+    if action == "search":
+        kw = args.target
+        if not kw:
+            print("usage: python -m baize skill search <keyword>")
+            return 2
+        hits = skill_index.search(kw)
+        if not hits:
+            print("no skills matched")
+            return 1
+        for h in hits:
+            print(f"- {h['name']} [{h['source']}]")
+            if h["description"]:
+                print(f"    {h['description'][:120]}")
+            print(f"    {h['skill_file']}")
+        return 0
+    if action == "create":
+        if not args.target:
+            print("usage: python -m baize skill create <name> "
+                  "--description \"...\" [--domain ...] [--level ...] "
+                  "[--body \"...\"] [--body-file path]")
+            return 2
+        body = args.body or ""
+        if args.body_file:
+            body = Path(args.body_file).read_text(encoding="utf-8")
+        sf = skill_index.create_skill(
+            args.target, args.description or "", body,
+            domain=args.domain or "", level=args.level or "", origin="user")
+        print(f"skill created and indexed -> {sf}")
+        return 0
+    if action == "audit":
+        rep = skill_index.audit_index()
+        print("技能治理审计 (skill governance audit)")
+        print(f"  索引技能总数    : {rep['count']}")
+        print(f"  去重丢弃副本    : {rep['duplicates_deduped']}")
+        ps = rep["per_source"]
+        if ps:
+            print("  各库计数:")
+            for src, n in sorted(ps.items(), key=lambda kv: -kv[1]):
+                print(f"    - {src}: {n}")
+        miss = rep["missing_description"]
+        if miss:
+            print(f"  缺失 description 的技能 ({len(miss)}):")
+            for m in miss[:30]:
+                print(f"    - {m['name']} [{m['source']}] {m['path']}")
+        dups = rep["duplicate_groups"]
+        if dups:
+            print(f"  跨库重复组 ({len(dups)}):")
+            for d in dups[:30]:
+                dropped = ", ".join(d["dropped"])
+                print(f"    - {d['name']}: 保留[{d['kept']}] 丢弃[{dropped}]")
+        if not miss and not dups:
+            print("  状态良好: 无缺失 frontmatter, 无跨库重复.")
+        return 0
+    print("unknown skill action")
+    return 2
+
+
+def cmd_recon(args) -> int:
+    from . import recon
+    web = getattr(args, "web", False)
+    rep = recon.recon(args.goal, web=web)
+    print("方案侦察 pre-flight recon")
+    print(f"  goal: {rep['goal']}")
+    hits = rep["library_hits"]
+    if hits:
+        print(f"  技能库同类实现 ({len(hits)}):")
+        for h in hits[:20]:
+            print(f"    - {h['name']} [{h['source']}] {h['skill_file']}")
+    else:
+        print("  技能库未发现同类实现")
+    wh = rep["web_hits"]
+    if wh:
+        if wh[0].get("disabled"):
+            print(f"  外部侦察已关闭: {wh[0].get('hint')}")
+        else:
+            for w in wh:
+                print(f"  外部搜索 [{w['query']}]:")
+                for s in w["sources"]:
+                    print(f"    - {s['name']}: {s['url']}")
+    print(f"  建议: {rep['advice']}")
+    return 0
+
+
+def cmd_clarify(args) -> int:
+    client = LLMClient()
+    if not client.configured:
+        print("model endpoint not configured - set BAIZE_MODEL_BASE_URL / "
+              "BAIZE_MODEL_NAME (and API key) in .env")
+        return 2
+    orch = Orchestrator(client=client)
+    cr = orch.clarify(args.goal)
+    print("需求澄清 (clarify -> PRD)")
+    qa = cr["qa"]
+    for i, q in enumerate(qa.get("questions", []) or []):
+        a = qa.get("answers") or []
+        ans = a[i] if i < len(a) else "(未答)"
+        print(f"  Q{i+1}: {q}")
+        print(f"  A{i+1}: {ans}")
+    for a in qa.get("assumptions", []) or []:
+        print(f"  假设: {a}")
+    print(f"  PRD -> {cr['prd_file']}")
+    return 0
 
 
 def cmd_manifest(args) -> int:
@@ -166,6 +289,12 @@ def cmd_gate(args) -> int:
             if c.get("total") is not None
             else f" ({c.get('reason')})")
     print(f"  coverage : {c['status'].upper()}{tail}")
+    q = rep.get("quality", {})
+    if q:
+        print(f"  quality  : {q['score']} (threshold {q['threshold']}) "
+              f"{'PASS' if q['pass'] else 'FAIL'}")
+        for dim, val in q["dimensions"].items():
+            print(f"    - {dim}: {val}")
     print(f"  overall  : {rep['status'].upper()}")
     if rep["status"] == "fail":
         return 1
@@ -403,7 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     vp.add_argument("--host", default=None)
     vp.add_argument("--port", type=int, default=None)
 
-    pp = sub.add_parser("plugins", help="list loaded plugins")
+    sub.add_parser("plugins", help="list loaded plugins")
 
     rg = sub.add_parser("rag", help="RAG retrieval over skills + memory")
     rg.add_argument("action", choices=["search", "scores"])
@@ -435,14 +564,48 @@ def build_parser() -> argparse.ArgumentParser:
     tm.add_argument("action", choices=["show", "stats", "clear"])
     tm.add_argument("team_id", nargs="?", default="default")
 
+    sk = sub.add_parser("skill",
+                        help="skill library governance (V23): build/search/"
+                             "create/audit")
+    sk.add_argument("action", choices=["build", "search", "create", "audit"])
+    sk.add_argument("target", nargs="?", default="",
+                    help="keyword (search) or skill name (create)")
+    sk.add_argument("--description", default="")
+    sk.add_argument("--domain", default="")
+    sk.add_argument("--level", default="")
+    sk.add_argument("--body", default="")
+    sk.add_argument("--body-file", default="")
+
+    rk = sub.add_parser("recon",
+                        help="V23.4 pre-flight recon: prior art before build")
+    rk.add_argument("goal")
+    rk.add_argument("--web", action="store_true",
+                    help="also search external Chinese ecosystems "
+                         "(needs BAIZE_RECON_WEB=1)")
+
+    cl = sub.add_parser("clarify",
+                        help="V23.5 clarify a goal into a PRD before planning")
+    cl.add_argument("goal")
+
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Fail-fast configuration guard for every command except `doctor`, which is
+    # itself the diagnostic for bad config (it reports schema issues as WARN).
+    if args.command != "doctor":
+        try:
+            validate()
+        except ConfigError as e:
+            print(f"[config] invalid configuration - {e}", file=sys.stderr)
+            return 2
     handlers = {
         "doctor": cmd_doctor,
         "index": cmd_index,
+        "skill": cmd_skill,
+        "recon": cmd_recon,
+        "clarify": cmd_clarify,
         "manifest": cmd_manifest,
         "memory": cmd_memory,
         "run": cmd_run,

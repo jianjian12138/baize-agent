@@ -208,6 +208,10 @@ def _tool_git(args: str, timeout: int = 60) -> str:
             encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return f"ERROR: git timed out after {timeout}s"
+    except FileNotFoundError:
+        # git is not installed on this host; the tool must degrade honestly
+        # instead of crashing the caller (tests already gate on this case).
+        return "exit=127\ngit executable not found on PATH"
     out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
     out = redact(out)
     return f"exit={proc.returncode}\n{out[:8000]}"
@@ -273,19 +277,15 @@ def _tool_run_skill(name: str, steps_json: str = "[]",
             f"evidence={res['evidence']}")
 
 
-def _tool_save_skill(name: str, description: str, body_markdown: str) -> str:
+def _tool_save_skill(name: str, description: str, body_markdown: str,
+                     domain: str = "", level: str = "") -> str:
     """Self-evolving skill loop (hermes trait): the agent persists a new
-    skill learned from experience into assets/skills/learned/."""
+    skill learned from experience into the *isolated* user skills library
+    (V23.2 — no longer pollutes the built-in assets/skills collection)."""
     cfg = load_config()
-    safe = re.sub(r"[^a-z0-9_-]", "-", name.lower()).strip("-") or "unnamed"
-    skill_dir = Path(cfg["BAIZE_ASSETS_DIR"]) / "skills" / "learned" / safe
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    skill_file = skill_dir / "SKILL.md"
-    skill_file.write_text(
-        f"---\nname: {safe}\ndescription: {description}\n"
-        f"origin: agent-learned\n---\n\n{body_markdown}\n",
-        encoding="utf-8")
-    skill_index.build_index(cfg)  # re-index so it is immediately findable
+    skill_file = skill_index.create_skill(
+        name, description, body_markdown, domain=domain, level=level,
+        origin="agent", cfg=cfg)
     return f"skill saved and indexed -> {skill_file}"
 
 
@@ -331,9 +331,13 @@ def default_registry() -> ToolRegistry:
                      _s(text={"type": "string"},
                         tags={"type": "string", "_opt": True}), _tool_memory_log)
         reg.register("save_skill", "Persist a newly learned reusable skill "
-                     "(self-evolving loop).",
+                     "(self-evolving loop) into the isolated user skills "
+                     "library (never the built-in collection).",
                      _s(name={"type": "string"}, description={"type": "string"},
-                        body_markdown={"type": "string"}), _tool_save_skill)
+                        body_markdown={"type": "string"},
+                        domain={"type": "string", "_opt": True},
+                        level={"type": "string", "_opt": True}),
+                     _tool_save_skill)
         reg.register("run_skill", "Execute a declared skill through the honest "
                      "self-evolution loop (verify + record outcome).",
                      _s(name={"type": "string"},

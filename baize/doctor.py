@@ -12,8 +12,9 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import ENV_FILE, ROOT, load_config, skill_library_paths
+from .config import ENV_FILE, load_config, skill_library_paths
 from . import sandbox
+from .config_schema import ConfigError, validate
 
 
 @dataclass
@@ -101,6 +102,15 @@ def run_checks(cfg: dict | None = None) -> DoctorReport:
         + ("" if mech != "logical-only"
            else " (degrades to logical-only; OS shield unavailable here)"),
     )
+
+    # 8. Configuration schema (fail-fast guard against a mis-typed value the
+    #    user actually set; unset keys fall back to code defaults and pass).
+    try:
+        validate(cfg)
+        report.add("config schema", True, required=False,
+                   detail="all set values are well-formed")
+    except ConfigError as e:
+        report.add("config schema", False, required=False, detail=str(e))
 
     return report
 

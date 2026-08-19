@@ -1,4 +1,4 @@
-# START-HERE — 10 分钟上手白泽引擎 V19.0.0
+# START-HERE — 10 分钟上手白泽引擎 V23.0.0
 
 ## 你拿到的是什么
 
@@ -8,11 +8,15 @@
 
 ## 第 1 步：环境（2 分钟）
 
+> 想一条命令搞定？直接跑 `python install/bootstrap.py`：它会自动准备 `.env`、跑 `doctor`，
+> 且**若本机没有 Python ≥ 3.10，会自动安装（winget / Homebrew / apt-dnf-apk / python.org）后重启**——
+> 裸机也能一键部署（与 hermes 一致）。不想自动装 Python 就加 `--no-auto-python`。
+
 ```bash
 cp .env.example .env
-# 打开 .env：
-#   1) 确认 SKILL_LIBRARY_PATHS 指向你机器上的技能库路径
-#   2) 如需运行自主 Agent，配置 BAIZE_MODEL_BASE_URL / BAIZE_MODEL_NAME / BAIZE_MODEL_API_KEY
+# 打开 .env（SKILL_LIBRARY_PATHS 已默认指向仓库自带的 ./assets/skills，
+#   新鲜克隆可直接通过 doctor，无需改动）：
+#   如需运行自主 Agent，配置 BAIZE_MODEL_BASE_URL / BAIZE_MODEL_NAME / BAIZE_MODEL_API_KEY
 python -m baize doctor        # 必须 RESULT: PASSED
 ```
 

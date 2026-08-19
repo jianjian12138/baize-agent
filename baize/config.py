@@ -20,6 +20,11 @@ _DEFAULTS = {
     "BAIZE_PROJECTS_DIR": str(ROOT / "projects"),
     "BAIZE_ASSETS_DIR": str(ROOT / "assets"),
     "BAIZE_INDEX_FILE": str(ROOT / "persistence" / "skill_index.json"),
+    # Dedicated library for agent-learned / user-authored skills (V23.2).
+    # Kept separate from assets/skills (built-in methodology) and any external
+    # SKILL_LIBRARY_PATHS so "collected" and "autonomously-created" skills stay
+    # distinguishable and auditable.
+    "BAIZE_USER_SKILLS_DIR": str(ROOT / "user_skills"),
     # Comma separated list of external skill library roots.
     "SKILL_LIBRARY_PATHS": "",
     "TEST_COVERAGE_THRESHOLD": "85",
@@ -80,6 +85,12 @@ _DEFAULTS = {
     "BAIZE_CHAOS_ENABLED": "0",              # fault injection (testing only)
     "BAIZE_CHAOS_FAILURE_RATE": "0.0",       # 0.0-1.0 probability
     "BAIZE_CHAOS_SEED": "",                  # fixed seed = reproducible chaos
+    # --- V23.4 pre-flight recon (external search default OFF) ---
+    "BAIZE_RECON_WEB": "0",                  # "1" enables outbound web recon
+    # --- V23.5 clarify-before-plan (default OFF; opt-in) ---
+    "BAIZE_CLARIFY": "0",                    # "1" triggers prior-art clarification
+    # --- V23.6 multi-dimensional quality gate ---
+    "BAIZE_QUALITY_THRESHOLD": "0.7",        # overall quality score floor
 }
 
 

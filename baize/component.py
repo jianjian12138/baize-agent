@@ -35,7 +35,10 @@ from enum import Enum
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .config import load_config
+from .logging_setup import get_logger
 from .observability import obs
+
+log = get_logger("component")
 
 
 class ComponentError(Exception):
@@ -353,10 +356,10 @@ class CompositionKernel:
             # Trust boundary (F1): a third party must not take over command
             # execution (sandbox/tool) or persisted memory (session) by default.
             obs.record_error("component_security_rejected")
-            print(
-                f"[component] REJECTED auto-discovered {comp.name!r} for "
-                f"security-critical kind {comp.kind.value}: keeping trusted "
-                f"built-in default (set BAIZE_COMPONENTS to override explicitly)")
+            log.warning(
+                "[component] REJECTED auto-discovered %r for security-critical "
+                "kind %s: keeping trusted built-in default (set BAIZE_COMPONENTS "
+                "to override explicitly)", comp.name, comp.kind.value)
             return
         self.components[comp.kind] = comp
 
@@ -455,8 +458,8 @@ class CompositionKernel:
                         f"component {comp.name} requires {missing} but nothing "
                         f"provides it")
                 obs.record_error("component_dep_missing")
-                print(f"[component] {comp.name} requires {missing} (unmet); "
-                      f"skipping (auto-discovered)")
+                log.warning("[component] %s requires %s (unmet); skipping "
+                            "(auto-discovered)", comp.name, missing)
                 del self.components[name]
                 self._restore_default(comp.kind)
                 changed = True
@@ -484,8 +487,8 @@ class CompositionKernel:
                             "circular component dependency: " + " -> ".join(cyc))
                     for n in cyc:  # break an auto-only cycle
                         if n in comps_by_name and not comps_by_name[n].explicit:
-                            print(f"[component] breaking auto cycle at {n}; "
-                                  f"skipping (auto-discovered)")
+                            log.warning("[component] breaking auto cycle at %s; "
+                                        "skipping (auto-discovered)", n)
                             del self.components[n]
                             self._restore_default(comps_by_name[n].kind)
                             return
@@ -513,8 +516,8 @@ class CompositionKernel:
                         f"explicit component {comp.name} ({kind.value}) failed "
                         f"to build: {e}") from e
                 obs.record_error("component_build_errors")
-                print(f"[component] {comp.name} ({kind.value}) failed to "
-                      f"build: {e}; skipping (auto-discovered)")
+                log.warning("[component] %s (%s) failed to build: %s; skipping "
+                            "(auto-discovered)", comp.name, kind.value, e)
                 self._add_default_to_runtime(kind, runtime)
                 continue
             if not isinstance(inst, proto):
@@ -523,8 +526,9 @@ class CompositionKernel:
                         f"explicit component {comp.name} ({kind.value}) does "
                         f"not satisfy {proto.__name__}")
                 obs.record_error("component_type_errors")
-                print(f"[component] {comp.name} ({kind.value}) rejected by "
-                      f"type check ({proto.__name__}); skipping (auto-discovered)")
+                log.warning("[component] %s (%s) rejected by type check (%s); "
+                            "skipping (auto-discovered)",
+                            comp.name, kind.value, proto.__name__)
                 self._add_default_to_runtime(kind, runtime)
                 continue
             runtime.components[kind] = inst

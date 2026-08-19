@@ -25,7 +25,11 @@ from random import shuffle
 from typing import Callable, Iterator
 
 from .config import load_config
+from .logging_setup import get_logger
 from .observability import obs
+from .chaos import Chaos
+
+log = get_logger("llm")
 
 Transport = Callable[[str, dict, dict], dict]
 StreamTransport = Callable[[str, dict, dict], Iterator[dict]]
@@ -237,8 +241,17 @@ class LLMClient:
             int(cfg.get("BAIZE_RATE_LIMIT_RPM", "60")),
             int(cfg.get("BAIZE_RATE_LIMIT_TPM", "60000")),
         )
-        self.transport = transport or _http_transport
-        self.stream_transport = stream_transport or _http_stream_transport
+        # Fault injection (chaos) is layered only over the *default* transport.
+        # An explicitly injected transport (tests, custom adapters) is left
+        # untouched so behaviour stays deterministic and isolated. Chaos is OFF
+        # unless BAIZE_CHAOS_ENABLED=1, so the wrapped transport just delegates.
+        self._chaos = Chaos(self.cfg)
+        self.transport = (
+            self._chaos.wrap_transport(_http_transport)
+            if transport is None else transport)
+        self.stream_transport = (
+            self._chaos.wrap_transport(_http_stream_transport)
+            if stream_transport is None else stream_transport)
         self._route_from_config()
 
     def _route_from_config(self) -> None:
@@ -257,7 +270,7 @@ class LLMClient:
                     ))
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 obs.record_error("router_config_errors")
-                print(f"[router] invalid BAIZE_MODEL_ROUTER ({e}); using single model")
+                log.warning("[router] invalid BAIZE_MODEL_ROUTER (%s); using single model", e)
         if not self.models:
             base = self.cfg.get("BAIZE_MODEL_BASE_URL", "").rstrip("/")
             name = self.cfg.get("BAIZE_MODEL_NAME", "")
@@ -397,7 +410,7 @@ class LLMClient:
                 if delta.get("content") is not None:
                     yield {"delta": delta["content"]}
             obs.inc("llm_streams")
-        except Exception as e:  # defensive: fall back to non-stream
+        except Exception:  # defensive: fall back to non-stream
             obs.record_error("llm_stream_errors")
             full = self.chat(messages, tools, temperature, stream=False)
             yield {"delta": full.get("content") or ""}

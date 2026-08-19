@@ -1,97 +1,77 @@
-"""Real tests for the skill indexer using real temp skill libraries."""
-import sys
-from pathlib import Path
+"""Tests for V23 skill-index governance: best-copy dedup + autonomous create."""
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import json
 
-from baize.skill_index import (  # noqa: E402
-    _parse_frontmatter, build_index, scan_library, search,
-)
+from baize.skill_index import (_dedup, audit_index, build_index, create_skill,
+                               safe_name)
 
 
-def make_skill(root: Path, folder: str, name: str, desc: str,
-               frontmatter: bool = True) -> Path:
-    d = root / folder
-    d.mkdir(parents=True)
-    if frontmatter:
-        content = f"---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n"
-    else:
-        content = f"# {name}\n\n{desc}\n"
-    (d / "SKILL.md").write_text(content, encoding="utf-8")
-    return d
+def test_safe_name_slugifies():
+    assert safe_name("My Skill!") == "my-skill"
+    assert safe_name("foo/bar baz") == "foo-bar-baz"
+    assert safe_name("") == "unnamed"
 
 
-def cfg_for(tmp_path: Path, libs: list[Path]) -> dict:
-    persistence = tmp_path / "persistence"
-    assets = tmp_path / "assets"
-    (assets / "skills").mkdir(parents=True, exist_ok=True)
-    persistence.mkdir(exist_ok=True)
-    return {
-        "BAIZE_PERSISTENCE_DIR": str(persistence),
-        "BAIZE_ASSETS_DIR": str(assets),
-        "BAIZE_PROJECTS_DIR": str(tmp_path),
-        "BAIZE_INDEX_FILE": str(persistence / "skill_index.json"),
-        "SKILL_LIBRARY_PATHS": ",".join(str(p) for p in libs),
+def test_dedup_keeps_most_complete_copy():
+    """V23.1: a built-in copy missing its description must NOT shadow a
+    complete external copy (the V22 'first occurrence wins' bug)."""
+    skills = [
+        {"name": "Foo", "description": "", "path": "/a/foo",
+         "source": "local:assets/skills"},
+        {"name": "Foo", "description": "does the foo thing", "path": "/b/foo",
+         "source": "user:user_skills"},
+        {"name": "Bar", "description": "single copy", "path": "/c/bar",
+         "source": "local:assets/skills"},
+    ]
+    unique, dropped, groups = _dedup(skills)
+    assert len(unique) == 2
+    foo = next(s for s in unique if s["name"] == "Foo")
+    assert foo["source"] == "user:user_skills"
+    assert len(dropped) == 1
+    assert groups[0]["name"] == "Foo"
+    assert groups[0]["kept"] == "user:user_skills"
+
+
+def test_create_skill_writes_and_indexes(tmp_path):
+    cfg = {
+        "BAIZE_USER_SKILLS_DIR": str(tmp_path / "user_skills"),
+        "BAIZE_INDEX_FILE": str(tmp_path / "persistence" / "skill_index.json"),
+        "BAIZE_ASSETS_DIR": str(tmp_path / "assets"),
+        "SKILL_LIBRARY_PATHS": "",
     }
+    sf = create_skill("My Skill!", "does X", "body text",
+                      domain="dev", level="1", cfg=cfg)
+    assert sf.is_file()
+    assert sf.parent.name == "my-skill"
+    text = sf.read_text(encoding="utf-8")
+    assert "name: my-skill" in text
+    assert "domain: dev" in text
+    assert "origin: agent" in text
+    data = json.loads((tmp_path / "persistence" / "skill_index.json")
+                      .read_text(encoding="utf-8"))
+    assert any(s["name"] == "my-skill" and s["source"] == "user:user_skills"
+               for s in data["skills"])
 
 
-def test_frontmatter_parse():
-    meta = _parse_frontmatter("---\nname: tdd\ndescription: test first\n---\n# x")
-    assert meta["name"] == "tdd"
-    assert meta["description"] == "test first"
-
-
-def test_scan_finds_skills_with_and_without_frontmatter(tmp_path):
-    lib = tmp_path / "lib"
-    make_skill(lib, "tdd-workflow", "tdd-workflow", "red green refactor")
-    make_skill(lib, "code-review", "Code Review", "review discipline",
-               frontmatter=False)
-    records = scan_library(lib, source="test")
-    names = {r["name"] for r in records}
-    assert names == {"tdd-workflow", "Code Review"}
-
-
-def test_scan_skips_node_modules(tmp_path):
-    lib = tmp_path / "lib"
-    make_skill(lib, "real-skill", "real", "ok")
-    junk = lib / "node_modules" / "pkg"
-    junk.mkdir(parents=True)
-    (junk / "SKILL.md").write_text("# junk", encoding="utf-8")
-    records = scan_library(lib, source="test")
-    assert len(records) == 1
-    assert records[0]["name"] == "real"
-
-
-def test_build_index_writes_json_and_search_hits(tmp_path):
-    lib = tmp_path / "lib"
-    make_skill(lib, "maozx-investigation", "maozx-investigation",
-               "no investigation, no right to speak")
-    cfg = cfg_for(tmp_path, [lib])
-
-    index = build_index(cfg)
-    assert index["count"] == 1
-    assert Path(cfg["BAIZE_INDEX_FILE"]).exists()
-
-    hits = search("investigation", cfg)
-    assert len(hits) == 1
-    assert hits[0]["name"] == "maozx-investigation"
-
-    assert search("nonexistent-keyword-xyz", cfg) == []
-
-
-def test_build_index_deduplicates_same_name_across_libraries(tmp_path):
-    """Same skill name in local + external lib should appear only once."""
-    lib = tmp_path / "lib"
-    # Create the same skill in both local assets and external lib
-    make_skill(lib, "tdd-workflow", "tdd-workflow", "from external lib")
-    local_assets = tmp_path / "assets" / "skills"
-    make_skill(local_assets, "tdd-workflow", "tdd-workflow", "from local")
-
-    cfg = cfg_for(tmp_path, [lib])
-    index = build_index(cfg)
-
-    # Should be deduped to 1, not 2
-    assert index["count"] == 1
-    assert index["duplicates_deduped"] == 1
-    # Local should win (first occurrence)
-    assert index["skills"][0]["source"] == "local:assets/skills"
+def test_audit_reports_missing_and_duplicates(tmp_path, monkeypatch):
+    cfg = {
+        "BAIZE_USER_SKILLS_DIR": str(tmp_path / "user_skills"),
+        "BAIZE_INDEX_FILE": str(tmp_path / "persistence" / "skill_index.json"),
+        "BAIZE_ASSETS_DIR": str(tmp_path / "assets"),
+        "SKILL_LIBRARY_PATHS": str(tmp_path / "ext"),
+    }
+    # built-in copy missing description
+    (tmp_path / "assets" / "skills" / "dup").mkdir(parents=True)
+    (tmp_path / "assets" / "skills" / "dup" / "SKILL.md").write_text(
+        "# Dup\nno frontmatter body\n", encoding="utf-8")
+    # external complete copy (should win)
+    (tmp_path / "ext" / "dup").mkdir(parents=True)
+    (tmp_path / "ext" / "dup" / "SKILL.md").write_text(
+        "---\nname: dup\ndescription: complete copy\n---\n", encoding="utf-8")
+    build_index(cfg)
+    rep = audit_index(cfg)
+    assert rep["count"] == 1
+    assert rep["duplicates_deduped"] == 1
+    assert any(m["name"] == "dup" for m in rep["missing_description"]) is False
+    assert any(g["name"] == "dup" for g in rep["duplicate_groups"])

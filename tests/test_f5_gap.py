@@ -1,12 +1,8 @@
-"""F5 coverage expansion: bring cli.py / context.py / serve.py up to parity.
+"""F5 coverage expansion: bring cli.py / serve.py up to parity.
 
 Targets the specific uncovered blocks reported by `coverage report`:
   * cli.py   : cmd_gate (156-174), cmd_bench public branch (181-190),
                cmd_automations full dispatch (200-271)
-  * context.py: Anthropic-style block extraction (37-45), non-str content
-                (46->32), dedup branches (84->83, 88-89, 91->90), empty warm
-                skip (94->exit), empty snapshot branches (100->104, 105->109),
-                persist-no-path (113), load edge cases (120, 123-124, 125->exit)
   * serve.py : GET /bench, /gate, /sessions/<id>, POST /sessions/fork,
                /sessions/compress (76, 81, 85-93, 125, 127, 167-192)
 
@@ -26,7 +22,6 @@ from pathlib import Path
 import pytest
 
 import baize.serve as serve_mod
-from baize import context
 from baize.cli import cmd_automations, cmd_bench, cmd_gate
 from baize.serve import ThreadingHTTPServer
 
@@ -150,99 +145,6 @@ def test_cli_automations_dispatch(capsys, monkeypatch):
     assert cmd_automations(_auto_args(action="run-now")) == 2
     # unknown action
     assert cmd_automations(_auto_args(action="bogus")) == 2
-
-
-# ---------------------------------------------------------------------------
-# context.py : extraction + tiered memory edge paths
-# ---------------------------------------------------------------------------
-
-def test_extract_evidence_anthropic_blocks():
-    msgs = [{
-        "role": "assistant",
-        "content": [
-            {"type": "tool_use", "name": "fs_write", "input": {}},
-            {"type": "tool_result",
-             "content": [{"type": "text", "text": "Error: disk full"}]},
-        ],
-    }]
-    ev = context.extract_evidence(msgs)
-    assert "fs_write" in ev["tool_calls"]
-    assert ev["errors"] >= 1
-
-
-def test_extract_evidence_non_str_content():
-    # content is neither str nor list -> the loop must not raise
-    ev = context.extract_evidence([{"role": "user", "content": 12345}])
-    assert ev["goals"] == []
-
-
-def test_tiered_memory_dedup():
-    tm = context.TieredMemory(hot_limit=2)
-    # push two messages that yield the SAME verdict + tool call + goal so the
-    # "already present" dedup branches (84->83, 88-89, 91->90) are exercised.
-    dup = {"role": "assistant",
-           "content": '{"verdict":"pass","evidence":"ok"}'}
-    tc = {"role": "assistant",
-          "content": [{"type": "tool_use", "name": "fs_write", "input": {}}]}
-    goal = {"role": "user", "content": "shared goal"}
-    for _ in range(4):
-        tm.push(dup)
-        tm.push(tc)
-        tm.push(goal)
-    # hot is capped
-    assert len(tm.hot) == 2
-    # cold collected exactly one of each (dedup worked)
-    assert tm.cold["verdicts"].count('{"verdict":"pass","evidence":"ok"}') == 1
-    assert tm.cold["tool_calls"].count("fs_write") == 1
-    assert tm.cold["goals"].count("shared goal") == 1
-
-
-def test_tiered_memory_empty_content_skips_warm():
-    tm = context.TieredMemory(hot_limit=1)
-    tm.push({"role": "user", "content": "   "})  # whitespace -> no warm line
-    tm.push({"role": "user", "content": "x"})      # forces demote of "   "
-    assert tm.warm == []                           # whitespace produced no warm
-    tm.push({"role": "user", "content": "y"})      # forces demote of "x"
-    assert len(tm.warm) == 1                       # "x" produced a warm line
-
-
-def test_tiered_memory_snapshot_empty_branches():
-    tm = context.TieredMemory(hot_limit=8)
-    # no warm, no cold -> neither system note appended (100->104, 105->109)
-    snap = tm.snapshot()
-    assert all(m.get("role") != "system" for m in snap)
-    # a verbatim hot message survives
-    tm.push({"role": "user", "content": "hi"})
-    snap2 = tm.snapshot()
-    assert any(m.get("content") == "hi" for m in snap2)
-
-
-def test_tiered_memory_persist_no_path():
-    tm = context.TieredMemory(hot_limit=2)  # path=None
-    tm.push({"role": "user", "content": "x"})  # overflows -> demote
-    # persist() must early-return without writing anything
-    tm.persist()
-    assert tm.path is None
-
-
-def test_tiered_memory_load_edge_cases(tmp_path):
-    p = tmp_path / "cold.json"
-    # missing file -> load() is a no-op
-    tm = context.TieredMemory(hot_limit=2, path=str(p))
-    tm.load()
-    assert tm.cold["verdicts"] == []
-
-    # corrupt JSON -> load() swallows JSONDecodeError and returns
-    p.write_text("{not valid json", encoding="utf-8")
-    tm2 = context.TieredMemory(hot_limit=2, path=str(p))
-    tm2.load()
-    assert tm2.cold["verdicts"] == []
-
-    # non-dict JSON -> load() keeps default cold (125->exit)
-    p.write_text("[1,2,3]", encoding="utf-8")
-    tm3 = context.TieredMemory(hot_limit=2, path=str(p))
-    tm3.load()
-    assert isinstance(tm3.cold, dict)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# AGENT.md — Baize Agent 操作协议 V22.0.0
+# AGENT.md — Baize Agent 操作协议 V23.0.0
 
 本协议适用于两类使用者：
 - **外部 AI 客户端**（Claude Code / Codex / WorkBuddy 等）接入本仓库时；

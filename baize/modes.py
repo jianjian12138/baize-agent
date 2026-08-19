@@ -15,7 +15,7 @@ mode name is ignored (fail-closed to the scalar sliders) rather than crashing.
 """
 from __future__ import annotations
 
-from .autonomy import AutonomyPolicy, VALID_LEVELS
+from .autonomy import VALID_LEVELS
 
 # mode name -> bundle. ``loop`` is "default" or "programmatic".
 MODES: dict[str, dict] = {

@@ -34,8 +34,7 @@ from .observability import obs
 from .plugin import registry as plugin_registry
 from .tools import ToolRegistry, default_registry
 from . import memory as memory_mod
-from . import skill_index
-from . import agents_rules
+from . import agent_rules
 
 MAX_OBSERVATION_CHARS = 8000
 COMPRESSED_OBSERVATION_CHARS = 400   # size of an observation after compression
@@ -161,6 +160,13 @@ def build_system_prompt(role: str = "executor",
             "never trust the executor's claim - NO FAKE DONE). Respond ONLY "
             'with JSON: {"verdict": "pass"|"fail", "evidence": "...", '
             '"issues": ["..."]}.'),
+        "clarifier": (
+            "You are the CLARIFIER agent. Before any plan is made, pin down "
+            "what the goal actually requires. Ask the few highest-leverage "
+            "clarifying questions (scope, constraints, success criteria, "
+            "non-goals), then state the assumptions you are making. Respond "
+            'ONLY with JSON: {"questions": ["..."], "answers": ["..."], '
+            '"assumptions": ["..."], "prd": "one-paragraph product spec"}.'),
     }
     base = role_prompts.get(role, role_prompts["executor"])
     parts = [
@@ -176,7 +182,7 @@ def build_system_prompt(role: str = "executor",
     if extra:
         parts.append(extra)
     # P0-2: inject external AGENTS.md/CLAUDE.md as untrusted reference only.
-    external_rules = agents_rules.load_external_rules(
+    external_rules = agent_rules.load_external_rules(
         cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT)))
     if external_rules:
         parts.append(external_rules)

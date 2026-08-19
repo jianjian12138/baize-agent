@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from baize import __version__  # noqa: E402
 from baize import dashboard  # noqa: E402
 from baize.team_memory import TeamMemory  # noqa: E402
 from baize.ui import Palette, ProgressUI, supports_color  # noqa: E402
@@ -101,9 +102,9 @@ def test_progress_bar_shape():
 # --- dashboard ---------------------------------------------------------------
 
 def test_dashboard_renders_self_contained_html():
-    html = dashboard.render("20.0.0")
+    html = dashboard.render(__version__)
     assert html.startswith("<!DOCTYPE html>")
-    assert "V20.0.0" in html
+    assert f"V{__version__}" in html
     assert "__VER__" not in html            # placeholder fully substituted
     for external in ("http://", "https://", "cdn."):
         assert external not in html         # zero external assets

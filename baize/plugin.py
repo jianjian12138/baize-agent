@@ -13,7 +13,10 @@ from pathlib import Path
 from types import ModuleType
 
 from .config import load_config
+from .logging_setup import get_logger
 from .observability import obs
+
+log = get_logger("plugin")
 
 __all__ = ["Plugin", "PluginRegistry", "registry"]
 
@@ -69,7 +72,7 @@ class PluginRegistry:
                             found += 1
                 except Exception as e:  # defensive isolation
                     obs.record_error("plugin_load_errors")
-                    print(f"[plugin] failed to load {path.name}: {e}")
+                    log.warning("[plugin] failed to load %s: %s", path.name, e)
         # V22 #99: also discover components (auto-discovered, log + skip). Never
         # trusted by default - a failing/bad component is isolated, not crashed.
         try:
@@ -77,7 +80,7 @@ class PluginRegistry:
             self._discover_components(get_kernel())
         except Exception as e:  # isolation: component discovery must not break host
             obs.record_error("plugin_component_discovery_errors")
-            print(f"[plugin] component discovery failed: {e}")
+            log.warning("[plugin] component discovery failed: %s", e)
         if found:
             obs.inc("plugins_loaded", found)
         return found
@@ -101,7 +104,7 @@ class PluginRegistry:
                     mod = self._import(path)
                 except Exception as e:  # defensive isolation
                     obs.record_error("plugin_component_load_errors")
-                    print(f"[plugin] failed to import {path.name}: {e}")
+                    log.warning("[plugin] failed to import %s: %s", path.name, e)
                     continue
                 for attr in vars(mod).values():
                     if (isinstance(attr, type) and attr is not Component
@@ -120,8 +123,8 @@ class PluginRegistry:
                             obs.inc("plugin_components_loaded")
                         except Exception as e:  # isolation
                             obs.record_error("plugin_component_errors")
-                            print(f"[plugin] failed to register component "
-                                  f"{attr.__name__}: {e}")
+                            log.warning("[plugin] failed to register component %s: %s",
+                                        attr.__name__, e)
 
     @staticmethod
     def _import(path: Path) -> ModuleType:
@@ -140,7 +143,7 @@ class PluginRegistry:
                 getattr(p, hook)(*args)
             except Exception as e:
                 obs.record_error("plugin_hook_errors")
-                print(f"[plugin] {p.name}.{hook} failed: {e}")
+                log.warning("[plugin] %s.%s failed: %s", p.name, hook, e)
 
 
 # Global default registry. Call registry.discover() once at startup.

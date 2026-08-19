@@ -21,6 +21,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setenv("BAIZE_PERSISTENCE_DIR", str(persistence))
     monkeypatch.setenv("BAIZE_ASSETS_DIR", str(assets))
     monkeypatch.setenv("BAIZE_INDEX_FILE", str(persistence / "skill_index.json"))
+    monkeypatch.setenv("BAIZE_USER_SKILLS_DIR", str(tmp_path / "user_skills"))
     monkeypatch.setenv("SKILL_LIBRARY_PATHS", "")
     monkeypatch.setenv("BAIZE_ALLOW_OUTSIDE_WORKSPACE", "0")
     return tmp_path
@@ -118,8 +119,7 @@ def test_save_skill_persists_and_indexes(sandbox):
         "description": "steps to deploy safely",
         "body_markdown": "1. test\n2. backup\n3. deploy"})
     assert "skill saved and indexed" in out
-    skill_file = (sandbox / "assets" / "skills" / "learned" /
-                  "deploy-checklist" / "SKILL.md")
+    skill_file = (sandbox / "user_skills" / "deploy-checklist" / "SKILL.md")
     assert skill_file.is_file()
     idx = json.loads((sandbox / "persistence" / "skill_index.json")
                      .read_text(encoding="utf-8"))

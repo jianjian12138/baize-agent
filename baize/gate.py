@@ -18,7 +18,7 @@ import json
 import time
 from pathlib import Path
 
-from .config import load_config
+from .config import load_config, ROOT
 
 # Evidence older than this is treated as stale (a "done" claim on a week-old
 # file is suspect - the work may have regressed since).
@@ -95,7 +95,7 @@ def check_composition(cfg: dict | None = None) -> dict:
     verify a mode bundle. This closes the "component swap + mode switch" path
     from the V22 plan with REAL execution (fail-closed)."""
     from .component import (
-        CompositionKernel, Kind, Component, _KIND_PROTOCOLS, LoopStrategyProto)
+        CompositionKernel, Kind, _KIND_PROTOCOLS, LoopStrategyProto)
     from .modes import VALID_MODES, resolve_mode
     try:
         rt = CompositionKernel(cfg).assemble()
@@ -133,13 +133,68 @@ def check_composition(cfg: dict | None = None) -> dict:
         return {"status": "fail", "detail": f"{type(exc).__name__}: {exc}"}
 
 
+def check_quality(cfg: dict | None = None) -> dict:
+    """V23.6 multi-dimensional quality gate.
+
+    Aggregates existing honest signals into five dimensions (no new deps, no
+    re-running tests) so a low-quality deliverable is blocked, not shipped:
+      - runnable         : manifest evidence is real (check_manifest)
+      - coverage_clarity : real coverage measured (check_coverage)
+      - composition      : composition kernel + modes assemble (check_composition)
+      - locatability     : skill index hygiene (missing-description rate)
+      - maintainability  : has tests/ + README (static repo hygiene)
+    Below ``BAIZE_QUALITY_THRESHOLD`` the overall gate FAILS (intercept).
+    """
+    cfg = cfg or load_config()
+    # 1. runnable — manifest evidence actually exists / non-empty / fresh.
+    man_ok, _ = check_manifest(
+        cfg.get("BAIZE_MANIFEST", "baize.manifest.json"))
+    # 2. coverage clarity — real coverage measured, not faked.
+    cov = check_coverage(cfg.get("BAIZE_COVERAGE_DATA", ".coverage"))
+    cov_score = {"pass": 1.0, "unknown": 0.5, "fail": 0.0}.get(
+        cov.get("status"), 0.0)
+    # 3. composition — kernel + modes actually assemble.
+    comp = check_composition(cfg)
+    comp_score = 1.0 if comp.get("status") == "pass" else 0.0
+    # 4. locatability — skill index hygiene (missing-description rate).
+    try:
+        from . import skill_index
+        au = skill_index.audit_index(cfg)
+        total = au.get("count") or 1
+        miss = len(au.get("missing_description", []))
+        locatability = max(0.0, 1.0 - miss / total)
+    except Exception:
+        locatability = 0.5
+    # 5. maintainability — static repo hygiene.
+    root = Path(cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT)))
+    has_tests = (root / "tests").is_dir()
+    has_readme = any((root / f).exists()
+                     for f in ("README.md", "README", "readme.md"))
+    maintainability = (0.5 if has_tests else 0.0) + (0.5 if has_readme else 0.0)
+    dims = {
+        "runnable": 1.0 if man_ok else 0.0,
+        "coverage_clarity": cov_score,
+        "composition": comp_score,
+        "locatability": round(locatability, 3),
+        "maintainability": maintainability,
+    }
+    weights = {"runnable": 0.3, "coverage_clarity": 0.25, "composition": 0.2,
+               "locatability": 0.15, "maintainability": 0.1}
+    score = round(sum(dims[k] * w for k, w in weights.items()), 3)
+    threshold = float(cfg.get("BAIZE_QUALITY_THRESHOLD", "0.7"))
+    return {"dimensions": dims, "score": score,
+            "threshold": threshold, "pass": score >= threshold}
+
+
 def run_gate(manifest_path: str = "baize.manifest.json",
              data_file: str = ".coverage",
              now: float | None = None) -> dict:
     man_ok, man_problems = check_manifest(manifest_path, now=now)
     cov = check_coverage(data_file)
     comp = check_composition()
-    if not man_ok or cov["status"] == "fail" or comp["status"] == "fail":
+    quality = check_quality()
+    if (not man_ok or cov["status"] == "fail" or comp["status"] == "fail"
+            or not quality["pass"]):
         status = "fail"
     elif cov["status"] == "unknown":
         status = "unknown"
@@ -150,7 +205,8 @@ def run_gate(manifest_path: str = "baize.manifest.json",
         "manifest_problems": man_problems,
         "coverage": cov,
         "composition": comp,
+        "quality": quality,
         "overall": (man_ok and cov["status"] == "pass"
-                    and comp["status"] == "pass"),
+                    and comp["status"] == "pass" and quality["pass"]),
         "status": status,
     }

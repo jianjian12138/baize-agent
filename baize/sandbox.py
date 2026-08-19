@@ -20,9 +20,7 @@ from __future__ import annotations
 import logging
 import platform
 import subprocess
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from shutil import which
 
 from .config import ROOT, load_config
@@ -58,9 +56,18 @@ def platform_mechanism() -> str:
 
 
 def _plain(command: str, cwd: str, timeout: int) -> SandboxResult:
+    # Resolve bare "python" / "python3" to the interpreter actually running us.
+    # The store-stub "python.exe" alias returns 9009 instead of executing, so
+    # sandbox tests against a stock Python install (not on PATH) would always
+    # fail. Using sys.executable avoids the alias entirely.
+    import sys as _sys
+    cmd = command
+    head = cmd.split(None, 1)[0]
+    if head in ("python", "python3"):
+        cmd = _sys.executable + cmd[len(head):]
     try:
         proc = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
+            cmd, shell=True, capture_output=True, text=True,
             timeout=timeout, cwd=cwd, encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return SandboxResult(-1, "", f"command timed out after {timeout}s",

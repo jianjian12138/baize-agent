@@ -149,17 +149,27 @@ def test_post_too_large_413(http_server):
     assert code == 413
 
 
-def test_post_run_not_configured_422(http_server):
-    """Real LLMClient with no model env -> honest 422 fail-closed."""
+def test_post_run_not_configured_422(http_server, monkeypatch):
+    """Injected unconfigured LLMClient -> honest 422 fail-closed.
+
+    The injected client reports ``configured = False`` so the handler returns
+    422 with a model-related error instead of letting a bogus call fly to the
+    upstream provider. Environment-independent (no reliance on .env state).
+    """
+    monkeypatch.setattr(serve_mod, "LLMClient", _FakeUnconfiguredClient)
     code, _, body = _req(http_server, "POST", "/run", {"goal": "do something"})
     assert code == 422
-    assert json.loads(body)["error"] == "model endpoint not configured"
+    err = json.loads(body)["error"]
+    assert "not configured" in err or "not set" in err
 
 
-def test_post_team_not_configured_422(http_server):
+def test_post_team_not_configured_422(http_server, monkeypatch):
+    """Injected unconfigured LLMClient -> honest 422 fail-closed (team route)."""
+    monkeypatch.setattr(serve_mod, "LLMClient", _FakeUnconfiguredClient)
     code, _, body = _req(http_server, "POST", "/team", {"goal": "do something"})
     assert code == 422
-    assert json.loads(body)["error"] == "model endpoint not configured"
+    err = json.loads(body)["error"]
+    assert "not configured" in err or "not set" in err
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +213,10 @@ class _FakeOrchestrator:
 
 class _FakeClient:
     configured = True
+
+
+class _FakeUnconfiguredClient:
+    configured = False
 
 
 def test_post_run_happy_path(http_server, monkeypatch):

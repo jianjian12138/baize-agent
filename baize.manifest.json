@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "22.1.0",
+  "version": "23.0.0",
   "phases": [
     {
       "id": "V68",
@@ -10,9 +10,9 @@
     },
     {
       "id": "V69",
-      "name": "MCP 客户端（纯 stdlib）",
-      "status": "done",
-      "evidence": ["baize/mcp.py", "tests/test_mcp.py"]
+      "name": "MCP 客户端（纯 stdlib）—— 已于 V24 系统瘦身中移除（真孤儿、零接线、无运行时引用）",
+      "status": "skipped",
+      "evidence": []
     },
     {
       "id": "V70",
@@ -58,9 +58,9 @@
     },
     {
       "id": "V77",
-      "name": "上下文/长程管理增强（证据保全 + 热温冷分层）",
+      "name": "上下文/长程管理增强（证据保全 + 热温冷分层，实现收敛至 agent.py）",
       "status": "done",
-      "evidence": ["baize/context.py", "baize/agent.py", "tests/test_context.py"]
+      "evidence": ["baize/agent.py"]
     },
     {
       "id": "V78",
@@ -78,7 +78,7 @@
       "id": "V47",
       "name": "早期验收规划-读文档（由 #68-#79 实质覆盖收口）",
       "status": "done",
-      "evidence": ["docs/baize-agent-P1-P3实施计划.md", "baize/hooks.py"]
+      "evidence": ["docs/archive/baize-agent-P1-P3实施计划.md", "baize/hooks.py"]
     },
     {
       "id": "V48",
@@ -153,6 +153,70 @@
         "tests/test_plugin_discovery.py",
         "tests/test_config_schema.py",
         "tests/test_f5_gap.py"
+      ]
+    },
+    {
+      "id": "V103",
+      "name": "V23.1 技能库治理（去重取最规范副本 + index v2 + audit 字段）",
+      "status": "done",
+      "evidence": [
+        "baize/skill_index.py",
+        "baize/config.py",
+        "tests/test_skill_index.py"
+      ]
+    },
+    {
+      "id": "V104",
+      "name": "V23.2 技能自创建（create_skill + user_skills 目录 + CLI subcommand）",
+      "status": "done",
+      "evidence": [
+        "baize/skill_index.py",
+        "baize/tools.py",
+        "baize/cli.py",
+        "tests/test_skill_index.py",
+        "tests/test_tools.py"
+      ]
+    },
+    {
+      "id": "V105",
+      "name": "V23.3 索引审计（audit_index 报告 per_source/missing_description/duplicate_groups）",
+      "status": "done",
+      "evidence": [
+        "baize/skill_index.py",
+        "baize/cli.py"
+      ]
+    },
+    {
+      "id": "V106",
+      "name": "V23.4 方案侦察 pre-flight（recon.py + Orchestrator.run 接入 + 中文生态 URL 探测）",
+      "status": "done",
+      "evidence": [
+        "baize/recon.py",
+        "baize/orchestrator.py",
+        "baize/cli.py",
+        "tests/test_recon.py"
+      ]
+    },
+    {
+      "id": "V107",
+      "name": "V23.5 阶段路由强化 Director（clarifier 角色 + render_prd + PRD.md 落盘）",
+      "status": "done",
+      "evidence": [
+        "baize/agent.py",
+        "baize/orchestrator.py",
+        "baize/cli.py",
+        "tests/test_clarify.py"
+      ]
+    },
+    {
+      "id": "V108",
+      "name": "V23.6 多维质量门禁（runnable + coverage_clarity + composition + locatability + maintainability 五维 + 阈值）",
+      "status": "done",
+      "evidence": [
+        "baize/gate.py",
+        "baize/config.py",
+        "baize/cli.py",
+        "tests/test_gate.py"
       ]
     }
   ]

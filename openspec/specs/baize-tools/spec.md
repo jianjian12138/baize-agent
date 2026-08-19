@@ -25,9 +25,16 @@
 4. bash 命令先过 deny-list（rm -rf 根/盘符、format、mkfs、shutdown、dd 等），
    命中即拒绝执行并说明命中的模式。
 5. bash 执行有超时（默认 60s），超时返回 ERROR 观察值；输出截断至 8000 字符。
-6. `save_skill` 将技能写入 `assets/skills/learned/<safe-name>/SKILL.md`
-   （frontmatter 含 origin: agent-learned）并立即重建索引，使其可被检索。
+6. `save_skill` 将技能写入独立的用户技能库 `user_skills/<safe-name>/SKILL.md`
+   （frontmatter 含 origin: agent、created_at 等）并立即重建索引，使其可被检索；
+   该库与内置 `assets/skills` 收集库分离，保证「收集」与「自主沉淀」可区分、可审计
+   （V23.2）。`baize skill create` 提供同一入口供人直接创建。
 7. `read_file` 超长文件截断并注明剩余行数；`list_dir` 最多列 200 项。
+8. V23.4/5/6 CLI 入口：`baize recon <goal> [--web]` 在规划前做方案侦察
+   （本地技能库命中 + 可选外部中文生态搜索，外部默认关闭、需 `BAIZE_RECON_WEB=1`）；
+   `baize clarify <goal>` 触发需求澄清并落盘 `PRD.md`；`baize gate` 输出新增
+   quality 五维评分（runnable/coverage_clarity/composition/locatability/
+   maintainability），低于 `BAIZE_QUALITY_THRESHOLD` 整体 FAIL（拦截不交付）。
 
 ## 边界与异常
 
@@ -42,3 +49,4 @@
 | 3 | `tests/test_tools.py`（沙箱越界拒绝与放行开关） |
 | 4, 5 | `tests/test_tools.py`（deny-list 拦截 / bash 真实执行） |
 | 6 | `tests/test_tools.py`（save_skill 落盘并可检索） |
+| 8 | `tests/test_recon.py` / `tests/test_clarify.py` / `tests/test_gate.py` |

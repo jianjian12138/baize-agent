@@ -23,6 +23,7 @@ from .agent import Agent, Session
 from .component import get_runtime
 from .config import load_config
 from .llm import LLMClient
+from .logging_setup import get_logger, setup_logging
 from .observability import obs
 from .orchestrator import Orchestrator
 from .plugin import registry
@@ -30,6 +31,8 @@ from . import sessions as sessions_mod
 from . import bench as bench_mod
 from . import bench_public as bench_public_mod
 from . import gate as gate_mod
+
+log = get_logger("serve")
 
 MAX_BODY = 1 << 20  # 1 MiB
 
@@ -134,6 +137,9 @@ class Handler(BaseHTTPRequestHandler):
         client = LLMClient()
         if not client.configured:
             return self._send(422, {"error": "model endpoint not configured"})
+        if not _has_real_key(client):
+            return self._send(422, {"error": "model API key not set "
+                                              "(placeholder in .env)"})
         agent = Agent(role="executor", client=client)
         obs.inc("serve_run")
         res = agent.run(goal)
@@ -151,6 +157,9 @@ class Handler(BaseHTTPRequestHandler):
         client = LLMClient()
         if not client.configured:
             return self._send(422, {"error": "model endpoint not configured"})
+        if not _has_real_key(client):
+            return self._send(422, {"error": "model API key not set "
+                                              "(placeholder in .env)"})
         orch = Orchestrator(client=client)
         obs.inc("serve_team")
         res = orch.run(goal)
@@ -204,10 +213,30 @@ def serve(host: str | None = None, port: int | None = None) -> None:
     # Assemble the composition kernel exactly once for the whole server lifetime.
     Handler.runtime = get_runtime()
     httpd = ThreadingHTTPServer((host, port), Handler)
-    print(f"baize serve listening on http://{host}:{port}  (Ctrl+C to stop)")
+    setup_logging(cfg)
+    log.info("baize serve listening on http://%s:%s  (Ctrl+C to stop)", host, port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         httpd.server_close()
+
+
+def _has_real_key(client: LLMClient) -> bool:
+    """Reject placeholder keys like __FILL_YOUR_DEEPSEEK_KEY__ so the HTTP
+    boundary returns 422 immediately instead of letting a call fly to the
+    upstream provider with a bogus key (which 401s mid-flight and looks
+    transient).
+
+    Test doubles (e.g. a stub with no ``models`` attribute) are treated as
+    configured — the real model check is the caller's ``client.configured``.
+    """
+    models = getattr(client, "models", None)
+    if not models:
+        return True
+    for m in models:
+        key = getattr(m, "api_key", "")
+        if key and not key.startswith("__FILL"):
+            return True
+    return False

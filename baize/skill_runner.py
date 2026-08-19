@@ -19,8 +19,6 @@ executable code injection, only tool calls the registry already exposes.
 """
 from __future__ import annotations
 
-import json
-
 from . import rag
 from .config import load_config
 from .orchestrator import run_checks

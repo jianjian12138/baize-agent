@@ -26,7 +26,9 @@ import time
 from dataclasses import dataclass, field
 
 from .agent import Agent, Session
-from .config import load_config
+from pathlib import Path
+
+from .config import load_config, ROOT
 from .hooks import HookRegistry
 from .llm import LLMClient
 from .observability import obs
@@ -189,6 +191,33 @@ class Orchestrator:
             obs.record_error("subagent_run_failed")
             return f"[subagent {defn.name} failed] {exc}"
 
+    # -- V23.5 clarify ------------------------------------------------------
+
+    def clarify(self, goal: str, prd_path: str | None = None) -> dict:
+        """Clarify scope before planning (grill -> PRD).
+
+        Spawns a clarifier agent, renders a PRD, persists it (default
+        ``PRD.md`` at the workspace root), and returns the structured result.
+        Fail-closed: if the clarifier yields no JSON we still return a valid
+        clarification and the run proceeds (no crash, no fake green).
+        """
+        clarifier = self._spawn("clarifier")
+        res = clarifier.run(goal, extra_system=self._team_context())
+        data = _extract_json(res.final_text) or {}
+        prd_text = render_prd(goal, data)
+        base = self.cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT))
+        target = Path(prd_path) if prd_path else Path(base) / "PRD.md"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(prd_text, encoding="utf-8")
+        except OSError:
+            obs.record_error("prd_write_failed")
+        self._team_post("clarifier",
+                        "PRD: " + (data.get("prd") or goal)[:300],
+                        ["prd", "clarify"])
+        return {"goal": goal, "qa": data,
+                "prd_file": str(target), "prd": prd_text}
+
     # -- phases -------------------------------------------------------------
 
     def plan(self, goal: str) -> tuple[list[dict], str]:
@@ -269,6 +298,16 @@ class Orchestrator:
     # -- full run -----------------------------------------------------------
 
     def run(self, goal: str) -> OrchestrationResult:
+        # V23.4: pre-flight recon — surface prior art before planning.
+        from . import recon as recon_mod
+        recon_report = recon_mod.recon(goal, self.cfg)
+        self._team_post("recon", recon_report["advice"], ["recon"])
+        self.on_event("phase", "recon")
+
+        # V23.5: clarify-before-plan (opt-in; fail-closed).
+        if str(self.cfg.get("BAIZE_CLARIFY", "0")) == "1":
+            self.clarify(goal)
+
         self.on_event("phase", "planning")
         plan, director_sid = self.plan(goal)
         session_ids = [director_sid]
@@ -324,3 +363,28 @@ class Orchestrator:
             cfg=self.cfg)
         self.hooks.session_end(result)
         return result
+
+
+def render_prd(goal: str, qa: dict | None) -> str:
+    """Render a PRD markdown from a clarification result (pure, testable)."""
+    qa = qa or {}
+    lines = ["# PRD (clarified before execution)", "",
+             f"## Goal\n{goal.strip()}", "", "## Clarifying questions"]
+    questions = qa.get("questions") or []
+    answers = qa.get("answers") or []
+    if questions or answers:
+        for i, q in enumerate(questions):
+            a = answers[i] if i < len(answers) else "(unanswered)"
+            lines.append(f"Q{i+1}. {q}\nA{i+1}. {a}")
+    else:
+        lines.append("- (none)")
+    assumptions = qa.get("assumptions") or []
+    lines.append("")
+    lines.append("## Assumptions")
+    lines.append("\n".join(f"- {a}" for a in assumptions) if assumptions else "- (none)")
+    prd = qa.get("prd") or ""
+    if prd:
+        lines.append("")
+        lines.append("## Spec")
+        lines.append(prd)
+    return "\n".join(lines) + "\n"
