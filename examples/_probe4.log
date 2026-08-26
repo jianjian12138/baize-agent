@@ -1,0 +1,5 @@
+start bufsize=-1 test
+spawned
+sent init
+TIMEOUT reading
+done

@@ -1,0 +1,8 @@
+=== TEST A: child reads full frame via read(65536) loop, bufsize=0 ===
+wrote 193 bytes (bufsize=0)
+A resp=- err=- eof=False timeout=True
+done A
+=== TEST A: child reads full frame via read(65536) loop, bufsize=0 ===
+wrote 193 bytes (bufsize=0)
+A resp=- err=- eof=False timeout=True
+done A

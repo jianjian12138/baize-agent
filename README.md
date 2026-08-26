@@ -1,14 +1,14 @@
-# Baize Agent — zero-dependency autonomous agent runtime (白泽引擎) · V24.0.0
+# Baize Agent — zero-dependency autonomous agent runtime (白泽引擎) · V26.0.0
 
-[![tests](https://img.shields.io/badge/tests-422%20passed%20%2F%201%20skipped-brightgreen)](https://github.com/jianjian12138/baize-agent)
+[![tests](https://img.shields.io/badge/tests-510%20passed%20%2F%201%20skipped-brightgreen)](https://github.com/jianjian12138/baize-agent)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/licenses/MIT)
 [![python](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-lightgrey)](https://github.com/jianjian12138/baize-agent)
-[![version](https://img.shields.io/badge/version-V24.0.0-orange)](https://github.com/jianjian12138/baize-agent)
+[![version](https://img.shields.io/badge/version-V26.0.0-orange)](https://github.com/jianjian12138/baize-agent)
 
-> **EN** — A white-box, engineering-driven autonomous Agent runtime in **pure Python standard library (zero third-party runtime deps)**. Ships a method-skills layer + a real Agent runtime, verified by a **NO FAKE DONE** gate (manifest evidence + `doctor`/`gate`/pytest). V24 slimmed the system and unified files/docs/code-style/folders.
+> **EN** — A white-box, engineering-driven autonomous Agent runtime in **pure Python standard library (zero third-party runtime deps)**. Ships a method-skills layer + a real Agent runtime, verified by a **NO FAKE DONE** gate (manifest evidence + `doctor`/`gate`/pytest). V26 adds **Closed-Loop Execution Kernel** (Atomic Contracts, Append-Only RunLedger, RolePolicy enforcement, Machine-first Verification, and Layered Memory / Skill Governance).
 >
-> **中文** — 一套面向 AI Agent 的**白盒工程化研发操作系统**：**方法论技能包 + 真实 Agent 运行时**双层架构，运行时**零第三方依赖**，以 **NO FAKE DONE** 门禁（manifest 证据 + doctor/gate/pytest）保证「不假绿」。V24 完成系统瘦身与文件/文档/代码风格/文件夹统一化。
+> **中文** — 一套面向 AI Agent 的**白盒工程化研发操作系统**：**方法论技能包 + 真实 Agent 运行时**双层架构，运行时**零第三方依赖**，以 **NO FAKE DONE** 门禁（manifest 证据 + doctor/gate/pytest）保证「不假绿」。V26 全面升级 **闭环事实内核**（原子任务契约、Append-Only 运行账本、受控角色策略、机器门禁优先验收与记忆分层/技能治理学习闭环）。
 
 ---
 
@@ -16,13 +16,14 @@
 
 - **Zero third-party runtime deps** — `baize/` is pure `stdlib`; air-gapped / audited / embedded-safe by construction.
 - **NO FAKE DONE verified** — a phase marked `done` must have physically-present evidence; Verifier re-checks independently; chaos injects real failures.
+- **Closed-Loop Kernel (V26)** — Atomic contracts with machine checks, append-only run ledgers (`persistence/runs/`), and breakpoint resume.
 - **Plugin & skills architecture** — `component`/`modes` composition kernel + 3 skills libraries, config-driven, fail-closed.
 - **Autonomous + multi-agent** — reflection planning, self-loop, `orchestrator` (Director→Executor→Verifier), `team` with shared `team_memory`.
 - **Servable** — `baize serve` exposes a REST endpoint built-in; no extra gateway.
 
 ## Comparison with leading frameworks (对比头部框架)
 
-Honest, dimension-by-dimension (V24.0.0). baize wins on **deps / audit surface / verification gate**; it is honest where it is behind.
+Honest, dimension-by-dimension (V26.0.0). baize wins on **deps / audit surface / verification gate**; it is honest where it is behind.
 
 | Dimension | **Baize** | LangChain | AutoGPT | CrewAI | MetaGPT | Dify |
 |-----------|-----------|-----------|---------|--------|---------|------|
@@ -106,7 +107,7 @@ python -m baize gate          # honest gate: real assembly + protocol check + co
 │  第一层：规约与技能（被 AI 客户端加载，或注入 Agent 提示词）│
 │  AGENT.md（操作协议） SKILL.md（流水线规约）              │
 │  assets/skills/（本地方法论技能）                         │
-│  外部技能库（SKILL_LIBRARY_PATHS，249 唯一技能）          │
+│  外部技能库（SKILL_LIBRARY_PATHS，249 唯一技能，以 baize skill audit 实时为准）│
 ├──────────────────────────────────────────────────────────┤
 │  第二层：baize 运行时（纯 stdlib，零第三方依赖）          │
 │                                                          │
@@ -182,20 +183,31 @@ python -m baize gate          # honest gate: real assembly + protocol check + co
 
 ## Skills & 插件化 (Skills & Plugin Architecture)
 
-- 内置技能：`assets/skills/` + 外部技能库（`SKILL_LIBRARY_PATHS`，249 唯一技能，索引器动态去重发现）。
+- 内置技能：`assets/skills/` + 外部技能库（`SKILL_LIBRARY_PATHS`，249 唯一技能，以 `baize skill audit` 实时输出为准，索引器动态去重发现）。
 - 组件扩展：自定义组件经 `BAIZE_COMPONENTS` 显式注册（`your_module:YourComponent`），无需改调用点；`component`/`modes` 组合内核配置驱动装配、fail-closed。
 - 三技能库结构与功能层去重机制见 `docs/SKILL-LIBRARIES.md`。
 
 ## 生态接入路线 (V25 Ecosystem Roadmap)
 
-V25 聚焦「生态接入 + 可见性」，**不破坏零依赖红线**：所有生态接入放 `baize/ext/`，核心调用链延迟 import，缺失 fail-closed。
+V25 聚焦「生态接入 + 可见性」，**不破坏零依赖红线**：所有生态接入放 `baize/ext/`，核心调用链延迟 import，缺失 fail-closed。详见 `docs/baize-agent-V25升级计划.md`，专家评审见 `docs/V25-专家评审.md`。
 
-- **P2 MCP 兼容**（stdio JSON-RPC，纯 stdlib）— 既能调用外部 MCP server 工具，也能暴露 baize skills 给 Claude Desktop / Cursor。
-- **P3 模型供应商广度** — 核心已有 OpenAI/Anthropic/Ollama 适配器（纯 stdlib）；V25 补缺口并接非 OpenAI 兼容厂商。
-- **P4 RAG / 向量后端** — 默认 TF-IDF 零依赖；可选 llama_index / chromadb 后端（规划中）。
-- **P5 多智能体增强** — 在现有 `orchestrator` 上做薄配置层，复用 Verifier + `team_memory`。
+### MCP 兼容（纯 stdlib，不引新依赖）
 
-详见 `docs/baize-agent-V25升级计划.md`，专家评审见 `docs/V25-专家评审.md`。
+V25 通过 `baize/ext/mcp/` 实现 stdio JSON-RPC 2.0（**Content-Length 分帧 + `initialize` 握手，纯 `subprocess`+`json`，零新依赖**）。既能调用外部 MCP server 工具，也能把 baize skills 暴露给 Claude Desktop / Cursor —— 全部复用既有 `ToolRegistry`，不另立工具表。P2 必修，接入后有**真实 server 联调物理证据**（非 mock）。
+
+### Spec-driven + Verifier（可证明的诚实）
+
+Baize 不靠「声称完成」。每次升级先立 8 份 design 规格（`docs/V25-arch-design/`），由独立 `Verifier` 复核、`chaos` 注入真实故障验证不崩；`manifest` 里标记 `done` 的 phase 必须有物理存在的 evidence 文件。**NO FAKE DONE 是门禁而非口号** —— 这正是与 Traycer「Built-in Verification」同源、比多数框架更诚实的地方。
+
+### Stage-Gated Releases（分阶段门禁发布）
+
+升级按 P0→P4 阶段推进，每阶段以 `gate quality ≥ 0.8` + `doctor` PASS + 422/1skip/0fail 零回归为硬门禁；未达标不进下一阶段、不 tag。V25.0.0 需 4 人专家组评分 ≥ 9.5/10 方可发布。
+
+### 供应商广度 / RAG / 多智能体（P3–P5）
+
+- **P3 模型供应商广度** — 核心已有 OpenAI/Anthropic/Ollama 适配器（纯 stdlib）；V25 补缺口并接非 OpenAI 兼容厂商（Anthropic 流式实装、`provider_capabilities` 如实上报，消除恒返 True 假绿）。
+- **P4 RAG / 向量后端** — 默认 TF-IDF 零依赖；稠密后端推迟 V26（扩展既有 `get_backend()` 而非新造接口）。
+- **P5 多智能体增强** — 在现有 `orchestrator` 上做薄配置层，复用 Verifier + `team_memory`，**勿重写**。
 
 ## 核心原则 (Core Principles)
 
@@ -210,11 +222,12 @@ V25 聚焦「生态接入 + 可见性」，**不破坏零依赖红线**：所有
 
 ## 状态与验证 (Status & Verification)
 
-- 当前版本：**V24.0.0**（顶层文档、`baize.manifest.json` 与 `baize.__version__` 同步）
+- 当前版本：**V25.0.0**（顶层文档、`baize.manifest.json` 与 `baize.__version__` 同步）
 - 测试：**422 passed / 1 skipped / 0 failed**（全量 `pytest tests/`）
 - 覆盖率：**UNKNOWN** — 当前未采集 `.coverage`，故不声称任何数字（NO FAKE DONE，不为 0 依赖项目编造覆盖率）
 - 第三方运行时依赖：**0**
 - V24 关键点：系统瘦身（删除死代码 mcp.py/context.py 并收敛 manifest 证据）+ 文件/文档/代码风格/文件夹统一化；全量门禁 `doctor` + `gate`(manifest PASS, quality 0.875) 通过。详见 `docs/VERIFICATION_V24.md`。
+- V25 关键点：生态接入（MCP 兼容）+ 可见性（GitHub 元数据 / topics / 文档版本号统一 25.0.0）；新增 `baize/__init__.py` 固化 `__version__` 单一真相源；扩展收口于 `baize/ext/`（延迟 import + fail-closed，核心 `baize/` 永不顶层 `import baize.ext`）。详见 `docs/baize-agent-V25升级计划.md`。
 - V22 关键点：统一组件契约 + 组合内核（`component`/`modes`）、`BAIZE_COMPONENTS` 显式覆盖 fail-closed、插件目录自动发现防御性隔离、命名模式 = 组件集
 
 ## License

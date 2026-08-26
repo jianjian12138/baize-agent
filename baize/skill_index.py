@@ -285,3 +285,110 @@ def search(keyword: str, cfg: dict | None = None, limit: int = 20) -> list[dict]
         if len(hits) >= limit:
             break
     return hits
+
+
+# ---------------------------------------------------------------------------
+# V26-C3 & C4: Skill governance, verification, and usage feedback
+# ---------------------------------------------------------------------------
+
+def verify_skill_draft(draft: dict) -> tuple[bool, str]:
+    """V26-C3: Audit a proposed skill draft before admission into the library.
+
+    Enforces mandatory provenance:
+    - name & description
+    - source_run & source_task
+    - evidence path (must be verifiable)
+    - verification_cmd (reproducible test)
+
+    Returns (ok, reason).
+    """
+    if not isinstance(draft, dict):
+        return False, "draft must be a dictionary"
+
+    name = str(draft.get("name", "")).strip()
+    if not name:
+        return False, "missing skill name"
+
+    desc = str(draft.get("description", "")).strip()
+    if not desc:
+        return False, "missing skill description"
+
+    source_run = str(draft.get("source_run", "")).strip()
+    if not source_run:
+        return False, "missing source run (provenance required)"
+
+    source_task = str(draft.get("source_task", "")).strip()
+    if not source_task:
+        return False, "missing source task (provenance required)"
+
+    evidence = str(draft.get("evidence", "")).strip()
+    if not evidence:
+        return False, "missing verified evidence (NO FAKE DONE)"
+
+    verification_cmd = str(draft.get("verification_cmd", "")).strip()
+    if not verification_cmd:
+        return False, "missing verification_cmd"
+
+    return True, "valid skill draft"
+
+
+def _feedback_file(cfg: dict | None = None) -> Path:
+    cfg = cfg or load_config()
+    p = Path(cfg["BAIZE_PERSISTENCE_DIR"]) / "skill_feedback.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def record_usage(skill_name: str, success: bool, reason: str = "",
+                 cfg: dict | None = None) -> None:
+    """V26-C4: Record reuse feedback for a skill in append-only JSONL."""
+    fpath = _feedback_file(cfg)
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": skill_name,
+        "success": bool(success),
+        "reason": reason,
+    }
+    with fpath.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def skill_stats(cfg: dict | None = None) -> dict:
+    """V26-C4: Calculate usage and effectiveness stats for skills."""
+    fpath = _feedback_file(cfg)
+    if not fpath.exists():
+        return {}
+
+    stats_map: dict[str, dict] = {}
+    for line in fpath.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        sname = rec.get("skill", "")
+        if not sname:
+            continue
+        if sname not in stats_map:
+            stats_map[sname] = {"uses": 0, "successes": 0, "failures": 0}
+        stats_map[sname]["uses"] += 1
+        if rec.get("success"):
+            stats_map[sname]["successes"] += 1
+        else:
+            stats_map[sname]["failures"] += 1
+
+    result: dict[str, dict] = {}
+    for sname, s in stats_map.items():
+        rate = round(s["successes"] / s["uses"], 2) if s["uses"] > 0 else 0.0
+        status = "active" if rate >= 0.6 else "demoted"
+        result[sname] = {
+            "uses": s["uses"],
+            "successes": s["successes"],
+            "failures": s["failures"],
+            "success_rate": rate,
+            "status": status,
+        }
+    return result
+

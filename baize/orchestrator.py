@@ -35,6 +35,8 @@ from .observability import obs
 from .team_memory import TeamMemory
 from .tools import ToolRegistry, default_registry
 from . import memory as memory_mod
+# V26-A2: run ledger for append-only task event audit trail
+from .run_ledger import RunLedger
 
 
 @dataclass
@@ -150,6 +152,8 @@ class Orchestrator:
             except Exception:
                 obs.record_error("team_memory_init_failed")
                 self.team_memory = None
+        # V26-A2: run ledger (created lazily in run())
+        self._ledger: RunLedger | None = None
 
     def _team_context(self) -> str:
         if not self.team_memory:
@@ -169,9 +173,59 @@ class Orchestrator:
             obs.record_error("team_memory_post_failed")
 
     def _spawn(self, role: str) -> Agent:
-        return Agent(role=role, cfg=self.cfg, client=self.client,
-                     registry=self.registry, session=Session(cfg=self.cfg),
-                     on_event=self.on_event, hooks=self.hooks)
+        """V26-B1: Spawn an agent with RolePolicy enforcement.
+
+        Reads the matching Role from team_config (if present) and applies:
+        - allow_tools: create a filtered subset registry (empty = no restriction)
+        - workspace_scope: stored on the agent as _workspace_scope for prompt injection
+        - memory_visibility: 'none' / invalid → agent._no_memory = True (fail-closed)
+
+        No team_config or no matching Role → original behaviour (no restriction).
+        """
+        # --- resolve role policy -------------------------------------------
+        role_policy = None
+        team_config = getattr(self, "team_config", None)
+        if team_config and hasattr(team_config, "roles"):
+            for r in team_config.roles:
+                if r.name == role:
+                    role_policy = r
+                    break
+
+        # --- build filtered registry ----------------------------------------
+        active_registry = self.registry
+        if role_policy is not None:
+            effective_tools = role_policy.effective_allow_tools()
+            if effective_tools:
+                # Build subset: only the tools in the whitelist that actually exist
+                from .tools import ToolRegistry
+                subset = ToolRegistry()
+                for tool_name in effective_tools:
+                    tool_obj = self.registry.get(tool_name)
+                    if tool_obj is not None:
+                        subset.register(tool_obj.name, tool_obj.description,
+                                        tool_obj.parameters, tool_obj.fn)
+                active_registry = subset
+
+        # --- spawn agent ----------------------------------------------------
+        agent = Agent(role=role, cfg=self.cfg, client=self.client,
+                      registry=active_registry, session=Session(cfg=self.cfg),
+                      on_event=self.on_event, hooks=self.hooks)
+
+        # --- apply workspace_scope ------------------------------------------
+        if role_policy is not None:
+            agent._workspace_scope = role_policy.workspace_scope
+        else:
+            agent._workspace_scope = ""
+
+        # --- apply memory_visibility ----------------------------------------
+        if role_policy is not None:
+            vis = role_policy.effective_memory_visibility()
+            agent._no_memory = (vis == "none")
+        else:
+            agent._no_memory = False
+
+        return agent
+
 
     def spawn_subagent(self, defn, goal: str, client=None) -> str:
         """Run an isolated sub-agent (V21 P1-3) as part of a team run.
@@ -245,18 +299,49 @@ class Orchestrator:
         return cleaned, res.session_id
 
     def execute_subtask(self, sub: dict) -> tuple[str, str]:
+        task_id = str(sub.get("id", "?"))
+        allowed_roles = sub.get("allowed_roles")
+        if allowed_roles and "executor" not in allowed_roles:
+            err_msg = (f"ERROR: subtask #{task_id} restricted to roles {allowed_roles}, "
+                       "executor not permitted (fail-closed).")
+            if self._ledger:
+                self._ledger.append("task_failed",
+                                    {"issues": [err_msg], "retries_used": 0},
+                                    task_id=task_id)
+            return err_msg, ""
+
         executor = self._spawn("executor")
+        # V26-A3/B2: claim task in run ledger (prevents double-claim)
+        if self._ledger:
+            self._ledger.append("task_claimed", {"role": "executor"}, task_id=task_id)
+            self._ledger.append("task_started", {"role": "executor"}, task_id=task_id)
         if self.team_memory:
-            self.team_memory.claim(str(sub.get("id", "?")), "executor")
+            self.team_memory.claim(task_id, "executor")
         res = executor.run(f"{sub['task']}\n\nSuccess criteria: {sub['verify']}",
                            extra_system=self._team_context())
+        # V26-A2: log tool result summary to ledger
+        if self._ledger:
+            self._ledger.append("tool_result",
+                                {"tool": "executor_run", "ok": True,
+                                 "summary": res.final_text[:200]},
+                                task_id=task_id)
         self._team_post("executor", res.final_text, ["finding", "executed"])
         return res.final_text, res.session_id
 
     def verify_subtask(self, sub: dict, executor_summary: str) -> dict:
-        # --- Gate 1 (V20): deterministic checks - hard fail, no LLM override
+        # --- Gate 1 (V20/V26-B3): deterministic checks - hard fail, no LLM override
         check_results = run_checks(sub.get("checks") or [], self.registry)
         failed = [c for c in check_results if not c["ok"]]
+
+        # Check evidence_paths if declared (NO FAKE DONE)
+        evidence_issues: list[str] = []
+        for ep in sub.get("evidence_paths") or []:
+            out = self.registry.execute("read_file", {"path": str(ep)})
+            if str(out).startswith("ERROR"):
+                evidence_issues.append(f"declared evidence missing: {ep}")
+            elif len(str(out).strip()) == 0:
+                evidence_issues.append(f"declared evidence empty: {ep}")
+
         hook_issues: list[str] = []
         for hook in self.verify_hooks:
             try:
@@ -265,13 +350,13 @@ class Orchestrator:
                 ok, detail = False, f"verify hook crashed: {e}"
             if not ok:
                 hook_issues.append(str(detail)[:200])
-        if failed or hook_issues:
+        if failed or evidence_issues or hook_issues:
             issues = ([f"check failed: {c['check'].get('type')} - {c['detail']}"
-                       for c in failed] + hook_issues)[:10]
+                       for c in failed] + evidence_issues + hook_issues)[:10]
             self._team_post("verifier", "; ".join(issues), ["blocker"])
             return {"verdict": "fail",
                     "evidence": "deterministic gate failed "
-                                f"({len(failed)} checks, {len(hook_issues)} hooks)",
+                                f"({len(failed)} checks, {len(evidence_issues)} evidence, {len(hook_issues)} hooks)",
                     "issues": issues, "session_id": "",
                     "checks": check_results}
 
@@ -297,7 +382,29 @@ class Orchestrator:
 
     # -- full run -----------------------------------------------------------
 
-    def run(self, goal: str) -> OrchestrationResult:
+    def run(self, goal: str,
+            resume_run_id: str | None = None) -> OrchestrationResult:
+        """Run the full Director→Executor→Verifier pipeline.
+
+        V26-A3: Creates a RunLedger for this run. All task events are written
+        to persistence/runs/<run-id>.jsonl for audit and resume support.
+
+        V26-A4: If resume_run_id is given, replay the existing ledger and skip
+        tasks that have already been verified — no re-execution of done work.
+        """
+        # V26-A2: initialise run ledger
+        run_id = resume_run_id or f"run-{int(time.time())}"
+        self._ledger = RunLedger(run_id, cfg=self.cfg)
+
+        # V26-A4: if resuming, read already-verified tasks from ledger
+        skip_task_ids: set = set()
+        if resume_run_id:
+            prior_state = self._ledger.replay()
+            skip_task_ids = prior_state.get("verified_tasks", set())
+            self.on_event("phase",
+                          f"resume {resume_run_id}: "
+                          f"skipping {len(skip_task_ids)} verified task(s)")
+
         # V23.4: pre-flight recon — surface prior art before planning.
         from . import recon as recon_mod
         recon_report = recon_mod.recon(goal, self.cfg)
@@ -313,8 +420,25 @@ class Orchestrator:
         session_ids = [director_sid]
         reports: list[SubtaskReport] = []
 
+        # V26-A2: record plan to ledger
+        self._ledger.append("plan_created",
+                            {"goal": goal, "task_count": len(plan)})
+
         for sub in plan:
-            self.on_event("phase", f"executing #{sub['id']}: {sub['task'][:80]}")
+            task_id = str(sub["id"])
+
+            # V26-A4: skip already-verified tasks on resume
+            if task_id in skip_task_ids:
+                self.on_event("phase",
+                              f"skip (already verified) #{task_id}: {sub['task'][:60]}")
+                # Reconstruct a pass report so OrchestrationResult is accurate
+                report = SubtaskReport(sub["id"], sub["task"], sub["verify"])
+                report.verdict = "pass"
+                report.evidence = "[resumed — already verified]"
+                reports.append(report)
+                continue
+
+            self.on_event("phase", f"executing #{task_id}: {sub['task'][:80]}")
             report = SubtaskReport(sub["id"], sub["task"], sub["verify"])
             # V21 P1-1: subtask lifecycle hook (no tool gate here).
             self.hooks.pre_subtask(sub)
@@ -323,7 +447,7 @@ class Orchestrator:
             session_ids.append(sid)
             report.executor_summary = summary
 
-            self.on_event("phase", f"verifying #{sub['id']}")
+            self.on_event("phase", f"verifying #{task_id}")
             v = self.verify_subtask(sub, summary)
             if v["session_id"]:
                 session_ids.append(v["session_id"])
@@ -335,7 +459,7 @@ class Orchestrator:
             while report.verdict != "pass" and retries < self.max_retries:
                 retries += 1
                 report.retried = True
-                self.on_event("phase", f"retry #{sub['id']} ({retries})")
+                self.on_event("phase", f"retry #{task_id} ({retries})")
                 fix_goal = (f"{sub['task']}\n\nPrevious attempt failed "
                             f"verification. Issues: {'; '.join(report.issues)}"
                             f"\nFix them. Success criteria: {sub['verify']}")
@@ -349,12 +473,45 @@ class Orchestrator:
                     v["verdict"], v["evidence"], v["issues"])
                 report.checks = v.get("checks", [])
 
+            # V26-A3: state gate — only write task_verified when truly passing
+            if report.verdict == "pass":
+                self._ledger.append(
+                    "task_verified",
+                    {"evidence": str(report.evidence)[:300], "verdict": "pass"},
+                    task_id=task_id)
+                self._ledger.append(
+                    "state_transition",
+                    {"from_status": "in_progress", "to_status": "verified"},
+                    task_id=task_id)
+                # V26-C2: generate skill candidate for verified tasks
+                if sub.get("verify"):
+                    self._ledger.append(
+                        "skill_candidate",
+                        {"task_id": task_id,
+                         "candidate_description": sub["verify"][:200]},
+                        task_id=task_id)
+            else:
+                # B4: structured failure preserved as project fact
+                self._ledger.append(
+                    "task_failed",
+                    {"issues": report.issues[:5],
+                     "retries_used": retries},
+                    task_id=task_id)
+
             reports.append(report)
             # V21 P1-1: subtask finished - report to hooks.
             self.hooks.post_subtask(report)
 
         success = all(r.verdict == "pass" for r in reports)
+        # V26-A2: record run completion
+        self._ledger.append("run_completed",
+                            {"success": success,
+                             "total_tasks": len(reports),
+                             "passed_tasks": sum(
+                                 1 for r in reports if r.verdict == "pass")})
         result = OrchestrationResult(goal, plan, reports, success, session_ids)
+        # Attach run_id so callers (CLI status) can reference the ledger
+        result.run_id = run_id  # type: ignore[attr-defined]
         memory_mod.log_event(
             f"orchestration {'OK' if success else 'FAILED'}: {goal[:120]} "
             f"({sum(1 for r in reports if r.verdict == 'pass')}/{len(reports)} "

@@ -430,8 +430,23 @@ def cmd_team(args) -> int:
               "BAIZE_MODEL_NAME (and API key) in .env")
         return 2
     ui = _make_ui(args)
-    orch = Orchestrator(client=client, on_event=ui.event)
-    res = orch.run(args.goal)
+    # V25 F4: a custom roles.json drives a thin-config team; otherwise the
+    # built-in Director->Executor->Verifier topology is used unchanged.
+    if getattr(args, "roles", ""):
+        from baize.team import build_team, load_roles
+        try:
+            config = load_roles(args.roles)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"[team] invalid roles config: {e}", file=sys.stderr)
+            return 2
+        orch = build_team(config, client=client, on_event=ui.event)
+    else:
+        orch = Orchestrator(client=client, on_event=ui.event)
+    # V26-A4: --resume passes run-id to orchestrator to skip verified tasks
+    resume_run_id = getattr(args, "resume", "") or None
+    if resume_run_id:
+        print(f"[resume] run-id: {resume_run_id}")
+    res = orch.run(args.goal, resume_run_id=resume_run_id)
     print("=" * 62)
     total = len(res.reports)
     for i, r in enumerate(res.reports, start=1):
@@ -443,6 +458,9 @@ def cmd_team(args) -> int:
         for issue in r.issues:
             print(f"    issue: {issue}")
     ui.summary(res)
+    run_id = getattr(res, "run_id", None)
+    if run_id:
+        print(f"run-id: {run_id}  (use 'baize status {run_id}' to inspect)")
     print(f"sessions: {len(res.session_ids)}")
     return 0 if res.success else 1
 
@@ -472,6 +490,58 @@ def cmd_sessions(args) -> int:
     return 0
 
 
+def cmd_status(args) -> int:
+    """V26-A5: Show the current state of a run from its ledger.
+
+    Displays: run-id, goal, task counts, blocked tasks, evidence paths,
+    and the next recommended action. Reads only from the append-only ledger
+    (persistence/runs/<run-id>.jsonl) — never from the manifest directly.
+    """
+    from .run_ledger import RunLedger, list_runs
+    run_id = getattr(args, "run_id", "") or ""
+    if not run_id:
+        runs = list_runs()
+        if not runs:
+            print("no runs found in persistence/runs/")
+            return 1
+        print(f"{len(runs)} run(s) found:")
+        for r in runs[-10:]:   # show last 10
+            print(f"  - {r}")
+        print("\nUse: baize status <run-id>")
+        return 0
+
+    ledger = RunLedger(run_id)
+    if not ledger.path.exists():
+        print(f"run not found: {run_id}")
+        return 1
+
+    state = ledger.replay()
+    events = ledger.events()
+
+    print(f"=== Run Status: {run_id} ===")
+    print(f"  goal       : {state.get('goal') or '(not recorded)'}")
+    print(f"  verified   : {sorted(state['verified_tasks'])}")
+    print(f"  failed     : {sorted(state['failed_tasks'])}")
+    print(f"  in_progress: {sorted(state['in_progress_tasks'])}")
+    unfinished = ledger.current_unfinished()
+    print(f"  unfinished : {unfinished}")
+    print(f"  candidates : {len(state['skill_candidates'])} skill candidate(s)")
+    print(f"  completed  : {state['completed']}")
+    print(f"  events     : {len(events)} total in ledger")
+
+    # Next action guidance
+    if state["completed"]:
+        print("\n  next: run complete — review skill candidates or check gate")
+    elif unfinished:
+        print(f"\n  next: resume with 'baize team <goal> --resume {run_id}'")
+    elif state["failed_tasks"]:
+        print("\n  next: review failed tasks and fix issues, then re-run")
+    else:
+        print("\n  next: unknown state — inspect ledger events")
+
+    return 0
+
+
 def cmd_serve(args) -> int:
     serve_mod.serve(host=args.host, port=args.port)
     return 0
@@ -485,6 +555,49 @@ def cmd_plugins(args) -> int:
     print(f"{len(registry.plugins)} plugin(s) loaded:")
     for p in registry.plugins:
         print(f"  - {p.name}")
+    return 0
+
+
+def cmd_mcp(args) -> int:
+    # MCP is a transport/tooling command: it does not require an LLM endpoint,
+    # so it is exempt from the global validate() guard (mirrors `doctor`).
+    # The extension module is imported lazily to keep the core import chain
+    # free of baize.ext (red line C: ext fail-closed).
+    try:
+        from baize.tools import register_mcp_client, default_registry
+    except ImportError as e:
+        print(f"[mcp] tools module unavailable - {e}", file=sys.stderr)
+        return 2
+    if args.action == "client":
+        spec_path = args.spec or "mcp_server.json"
+        try:
+            names = register_mcp_client(spec_path)
+        except FileNotFoundError:
+            print(f"[mcp] spec not found: {spec_path}", file=sys.stderr)
+            return 2
+        except Exception as e:  # noqa: BLE001 - fail-closed, surface reason
+            print(f"[mcp] registration failed - {e}", file=sys.stderr)
+            return 1
+        reg = default_registry()
+        print(f"[mcp] registered {len(names)} tool(s) from {spec_path}")
+        live = {t.get("function", t).get("name") for t in reg.schemas()}
+        for n in names:
+            mark = "ok" if n in live else "MISSING"
+            print(f"  + {n} [{mark}]")
+        return 0
+    # server mode: expose baize's tools to an external MCP client over stdio.
+    try:
+        from baize.ext.mcp.server import MCPServer
+    except ImportError as e:
+        print(f"[mcp] server module unavailable - {e}", file=sys.stderr)
+        return 2
+    server = MCPServer(default_registry())
+    print("[mcp] serving baize tools over stdio (Ctrl-C to stop)",
+          file=sys.stderr)
+    try:
+        server.serve_stdio()
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -520,8 +633,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     tp = sub.add_parser("team", help="run Director->Executor->Verifier team")
     tp.add_argument("goal")
+    tp.add_argument("--roles", default="",
+                     help="(V25) path to roles.json for a custom multi-role team")
+    tp.add_argument("--resume", default="",
+                     help="(V26-A4) resume a previous run by run-id, "
+                          "skipping already-verified tasks")
     tp.add_argument("--no-color", action="store_true", help="disable ANSI color")
     tp.add_argument("--quiet", action="store_true", help="summary only")
+
+    mcp_p = sub.add_parser("mcp",
+                           help="MCP compat (V25): client (call ext server) / "
+                                "server (expose baize tools over stdio)")
+    mcp_p.add_argument("action", choices=["client", "server"])
+    mcp_p.add_argument("--spec", default="",
+                       help="path to mcp_server.json (client mode)")
 
     sp = sub.add_parser("sessions", help="list sessions / show a transcript")
     sp.add_argument("session_id", nargs="?", default="")
@@ -587,6 +712,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="V23.5 clarify a goal into a PRD before planning")
     cl.add_argument("goal")
 
+    # V26-A5: run ledger status report
+    st = sub.add_parser("status",
+                        help="V26 run status: current task, evidence, next action")
+    st.add_argument("run_id", nargs="?", default="",
+                    help="run-id from a previous 'baize team' run "
+                         "(omit to list recent runs)")
+
     return p
 
 
@@ -594,7 +726,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except `doctor`, which is
     # itself the diagnostic for bad config (it reports schema issues as WARN).
-    if args.command != "doctor":
+    if args.command not in ("doctor", "mcp"):
         try:
             validate()
         except ConfigError as e:
@@ -611,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": cmd_run,
         "team": cmd_team,
         "sessions": cmd_sessions,
+        "status": cmd_status,      # V26-A5
         "serve": cmd_serve,
         "plugins": cmd_plugins,
         "rag": cmd_rag,
@@ -618,6 +751,7 @@ def main(argv: list[str] | None = None) -> int:
         "gate": cmd_gate,
         "team-memory": cmd_team_memory,
         "automations": cmd_automations,
+        "mcp": cmd_mcp,
     }
     return handlers[args.command](args)
 

@@ -1,0 +1,2 @@
+{"kind": "message", "ts": "2026-08-26T17:11:36", "message": {"role": "system", "content": "programmatic loop (no LLM)"}}
+{"kind": "message", "ts": "2026-08-26T17:11:36", "message": {"role": "user", "content": "write then read"}}

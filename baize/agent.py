@@ -346,11 +346,17 @@ class Agent:
         return self.loop.run(self, goal, extra_system)
 
     def _run_loop(self, goal: str, extra_system: str = "") -> AgentResult:
+        extra = extra_system
+        ws_scope = getattr(self, "_workspace_scope", "")
+        if ws_scope:
+            scope_note = f"Workspace scope constraint: you are confined to path prefix '{ws_scope}'."
+            extra = f"{extra}\n\n{scope_note}".strip() if extra else scope_note
+
         sys_prompt = build_system_prompt(self.role, self.cfg,
-                                         self.registry, extra_system)
+                                         self.registry, extra)
         if not self.session.messages:
             self.session.append({"role": "system", "content": sys_prompt})
-            mem = recall_context(goal, self.cfg)
+            mem = "" if getattr(self, "_no_memory", False) else recall_context(goal, self.cfg)
             user_content = f"{mem}\n\nTASK: {goal}" if mem else goal
             self.session.append({"role": "user", "content": user_content})
             self.hooks.user_prompt_submit(user_content)

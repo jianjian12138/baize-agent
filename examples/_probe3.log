@@ -1,0 +1,15 @@
+start
+spawned pid=27344
+CHILD STDERR: SERVER STARTED
+sent init bytes=193
+poll stdout readable?
+child poll rc=None
+done
+start
+spawned pid=17160
+CHILD STDERR: SERVER STARTED
+sent init bytes=193
+CHILD STDERR: FIRST BYTE: b'C'
+poll stdout readable?
+child poll rc=None
+done

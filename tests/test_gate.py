@@ -25,7 +25,7 @@ def test_check_quality_dimensions_and_bounds():
     q = gate.check_quality()
     dims = q["dimensions"]
     assert set(dims) == {"runnable", "coverage_clarity", "composition",
-                         "locatability", "maintainability"}
+                         "loop_integrity", "locatability", "maintainability"}
     assert 0.0 <= q["score"] <= 1.0
     assert isinstance(q["pass"], bool)
     assert q["threshold"] > 0

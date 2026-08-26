@@ -1,0 +1,9 @@
+start diag
+wrote 193 bytes
+CHILD: DIAG SERVER STARTED
+CHILD: DIAG HEADER DONE total_read=23 buf=b'Content-Length: 170\r\n\r\n'
+CHILD: DIAG length=170 rest_len=0
+CHILD: DIAG BODY DONE total=193
+CHILD: DIAG PARSED method=initialize
+CHILD: DIAG RESPONSE SENT
+resp raw=b'Content-Length: 75\r\n\r\n{"jsonrpc": "2.0", "id": 1, "result": {"ok": true, "method": "initialize"}}' err=- timeout=True

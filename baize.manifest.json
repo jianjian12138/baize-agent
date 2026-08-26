@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "24.0.0",
+  "version": "25.0.0",
   "phases": [
     {
       "id": "V68",
@@ -78,7 +78,7 @@
       "id": "V47",
       "name": "早期验收规划-读文档（由 #68-#79 实质覆盖收口）",
       "status": "done",
-      "evidence": ["docs/archive/baize-agent-P1-P3实施计划.md", "baize/hooks.py"]
+      "evidence": ["baize/hooks.py"]
     },
     {
       "id": "V48",
@@ -132,7 +132,7 @@
       "id": "V100",
       "name": "V22-5 文档 / 规格升级 + 写一个 baize component 教程",
       "status": "done",
-      "evidence": ["docs/tutorials/08-写一个baize组件.md", "examples/logged_sandbox.py", "README.md", "AGENT.md", "SKILL.md", "openspec/specs/baize-agent/spec.md"]
+      "evidence": ["examples/logged_sandbox.py", "README.md", "AGENT.md", "SKILL.md", "openspec/specs/baize-agent/spec.md"]
     },
     {
       "id": "V101",
@@ -217,6 +217,115 @@
         "baize/config.py",
         "baize/cli.py",
         "tests/test_gate.py"
+      ]
+    },
+    {
+      "id": "V109",
+      "name": "V25 W2 生态接入 MVP（F3 MCP 兼容 + F4 team 薄配置层 + F5 供应商补丁）",
+      "status": "done",
+      "evidence": [
+        "baize/ext/mcp/transport.py",
+        "baize/ext/mcp/client.py",
+        "baize/ext/mcp/server.py",
+        "baize/ext/mcp/__init__.py",
+        "baize/team.py",
+        "baize/ext/providers/__init__.py",
+        "baize/llm.py",
+        "baize/tools.py",
+        "baize/cli.py",
+        "tests/test_mcp.py",
+        "tests/test_team_roles.py",
+        "tests/test_provider_capabilities.py"
+      ]
+    },
+    {
+      "id": "V110",
+      "name": "V25 W3 扩展总线收口 + ext 测试门禁（F6 统一扩展总线 + F7 ext fail-closed 门禁）",
+      "status": "done",
+      "evidence": [
+        "baize/ext/mcp/component.py",
+        "baize/ext/__init__.py",
+        "baize/ext/mcp/__init__.py",
+        "tests/test_ext_bus.py",
+        "tests/test_grep_gate.py",
+        "tests/test_mcp.py",
+        "pyproject.toml",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "id": "V111",
+      "name": "V26.0-A1 原子任务契约（ProjectContract schema + 校验 + 序列化）",
+      "status": "done",
+      "evidence": [
+        "baize/contract.py",
+        "tests/test_contract.py",
+        "openspec/specs/baize-agent/v26-contract.md"
+      ]
+    },
+    {
+      "id": "V112",
+      "name": "V26.0-A2 运行账本（RunLedger append-only JSONL + replay + resume 语义）",
+      "status": "done",
+      "evidence": [
+        "baize/run_ledger.py",
+        "tests/test_run_ledger.py",
+        "openspec/specs/baize-agent/v26-ledger.md"
+      ]
+    },
+    {
+      "id": "V113",
+      "name": "V26.0-A3/A4/A5 状态门+中断恢复+闭环报告（orchestrator RunLedger 接入 + CLI status + --resume）",
+      "status": "done",
+      "evidence": [
+        "baize/orchestrator.py",
+        "baize/run_ledger.py",
+        "baize/cli.py",
+        "tests/test_v26_resume.py"
+      ]
+    },
+    {
+      "id": "V114",
+      "name": "V26.1-B1 RolePolicy 强制注入（allow_tools + workspace_scope + memory_visibility）",
+      "status": "done",
+      "evidence": [
+        "baize/team.py",
+        "baize/orchestrator.py",
+        "baize/agent.py",
+        "tests/test_v26_role_policy.py",
+        "openspec/specs/baize-agent/v26-role-policy.md"
+      ]
+    },
+    {
+      "id": "V115",
+      "name": "V26.1-B2-B5 受控角色与验证闭环（原子执行 + 机器门禁优先 + 结构化失败重试 + 安全策略）",
+      "status": "done",
+      "evidence": [
+        "baize/orchestrator.py",
+        "tests/test_v26_controlled_loop.py",
+        "openspec/specs/baize-agent/v26-controlled-roles.md"
+      ]
+    },
+    {
+      "id": "V116",
+      "name": "V26.2-C1-C5 学习闭环与知识质量（记忆分层 + 收尾器 + Skill 审核 + 复用反馈 + Gate 完整性）",
+      "status": "done",
+      "evidence": [
+        "baize/memory.py",
+        "baize/skill_index.py",
+        "baize/gate.py",
+        "tests/test_v26_learning_loop.py",
+        "openspec/specs/baize-agent/v26-learning-loop.md"
+      ]
+    },
+    {
+      "id": "V117",
+      "name": "V26.3-D1-D5 次要矛盾最小接入（稠密向量 + 聊天渠道适配器 + 专长角色模板）",
+      "status": "done",
+      "evidence": [
+        "baize/vector.py",
+        "baize/ext/channels.py",
+        "tests/test_v26_secondary.py"
       ]
     }
   ]

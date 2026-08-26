@@ -90,7 +90,7 @@ _DEFAULTS = {
     # --- V23.5 clarify-before-plan (default OFF; opt-in) ---
     "BAIZE_CLARIFY": "0",                    # "1" triggers prior-art clarification
     # --- V23.6 multi-dimensional quality gate ---
-    "BAIZE_QUALITY_THRESHOLD": "0.7",        # overall quality score floor
+    "BAIZE_QUALITY_THRESHOLD": "0.8",        # V25 release quality score floor
 }
 
 

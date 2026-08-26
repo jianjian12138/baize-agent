@@ -1,0 +1,3 @@
+bufsize=-1 + stderr=DEVNULL
+wrote 193
+resp=- err=- eof=False timeout=True

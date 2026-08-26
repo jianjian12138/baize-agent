@@ -1,0 +1,201 @@
+{
+  "version": 2,
+  "generated_at": "2026-08-20T13:58:05",
+  "libraries": [],
+  "user_skills_dir": "D:\\tc\\baize-agent\\user_skills",
+  "count": 23,
+  "duplicates_deduped": 0,
+  "audit": {
+    "per_source": {
+      "local:assets/skills": 23
+    },
+    "missing_description": [],
+    "duplicate_groups": []
+  },
+  "skills": [
+    {
+      "name": "Atomic-Decomposition-Ralph",
+      "description": "name: Atomic-Decomposition-Ralph",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\atomic_decomposition",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\atomic_decomposition\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": true
+    },
+    {
+      "name": "karpathy-surgical-coding",
+      "description": "卡帕西外科手术式编码——最小 diff、澄清优先、奥卡姆剃刀。适用于任何代码变更场景，要求变更纯净、无关代码零改动、每处变更可验证。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\karpathy_coding",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\karpathy_coding\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "Memory-Layer-autoDream",
+      "description": "name: Memory-Layer-autoDream",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\memory_autodream",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\memory_autodream\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": true
+    },
+    {
+      "name": "picasso-dev",
+      "description": "Use when Picasso 项目需要统一推进新需求、需求变更、Bug 修复或 UI 优化，并希望按标准流程生成需求、方案、UI、任务、自测、审查、验收等产物后再进入开发。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "picasso-dev-config",
+      "description": "Use when Picasso 开发链路中需要处理菜单、字典、SQL、环境配置、初始化数据或联调配置，避免因配置缺失导致页面入口、枚举值或接口能力不完整。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-config",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-config\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "picasso-dev-maintainer",
+      "description": "Use when modifying picasso-dev-skill 自身的 skill、模板、脚本、README、profile 或规则文件，并需要同步维护 CHANGELOG、更新记录、决策记录和迁移说明。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-maintainer",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-maintainer\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "picasso-dev-methods",
+      "description": "Use when Picasso 开发链路需要补齐方法论能力，如规划、任务拆分、TDD、系统化排障、完成前验证、代码审查处理、多代理并行与隔离策略，并要求这些方法在 skill 包内自包含、可迁移。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-methods",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-methods\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "picasso-dev-task",
+      "description": "Use when Picasso 需求涉及服务端接口、数据库表结构、删除策略、编码规则、OpenSpec 任务推进或后端实现联动，需要把业务需求翻译成服务端可执行任务和技术方案。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-task",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-task\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "picasso-dev-ui",
+      "description": "Use when Picasso 需求进入 UI 设计阶段，或需要优化 PC Web、微信小程序、移动端 App 的页面结构、视觉层级、交互路径、状态设计和端适配体验。",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-ui",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\picasso-dev-ui\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "🚩 毛选战略主权入口 (Maozx Strategic Skill)",
+      "description": "> [!IMPORTANT]",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": true
+    },
+    {
+      "name": "maozx-criticism",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-criticism",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-criticism\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-investigation",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-investigation",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-investigation\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-long-war",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-long-war",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-long-war\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-main-contradiction",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-main-contradiction",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-main-contradiction\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-mass-line",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-mass-line",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-mass-line\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-practice-first",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-practice-first",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-practice-first\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-project-thinking",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-project-thinking",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-project-thinking\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-strategic-offensive",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-strategic-offensive",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-strategic-offensive\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "maozx-united-front",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-united-front",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\maozx-united-front\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "strategic-development",
+      "description": "|",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\strategic-development",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\strategic\\strategic-development\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": false
+    },
+    {
+      "name": "Universal-Harvest-Polymorphic",
+      "description": "name: Universal-Harvest-Polymorphic",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\universal_harvest",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\universal_harvest\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": true
+    },
+    {
+      "name": "Verification-Expert-Nitpicking",
+      "description": "name: Verification-Expert-Nitpicking",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\verification_expert",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\verification_expert\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": true
+    },
+    {
+      "name": "Web-Harness-E2E",
+      "description": "name: Web-Harness-E2E",
+      "path": "D:\\tc\\baize-agent\\assets\\skills\\web_harness_e2e",
+      "skill_file": "D:\\tc\\baize-agent\\assets\\skills\\web_harness_e2e\\SKILL.md",
+      "source": "local:assets/skills",
+      "desc_is_fallback": true
+    }
+  ]
+}

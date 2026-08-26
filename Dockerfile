@@ -1,10 +1,10 @@
-# Baize Engine V20 - zero runtime dependencies means a tiny, fast image.
+# Baize Engine V25.0.0 - zero runtime dependencies means a tiny, fast image.
 # No pip install step at all: the whole engine is Python stdlib.
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="Baize Engine" \
       org.opencontainers.image.description="White-box autonomous agent engine (stdlib-only)" \
-      org.opencontainers.image.version="20.0.0" \
+      org.opencontainers.image.version="25.0.0" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONUNBUFFERED=1 \

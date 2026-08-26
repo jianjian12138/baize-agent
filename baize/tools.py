@@ -45,6 +45,10 @@ class ToolRegistry:
         """Remove a previously registered tool (used at runtime and in tests)."""
         self._tools.pop(name, None)
 
+    def get(self, name: str) -> Tool | None:
+        """Retrieve a registered Tool by name."""
+        return self._tools.get(name)
+
     def names(self) -> list[str]:
         return sorted(self._tools)
 
@@ -347,3 +351,43 @@ def default_registry() -> ToolRegistry:
                      _tool_run_skill)
         _DEFAULT_REGISTRY = reg
     return _DEFAULT_REGISTRY
+
+
+# ---------------------------------------------------------------------------
+# MCP tool registration — the SINGLE sanctioned entry point from core baize/
+# into baize.ext.mcp. The import below is deferred (inside the function body)
+# on purpose: it is the only allowed exception to the static "no top-level
+# import baize.ext" gate (plan §3.6 / system-design §3.2.M4). The core runtime
+# never imports ext at module load, so the zero-dependency red line (A) and the
+# fail-closed red line (C) both hold.
+# ---------------------------------------------------------------------------
+
+def register_mcp_client(spec, registry: "ToolRegistry | None" = None,
+                        transport=None) -> list[str]:
+    """Register an external MCP server's tools into ``registry``.
+
+    ``spec`` may be a path to ``mcp_server.json``, a dict with the same shape,
+    or an already-built ``MCPServerSpec``. The MCP protocol details stay behind
+    this ACL — the core runtime only ever sees wrapped ``Tool`` primitives.
+
+    Fail-closed: any handshake / transport error propagates (no silent skip).
+    """
+    from .ext.mcp.client import MCPClient, MCPServerSpec
+
+    if isinstance(spec, MCPServerSpec):
+        client_spec = spec
+    elif isinstance(spec, str):
+        client_spec = MCPClient.from_spec_file(spec, transport=transport).spec
+    elif isinstance(spec, dict):
+        client_spec = MCPServerSpec(
+            name=spec["name"], command=spec["command"],
+            args=spec.get("args", []), env=spec.get("env", {}),
+            protocol_version=spec.get("protocol_version", "2024-11-05"))
+    else:
+        raise TypeError(f"unsupported MCP spec type: {type(spec).__name__}")
+
+    reg = registry or default_registry()
+    client = MCPClient(client_spec, transport=transport)
+    client.connect()
+    client.list_tools()
+    return client.register_into(reg)

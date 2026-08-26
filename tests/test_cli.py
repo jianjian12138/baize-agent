@@ -1,5 +1,6 @@
 """Integration tests for the baize CLI — real subprocess-style calls via main()."""
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,6 +36,17 @@ def test_cli_version(capsys):
         assert e.code == 0
     out = capsys.readouterr().out
     assert "baize" in out
+
+
+def test_module_entrypoint_version():
+    """The CI and Docker smoke checks use ``python -m baize`` directly."""
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run(
+        [sys.executable, "-m", "baize", "--version"], cwd=root,
+        capture_output=True, text=True, check=False,
+    )
+    from baize import __version__
+    assert f"baize {__version__}" in result.stdout
 
 
 def test_cli_doctor_passes(tmp_path, capsys, monkeypatch):
@@ -445,7 +457,7 @@ def test_cli_team_with_issues(tmp_path, capsys, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def run(self, goal):
+        def run(self, goal, **kwargs):  # accept resume_run_id and future args
             return _FakeOrchResult(
                 success=False, session_ids=["s1"],
                 reports=[_FakeSubtaskReport(issues=["issue-a", "issue-b"])])
