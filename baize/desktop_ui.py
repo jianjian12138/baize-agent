@@ -977,25 +977,56 @@ async function loadSessions() {
     // Render Left Drawer
     const leftList = document.getElementById('workbench-session-list');
     leftList.innerHTML = list.slice(0, 15).map(s => `
-      <div class="session-item ${s.id === activeSessionId ? 'active' : ''}" onclick="selectSession('${s.id}')">
-        <div class="session-item-title">${s.id}</div>
-        <div class="session-item-time">${s.created_at || 'Recently'} · ${s.messages_count || 0} 条消息</div>
+      <div class="session-item ${s.id === activeSessionId ? 'active' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="session-item-title" onclick="selectSession('${s.id}')">${s.id}</div>
+          <span style="font-size:11px;color:var(--text-dim);cursor:pointer;" onclick="deleteSession('${s.id}')" title="删除会话">🗑️</span>
+        </div>
+        <div class="session-item-time" onclick="selectSession('${s.id}')">${s.created_at || 'Recently'} · ${s.messages_count || 0} 条消息</div>
       </div>
     `).join('') || '<div style="font-size:11px;color:var(--text-dim);padding:8px">暂无历史会话</div>';
     
     // Render Archive Tab
     const archTable = document.getElementById('archive-session-table');
-    archTable.innerHTML = list.map(s => `
+    archTable.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+        <button class="chip-btn" style="color:var(--danger);" onclick="clearAllSessions()">🗑️ 一键清空所有历史会话</button>
+      </div>` + (list.map(s => `
       <div class="stat-gauge" style="margin-bottom:8px">
         <span>📄 <strong>${s.id}</strong> (${s.messages_count || 0} msgs)</span>
         <div style="display:flex;gap:6px">
           <button class="chip-btn" onclick="selectSession('${s.id}');switchTab('tab-workbench')">进入会话</button>
           <button class="chip-btn" onclick="forkSession('${s.id}')">🍴 Fork 分支</button>
+          <button class="chip-btn" style="color:var(--danger)" onclick="deleteSession('${s.id}')">删除</button>
         </div>
       </div>
-    `).join('') || '暂无归档会话';
+    `).join('') || '<div style="color:var(--text-dim);font-size:12px;padding:8px">暂无归档会话</div>');
   } catch (err) {
     console.error('Failed to load sessions:', err);
+  }
+}
+
+async function deleteSession(sid) {
+  if (!confirm('确定删除会话 ' + sid + ' 吗？')) return;
+  try {
+    await fetch('/sessions/' + sid, { method: 'DELETE' });
+    if (activeSessionId === sid) startNewSession();
+    loadSessions();
+  } catch (err) {
+    alert('删除失败: ' + err.message);
+  }
+}
+
+async function clearAllSessions() {
+  if (!confirm('确定清空全部历史会话记录吗？')) return;
+  try {
+    const res = await fetch('/sessions/all', { method: 'DELETE' });
+    const data = await res.json();
+    alert('已成功清空 ' + (data.deleted_count || 0) + ' 条会话记录！');
+    startNewSession();
+    loadSessions();
+  } catch (err) {
+    alert('清空失败: ' + err.message);
   }
 }
 

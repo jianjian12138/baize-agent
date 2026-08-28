@@ -144,6 +144,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_compress(data)
         return self._send(404, {"error": "not found"})
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_DELETE(self):
+        from pathlib import Path
+        cfg = load_config()
+        sessions_dir = Path(cfg.get("BAIZE_SESSIONS_DIR", "persistence/sessions"))
+        if self.path in ("/sessions", "/sessions/all", "/sessions/clear"):
+            count = 0
+            if sessions_dir.exists():
+                for f in sessions_dir.glob("*.jsonl"):
+                    try:
+                        f.unlink()
+                        count += 1
+                    except OSError:
+                        pass
+            return self._send(200, {"deleted_count": count, "message": "all sessions cleared"})
+        if self.path.startswith("/sessions/"):
+            sid = self.path[len("/sessions/"):].strip()
+            p = sessions_dir / f"{sid}.jsonl"
+            if p.exists():
+                p.unlink()
+                return self._send(200, {"deleted": sid})
+            return self._send(404, {"error": "session not found"})
+        return self._send(404, {"error": "not found"})
+
     def _handle_synthesize(self, data: dict) -> None:
         name = (data.get("name") or "").strip()
         code = data.get("code") or ""
