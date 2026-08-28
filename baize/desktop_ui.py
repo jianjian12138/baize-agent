@@ -749,10 +749,10 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
           <!-- Exquisite Dock Input Box (Aligned with Reference UI) -->
           <div class="chat-dock">
             <!-- Autocomplete Popups -->
-            <div class="popup-menu" id="file-autocomplete-popup" style="left:24px;width:320px;"></div>
-            <div class="popup-menu" id="cmd-autocomplete-popup" style="left:24px;width:300px;"></div>
-            <div class="popup-menu" id="model-select-popup" style="right:70px;width:240px;"></div>
-            <div class="popup-menu" id="auth-select-popup" style="left:50px;width:220px;"></div>
+            <div class="popup-menu" id="file-autocomplete-popup" onclick="event.stopPropagation()" style="left:24px;width:320px;"></div>
+            <div class="popup-menu" id="cmd-autocomplete-popup" onclick="event.stopPropagation()" style="left:24px;width:300px;"></div>
+            <div class="popup-menu" id="model-select-popup" onclick="event.stopPropagation()" style="right:70px;width:240px;"></div>
+            <div class="popup-menu" id="auth-select-popup" onclick="event.stopPropagation()" style="left:50px;width:220px;"></div>
 
             <div class="dock-box">
               <!-- Context Chips -->
@@ -763,8 +763,11 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
               <!-- Bottom Tool Bar -->
               <div class="dock-toolbar">
                 <div class="dock-left-tools">
+                  <!-- Hidden Native File Picker -->
+                  <input type="file" multiple id="native-file-picker" style="display:none" onchange="handleNativeFileSelect(event)" />
+
                   <!-- '+' Attachment button -->
-                  <button class="inline-btn" onclick="triggerFilePicker()" title="引用工作区文件 (@)">
+                  <button class="inline-btn" onclick="triggerFilePicker(event)" title="引用工作区文件 (@)">
                     <span style="font-size:16px;font-weight:700;line-height:1">+</span>
                   </button>
 
@@ -1087,24 +1090,31 @@ function handleTextareaInput(e) {
 
 function showFileAutocomplete(query) {
   const popup = document.getElementById('file-autocomplete-popup');
-  const filtered = workspaceFiles.filter(f => f.toLowerCase().includes(query.toLowerCase())).slice(0, 10);
-  if (!filtered.length) {
-    popup.classList.remove('show');
-    return;
-  }
+  const filtered = workspaceFiles.filter(f => f.toLowerCase().includes((query || '').toLowerCase())).slice(0, 15);
   popup.innerHTML = `
-    <div style="font-size:10px;font-weight:700;color:var(--text-dim);padding:4px 8px;">引用工作区文件 (@)</div>
-  ` + filtered.map((f, i) => `
+    <div style="font-size:11px;font-weight:700;color:var(--text-dim);padding:4px 8px;display:flex;justify-content:space-between;align-items:center;">
+      <span>引用文件 (@)</span>
+      <span style="font-size:10px;color:var(--accent);cursor:pointer;" onclick="document.getElementById('native-file-picker').click();event.stopPropagation();">📂 浏览本地</span>
+    </div>
+    <input type="text" id="popup-file-search" value="${query || ''}" placeholder="快速搜索文件..." oninput="showFileAutocomplete(this.value)" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 8px;margin:4px 0 6px;" autofocus />
+    <div style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;">
+  ` + (filtered.length ? filtered.map((f, i) => `
     <div class="popup-item ${i === 0 ? 'selected' : ''}" onclick="selectFileFromAutocomplete('${f}')">
       <span>📄 ${f}</span>
     </div>
-  `).join('');
+  `).join('') : '<div style="font-size:11px;color:var(--text-dim);padding:6px 8px;">未匹配到文件</div>') + `
+    </div>
+  `;
   popup.classList.add('show');
+  const searchInput = document.getElementById('popup-file-search');
+  if (searchInput && query === '') {
+    setTimeout(() => searchInput.focus(), 50);
+  }
 }
 
 function showCommandAutocomplete(query) {
   const popup = document.getElementById('cmd-autocomplete-popup');
-  const filtered = availableCommands.filter(c => c.name.toLowerCase().includes(('/' + query).toLowerCase()));
+  const filtered = availableCommands.filter(c => c.name.toLowerCase().includes(('/' + (query || '')).toLowerCase()));
   if (!filtered.length) {
     popup.classList.remove('show');
     return;
@@ -1163,14 +1173,28 @@ function renderFileChips() {
   `).join('');
 }
 
-function triggerFilePicker() {
+async function triggerFilePicker(e) {
+  if (e) e.stopPropagation();
   const popup = document.getElementById('file-autocomplete-popup');
   if (popup.classList.contains('show')) {
     popup.classList.remove('show');
-  } else {
-    hidePopups();
-    showFileAutocomplete('');
+    return;
   }
+  hidePopups();
+  if (!workspaceFiles.length) {
+    await fetchWorkspaceFiles();
+  }
+  showFileAutocomplete('');
+}
+
+function handleNativeFileSelect(e) {
+  const files = e.target.files;
+  if (!files || !files.length) return;
+  for (let i = 0; i < files.length; i++) {
+    addFileChip(files[i].name);
+  }
+  hidePopups();
+  document.getElementById('chat-input').focus();
 }
 
 function toggleModelPopup(e) {
