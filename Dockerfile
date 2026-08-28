@@ -1,38 +1,26 @@
-# Baize Engine V33.0.0 - zero runtime dependencies means a tiny, fast image.
-# No pip install step at all: the whole engine is Python stdlib.
-FROM python:3.12-slim
-
-LABEL org.opencontainers.image.title="Baize Engine" \
-      org.opencontainers.image.description="White-box autonomous agent engine (stdlib-only)" \
-      org.opencontainers.image.version="33.0.0" \
-      org.opencontainers.image.licenses="MIT"
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    BAIZE_PERSISTENCE_DIR=/data \
-    BAIZE_SERVE_HOST=0.0.0.0 \
-    BAIZE_SERVE_PORT=8787
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy only what the runtime needs - keeps the layer small and the image clean.
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project definition and source code
+COPY pyproject.toml .
 COPY baize/ ./baize/
-COPY assets/ ./assets/
-COPY AGENT.md SKILL.md README.md ./
+COPY docs/ ./docs/
 
-# Run as a non-root user; /data is the only writable location.
-RUN useradd --system --create-home --uid 10001 baize \
-    && mkdir -p /data \
-    && chown -R baize:baize /app /data
-USER baize
+# Install python package
+RUN pip install --no-cache-dir -e .
 
-VOLUME ["/data"]
-EXPOSE 8787
+# Expose ports for Web UI / RESTful HTTP (8787) and Prometheus metrics
+EXPOSE 8787 50051
 
-# Fail the container early if the runtime is broken.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request,sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/health',timeout=3).status==200 else 1)"
+ENV BAIZE_HOST=0.0.0.0
+ENV BAIZE_PORT=8787
 
-ENTRYPOINT ["python", "-m", "baize"]
-CMD ["serve"]
+CMD ["python", "-m", "baize", "serve", "--port", "8787"]

@@ -62,3 +62,11 @@ class TestStreamAndExport(unittest.TestCase):
         self.assertIn("loadToolHub", html)
         self.assertIn("importMetaTool", html)
         self.assertIn("testRagSearch", html)
+
+    def test_desktop_studio_includes_sprint3_features(self):
+        html = render_desktop_studio("35.0.0")
+        self.assertIn("runChaosSimulation", html)
+        self.assertIn("applyRbacRules", html)
+        self.assertIn("Baize-Gate-Verified", html)
+        from pathlib import Path
+        self.assertTrue(Path("Dockerfile").exists())

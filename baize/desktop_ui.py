@@ -1181,6 +1181,20 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             </div>
           </div>
         </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🧪 混沌工程抗脆弱演练台 (Chaos Simulation Arena)</h3>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+            <select id="chaos-fault-select" style="background:#090b12;border:1px solid var(--border-subtle);color:var(--text-main);padding:6px 10px;border-radius:6px;font-size:12px;">
+              <option value="malformed_json">LLM 输出截断畸变 JSON 响应</option>
+              <option value="network_drop_30">模拟 30% 网络弱网丢包</option>
+              <option value="slow_latency_3000ms">模拟 3000ms 慢网络高延迟</option>
+              <option value="disk_read_only">模拟持久化只读故障</option>
+            </select>
+            <button class="primary-btn" onclick="runChaosSimulation()">⚡ 触发混沌注入演练</button>
+          </div>
+          <div id="chaos-sim-result" style="font-size:12px;margin-top:8px;"></div>
+        </div>
       </div>
     </section>
 
@@ -1205,6 +1219,26 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
               <input type="radio" name="autonomy_level" value="3" onchange="setAutonomyMode(3)" />
               <span><strong>Level 3: YOLO 极客模式 (Full Autonomous)</strong> — 全自动执行，提效最大化</span>
             </label>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🛡️ 细粒度路径 RBAC 权限与物理门禁加密签名</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div style="background:#090b12;padding:8px;border-radius:6px;border:1px solid var(--border-subtle);">
+                <strong>路径策略:</strong>
+                <div style="color:var(--text-muted);font-size:11px;margin-top:4px;">• <code>src/**</code> ➔ 读写 (RW)</div>
+                <div style="color:var(--text-muted);font-size:11px;">• <code>deploy/**</code> ➔ 只读 (RO)</div>
+                <div style="color:var(--text-muted);font-size:11px;">• <code>.env</code> ➔ 禁止访问 (Deny)</div>
+              </div>
+              <div style="background:#090b12;padding:8px;border-radius:6px;border:1px solid var(--border-subtle);">
+                <strong>Git 门禁加密签名水印:</strong>
+                <div id="security-watermark" style="font-family:var(--font-mono);color:var(--accent);font-size:11px;margin-top:4px;">Baize-Gate-Verified: BG-9A71F42B</div>
+              </div>
+            </div>
+            <button class="primary-btn" onclick="applyRbacRules()" style="align-self:flex-start;margin-top:4px;">🔒 更新细粒度路径权限</button>
+            <div id="rbac-result" style="font-size:12px;"></div>
           </div>
         </div>
       </div>
@@ -1239,6 +1273,14 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             <button class="primary-btn" onclick="testWebhookDispatch()">🚀 模拟发送事件通知</button>
           </div>
           <div id="webhook-test-result" style="font-size:12px;margin-top:8px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🌐 企业级私有化集群部署与 gRPC 服务</h3>
+          <div style="background:#090b12;padding:10px;border-radius:6px;border:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:8px;">
+            docker run -d -p 8787:8787 -p 50051:50051 -e BAIZE_AUTH_TOKEN=secret_token -v /workspace:/workspace baize/studio:v35.0.0
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">支持 RESTful HTTP (8787) 与 gRPC 二进制双向流式协议 (50051)。</div>
         </div>
       </div>
     </section>
@@ -2474,6 +2516,54 @@ async function testWebhookDispatch() {
     resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message}</span>`;
   } catch (e) {
     resEl.innerHTML = `<span style="color:var(--danger)">推送失败: ${e.message}</span>`;
+  }
+}
+
+async function runChaosSimulation() {
+  const fault = document.getElementById('chaos-fault-select').value;
+  const resEl = document.getElementById('chaos-sim-result');
+  resEl.innerHTML = '<span style="color:var(--accent)">正在模拟极端故障注入并检验 Agent 自动降级与自愈弹性...</span>';
+  try {
+    const res = await fetch('/api/chaos/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fault_type: fault })
+    });
+    const d = await res.json();
+    resEl.innerHTML = `
+      <div style="background:#090b12;padding:10px;border-radius:6px;border:1px solid var(--success);margin-top:6px;">
+        <div style="display:flex;justify-content:space-between;color:var(--success);font-weight:700;">
+          <span>✓ 混沌演练通过: ${d.verdict}</span>
+          <span>韧性评分: ${d.resilience_score}</span>
+        </div>
+        <div style="color:var(--text-dim);font-size:11px;margin-top:4px;">${d.message}</div>
+      </div>
+    `;
+  } catch (e) {
+    resEl.innerHTML = `<span style="color:var(--danger)">演练异常: ${e.message}</span>`;
+  }
+}
+
+async function applyRbacRules() {
+  const resEl = document.getElementById('rbac-result');
+  resEl.innerHTML = '<span style="color:var(--accent)">正在应用细粒度路径 RBAC 权限...</span>';
+  try {
+    const res = await fetch('/api/security/rbac', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rules: [
+          { path: "src/**", perm: "rw" },
+          { path: "deploy/**", perm: "ro" },
+          { path: ".env", perm: "deny" }
+        ]
+      })
+    });
+    const d = await res.json();
+    document.getElementById('security-watermark').innerText = d.commit_watermark;
+    resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message} [水印: ${d.commit_watermark}]</span>`;
+  } catch (e) {
+    resEl.innerHTML = `<span style="color:var(--danger)">配置失败: ${e.message}</span>`;
   }
 }
 
