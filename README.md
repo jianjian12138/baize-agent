@@ -1,20 +1,21 @@
 # Baize Agent — zero-dependency autonomous agent runtime (白泽引擎) · V33.0.0
 
-[![tests](https://img.shields.io/badge/tests-593%20passed%20%2F%201%20skipped-brightgreen)](https://github.com/jianjian12138/baize-agent)
+[![tests](https://img.shields.io/badge/tests-597%20passed%20%2F%201%20skipped-brightgreen)](https://github.com/jianjian12138/baize-agent)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/licenses/MIT)
 [![python](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-lightgrey)](https://github.com/jianjian12138/baize-agent)
 [![version](https://img.shields.io/badge/version-V33.0.0-orange)](https://github.com/jianjian12138/baize-agent)
 
-> **EN** — A white-box, engineering-driven autonomous Agent runtime in **pure Python standard library (zero third-party runtime deps)**. Verified by a **NO FAKE DONE** gate (manifest evidence + `doctor`/`gate`/pytest). V33 brings **Precise Delta Patching (`patch_file`)**, **AST-Guarded Code Sandbox (`run_python`)**, **Structured CoT (`<thinking>`) Enforcement**, **Hybrid BM25+TFIDF RAG**, **Orchestrator Parallel DAG**, and **Deep Session & Span Trace Observability**.
+> **EN** — A white-box, engineering-driven autonomous Agent runtime in **pure Python standard library (zero third-party runtime deps)**. Verified by a **NO FAKE DONE** gate (manifest evidence + `doctor`/`gate`/pytest). V33 brings **Precise Delta Patching (`patch_file`)**, **AST-Guarded Code Sandbox (`run_python`)**, **Structured CoT (`<thinking>`) Enforcement**, **Hybrid BM25+TFIDF RAG**, **Orchestrator Parallel DAG**, **Deep Trace Observability**, and **Universal Agent Desktop Studio (9 Core Modules & Windows-First Launcher)**.
 >
-> **中文** — 一套面向 AI Agent 的**白盒工程化研发操作系统**：运行时**零第三方依赖**，以 **NO FAKE DONE** 门禁保证「不假绿」。全面超越业界主流 Agent：内置 **精确差量编辑 (`patch_file`)**、**AST 白名单安全 Python 沙箱 (`run_python`)**、**结构化 CoT 思维链强制 (`<thinking>`)**、**BM25+TF-IDF 融合语义 RAG**、**多任务并行 DAG 调度**、**Trace ID 与 Span 耗时全链路可视化**及**持续交互式 CLI 对话终端**。
+> **中文** — 一套面向 AI Agent 的**白盒工程化研发操作系统**：运行时**零第三方依赖**，以 **NO FAKE DONE** 门禁保证「不假绿」。全面超越业界主流 Agent：内置 **精确差量编辑 (`patch_file`)**、**AST 白名单安全 Python 沙箱 (`run_python`)**、**结构化 CoT 思维链强制 (`<thinking>`)**、**BM25+TF-IDF 融合语义 RAG**、**多任务并行 DAG 调度**、**Trace ID 毫秒级瀑布流**、**白泽智能桌面工作台 (9大功能模块 · Windows-First 沉浸式桌面客户端)**。
 
 ---
 
 ## Why Baize (差异化)
 
 - **Zero third-party runtime deps** — `baize/` is pure `stdlib`; air-gapped / audited / embedded-safe by construction.
+- **Universal Agent Desktop Studio (V33)** — 对标 Hermes-CN-Desktop / Codex Desktop 的 9 大功能工作台（流式对话、LaTeX/Mermaid、会话时间旅行、DAG控制台、技能中心、分层记忆、模型中心、健康诊断与安全自主度控制），支持 `python -m baize desktop` 或双击 `install/baize-desktop.bat` 一键唤起独立桌面窗口。
 - **NO FAKE DONE verified** — a phase marked `done` must have physically-present evidence; Verifier re-checks independently; chaos injects real failures.
 - **Precise Delta Editing (`patch_file`) (V33)** — unified diff & string replacement modes prevent hallucinated overwrites on large codebases.
 - **AST-Guarded Python Sandbox (`run_python`) (V33)** — in-process safe Python snippet execution guarded by strict AST-level import & builtin whitelists.
@@ -23,7 +24,7 @@
 - **Parallel DAG Multi-Agent (V33)** — Orchestrator dynamically resolves `depends_on` graphs and executes independent tasks concurrently via thread pools.
 - **Deep Trace Observability (V33)** — `/trace` slash command and `baize sessions <id> --inspect` render visual step & span execution timelines with ms-precision latency.
 - **Continuous Interactive REPL (V32/V33)** — continuous interactive terminal with `@file` context injection, multi-line paste, `/model` hot-switching, `/fork`, and `/rewind`.
-- **Servable** — `baize serve` exposes REST & SSE stream endpoints built-in.
+- **Servable** — `baize serve` & `baize desktop` expose REST & SSE stream endpoints built-in.
 
 ## Comparison with leading frameworks (对比头部框架)
 

@@ -214,5 +214,6 @@ poll(); setInterval(poll, 5000);
 
 
 def render(version: str | None = None) -> str:
-    """Return the dashboard HTML with the runtime version substituted."""
-    return PAGE.replace("__VER__", version or __version__)
+    """Return the Universal Desktop Studio HTML with the runtime version substituted."""
+    from .desktop_ui import render_desktop_studio
+    return render_desktop_studio(version or __version__)

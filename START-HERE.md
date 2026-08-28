@@ -33,10 +33,20 @@ python -m baize index search tdd      # 例如 tdd / vue / golang
 ## 第 3 步：跑通测试（1 分钟）
 
 ```bash
-python -m pytest tests/ -q            # 593 个真实测试，全部通过
+python -m pytest tests/ -q            # 597 个真实测试，全部通过
 ```
 
-## 第 4 步：体验极致交互式终端（3 分钟，推荐）
+## 第 4 步：体验白泽智能桌面工作台（推荐）
+
+```bash
+# 启动沉浸式桌面客户端（自动唤起独立应用窗口）
+python -m baize desktop
+
+# 或在 Windows 系统下直接双击运行：
+# install/baize-desktop.bat
+```
+
+## 第 5 步：体验极致交互式终端（3 分钟）
 
 ```bash
 # 启动行业领先的连续交互 REPL 终端

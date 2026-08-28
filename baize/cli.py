@@ -232,6 +232,12 @@ def cmd_memory(args) -> int:
     return 2
 
 
+def cmd_desktop(args) -> int:
+    from .desktop import launch_desktop
+    return launch_desktop(host=getattr(args, "host", "127.0.0.1"),
+                          port=getattr(args, "port", 8787))
+
+
 def cmd_rag(args) -> int:
     from . import rag
     if args.action == "search":
@@ -858,6 +864,11 @@ def build_parser() -> argparse.ArgumentParser:
                           help="V30 speculative time-travel multi-branch exploration")
     spec.add_argument("goal", help="Task goal to explore across candidate timelines")
 
+    # V33 Desktop Studio
+    dt = sub.add_parser("desktop", help="launch Baize Desktop Studio application")
+    dt.add_argument("--host", default="127.0.0.1")
+    dt.add_argument("--port", type=int, default=8787)
+
     return p
 
 
@@ -885,9 +896,8 @@ def main(argv: list[str] | None = None) -> int:
         from .repl import run_repl
         return run_repl()
     args = build_parser().parse_args(argv)
-    # Fail-fast configuration guard for every command except `doctor`, `setup`, which are
-    # diagnostics and interactive configuration tools.
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure"):
+    # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop"):
         try:
             validate()
         except ConfigError as e:
@@ -897,6 +907,7 @@ def main(argv: list[str] | None = None) -> int:
         "setup": cmd_setup,
         "configure": cmd_setup,
         "chat": cmd_chat,
+        "desktop": cmd_desktop,
         "doctor": cmd_doctor,
         "index": cmd_index,
         "skill": cmd_skill,

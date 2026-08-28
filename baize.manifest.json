@@ -466,9 +466,12 @@
       "status": "done",
       "evidence": [
         "baize/session_viewer.py",
+        "baize/desktop.py",
+        "baize/desktop_ui.py",
         "tests/test_v33_tools.py",
         "tests/test_v33_features.py",
-        "tests/test_v33_refinements.py"
+        "tests/test_v33_refinements.py",
+        "tests/test_desktop_app.py"
       ]
     }
   ]
