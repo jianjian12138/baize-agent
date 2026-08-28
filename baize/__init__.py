@@ -14,4 +14,4 @@ is always resolvable. See docs/V25-arch-design/系统设计.md:485 and
 docs/V25-专家评审.md N-03.
 """
 
-__version__ = "33.0.0"
+__version__ = "35.0.0"
