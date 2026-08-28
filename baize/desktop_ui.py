@@ -337,14 +337,16 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     overflow: hidden;
     position: relative;
   }
 
   .messages-container {
-    flex: 1;
+    flex: 1 1 0;
+    min-height: 0;
     overflow-y: auto;
-    padding: 20px 24px;
+    padding: 24px 24px 12px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -354,15 +356,15 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   .msg-row {
     display: flex;
     gap: 12px;
-    max-width: 880px;
+    max-width: 860px;
     width: 100%;
     margin: 0 auto;
   }
   .msg-row.user { justify-content: flex-end; }
 
   .avatar {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
@@ -399,37 +401,38 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   /* Prompt Shelf */
   .prompt-shelf {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     overflow-x: auto;
-    padding: 6px 0;
-    max-width: 880px;
+    padding: 2px 0 6px;
+    max-width: 860px;
     width: 100%;
     margin: 0 auto;
   }
   .prompt-card {
-    background: var(--bg-elevated);
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    padding: 5px 10px;
+    border-radius: 6px;
+    padding: 4px 8px;
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-dim);
     cursor: pointer;
     white-space: nowrap;
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     transition: all 0.15s;
   }
   .prompt-card:hover {
-    background: var(--bg-hover);
+    background: rgba(0, 242, 254, 0.08);
     color: var(--accent);
-    border-color: var(--accent);
+    border-color: rgba(0, 242, 254, 0.3);
   }
 
   /* Exquisite Chat Input Dock */
   .chat-dock {
-    padding: 4px 24px 16px;
-    max-width: 880px;
+    flex-shrink: 0;
+    padding: 0 24px 20px;
+    max-width: 860px;
     width: 100%;
     margin: 0 auto;
     display: flex;
@@ -438,14 +441,14 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     position: relative;
   }
   .dock-box {
-    background: #12151e;
-    border: 1px solid #232a3d;
-    border-radius: 16px;
-    padding: 10px 14px;
+    background: #12151f;
+    border: 1px solid #242c3f;
+    border-radius: 14px;
+    padding: 12px 16px 10px;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
     position: relative;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
@@ -811,12 +814,17 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
         <!-- Sessions Left Drawer -->
         <div class="session-sidebar" id="session-sidebar-panel">
           <div class="session-header">
-            <span style="font-size:11px;font-weight:700;color:var(--text-muted)">最近会话</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span style="font-size:12px;font-weight:700;color:var(--text-muted)">会话历史</span>
+            </div>
             <button class="icon-btn" onclick="startNewSession()" title="新建会话">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
           </div>
-          <div class="session-list" id="workbench-session-list"></div>
+          <div class="session-list" id="workbench-session-list">
+            <div style="font-size:11px;color:var(--text-dim);padding:20px 8px;text-align:center;line-height:1.6;">暂无历史会话<br><span style="color:var(--accent);cursor:pointer;" onclick="startNewSession()">+ 点击开启新会话</span></div>
+          </div>
         </div>
 
         <!-- Chat Viewport -->
@@ -1604,7 +1612,7 @@ async function loadSessions() {
         </div>
         <div class="session-item-time" onclick="selectSession('${s.id}')">${s.created_at || 'Recently'} · ${s.messages_count || 0} 条消息</div>
       </div>
-    `).join('') || '<div style="font-size:11px;color:var(--text-dim);padding:8px">暂无历史会话</div>';
+    `).join('') || '<div style="font-size:11px;color:var(--text-dim);padding:24px 8px;text-align:center;line-height:1.6;">暂无历史会话<br><span style="color:var(--accent);cursor:pointer;font-weight:600;" onclick="startNewSession()">+ 点击开启新会话</span></div>';
     
     const archTable = document.getElementById('archive-session-table');
     archTable.innerHTML = `
