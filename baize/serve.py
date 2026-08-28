@@ -154,6 +154,48 @@ class Handler(BaseHTTPRequestHandler):
                 ]
             })
 
+        if self.path == "/api/skills" or self.path.startswith("/api/skills?"):
+            from . import skill_index
+            idx = skill_index.build_index()
+            skills = list(idx.get("skills", []))
+            # Enrich with comprehensive 240+ engineering skills taxonomy
+            from .skills_catalog import get_full_skills_catalog
+            catalog = get_full_skills_catalog()
+            existing_names = {s.get("name") for s in skills}
+            for cat_skill in catalog:
+                if cat_skill["name"] not in existing_names:
+                    skills.append(cat_skill)
+            return self._send(200, {"skills": skills, "total": len(skills), "libraries": idx.get("libraries", [])})
+
+        if self.path.startswith("/api/skills/"):
+            sname = self.path[len("/api/skills/"):].strip()
+            from .skills_catalog import get_skill_content
+            content = get_skill_content(sname)
+            return self._send(200, {"name": sname, "content": content})
+
+        if self.path == "/api/git/status":
+            import subprocess
+            git_exe = r"C:\Users\Admin（无密码）\.workbuddy\binaries\PortableGit\versions\1.2.0\cmd\git.exe"
+            try:
+                res = subprocess.run([git_exe, "status", "-s"], capture_output=True, text=True, cwd=load_config()["BAIZE_WORKSPACE_DIR"])
+                branch_res = subprocess.run([git_exe, "branch", "--show-current"], capture_output=True, text=True, cwd=load_config()["BAIZE_WORKSPACE_DIR"])
+                return self._send(200, {
+                    "branch": branch_res.stdout.strip() or "v30-dev",
+                    "status_output": res.stdout,
+                    "clean": len(res.stdout.strip()) == 0
+                })
+            except Exception as e:
+                return self._send(200, {"branch": "v30-dev", "status_output": "", "clean": True, "error": str(e)})
+
+        if self.path == "/api/git/diff":
+            import subprocess
+            git_exe = r"C:\Users\Admin（无密码）\.workbuddy\binaries\PortableGit\versions\1.2.0\cmd\git.exe"
+            try:
+                res = subprocess.run([git_exe, "diff"], capture_output=True, text=True, cwd=load_config()["BAIZE_WORKSPACE_DIR"])
+                return self._send(200, {"diff": res.stdout})
+            except Exception as e:
+                return self._send(200, {"diff": "", "error": str(e)})
+
         if self.path == "/api/config":
             cfg = load_config()
             return self._send(200, {
@@ -171,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/metrics":
             return self._send_text(200, "",
                                    "text/plain; version=0.0.4; charset=utf-8")
-        if self.path in ("/health", "/bench", "/gate", "/sessions"):
+        if self.path in ("/health", "/bench", "/gate", "/sessions", "/api/skills", "/api/models"):
             return self._send(200, {})
         return self._send(404, {"error": "not found"})
 
@@ -192,10 +234,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_synthesize(data)
         if self.path == "/v30/adversarial":
             return self._handle_adversarial(data)
+        if self.path == "/v30/causal":
+            return self._handle_causal(data)
         if self.path == "/sessions/fork":
             return self._handle_fork(data)
         if self.path == "/sessions/compress":
             return self._handle_compress(data)
+        if self.path == "/api/skills":
+            return self._handle_save_skill(data)
         if self.path == "/api/models/active":
             model_id = (data.get("model") or "").strip()
             if model_id:
@@ -212,6 +258,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"autonomy_level": level, "status": "updated"})
             return self._send(400, {"error": "missing config field"})
         return self._send(404, {"error": "not found"})
+
+    def _handle_causal(self, data: dict) -> None:
+        code = data.get("code") or "def divide(a, b):\n    return a / b"
+        fn_name = data.get("target_function") or "divide"
+        from .knowledge.causal import CausalDebugger
+        dbg = CausalDebugger()
+        cslice = dbg.slice_culprit_ast(code, fn_name)
+        mutations = dbg.generate_counterfactual_mutations(cslice)
+        self._send(200, {
+            "target_function": cslice.target_function,
+            "line_range": cslice.line_range,
+            "culprit_variables": cslice.culprit_variables,
+            "ast_node_type": cslice.ast_node_type,
+            "snippet": cslice.source_snippet,
+            "mutations": [
+                {"name": m.name, "type": m.mutation_type, "desc": m.description, "payload": m.payload}
+                for m in mutations
+            ]
+        })
+
+    def _handle_save_skill(self, data: dict) -> None:
+        from pathlib import Path
+        name = (data.get("name") or "").strip()
+        body = data.get("content") or ""
+        if not name:
+            return self._send(400, {"error": "missing skill name"})
+        skill_dir = Path("user_skills") / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+        return self._send(200, {"name": name, "path": str(skill_dir / "SKILL.md"), "status": "saved"})
 
     def do_OPTIONS(self):
         self.send_response(204)
