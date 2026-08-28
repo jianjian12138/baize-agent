@@ -42,3 +42,9 @@ class TestStreamAndExport(unittest.TestCase):
         self.assertIn("filterSessions", html)
         self.assertIn("mergeSpeculativeWinner", html)
         self.assertIn("applyCausalHeal", html)
+
+    def test_desktop_studio_includes_metrics_and_webhook(self):
+        html = render_desktop_studio("34.0.0")
+        self.assertIn("loadMetricsSummary", html)
+        self.assertIn("testWebhookDispatch", html)
+        self.assertIn("metric-uptime", html)

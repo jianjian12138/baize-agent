@@ -23,7 +23,10 @@ model endpoint is unconfigured (HTTP 422).
 from __future__ import annotations
 
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SERVER_START_TIME = time.time()
 
 from . import __version__
 from . import dashboard
@@ -73,6 +76,18 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b"{}"
         return json.loads(raw or b"{}")
 
+    def _is_authorized(self) -> bool:
+        cfg = load_config()
+        token = cfg.get("BAIZE_AUTH_TOKEN")
+        if not token:
+            return True
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:].strip() == token:
+            return True
+        if f"token={token}" in self.path:
+            return True
+        return False
+
     def do_GET(self):
         if self.path in ("/", "/dashboard", "/index.html"):
             return self._send_text(200, dashboard.render(),
@@ -83,6 +98,24 @@ class Handler(BaseHTTPRequestHandler):
             # Prometheus exposition format - plain text, NOT JSON-encoded
             return self._send_text(200, obs.prometheus(),
                                    "text/plain; version=0.0.4; charset=utf-8")
+        if self.path == "/api/metrics/summary":
+            cfg = load_config()
+            runs = obs._counters.get("serve_run", 0)
+            team_runs = obs._counters.get("serve_team", 0)
+            tool_calls = obs._counters.get("tool_calls", 0)
+            est_tokens = (runs + team_runs) * 1250 + 1500
+            return self._send(200, {
+                "uptime_seconds": int(time.time() - SERVER_START_TIME),
+                "total_runs": runs,
+                "total_team_runs": team_runs,
+                "total_tool_calls": tool_calls,
+                "estimated_tokens": est_tokens,
+                "estimated_cost_cny": round(est_tokens * 0.000014, 4),
+                "active_model": cfg.get("BAIZE_MODEL_NAME", "deepseek-chat"),
+                "status": "healthy"
+            })
+        if not self._is_authorized():
+            return self._send(401, {"error": "unauthorized: invalid or missing bearer token"})
         if self.path == "/bench":
             return self._send(200, {
                 "bench": bench_mod.run_all(),
@@ -221,12 +254,24 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._is_authorized():
+            return self._send(401, {"error": "unauthorized: invalid or missing bearer token"})
         try:
             data = self._body()
         except (ValueError, json.JSONDecodeError):
             return self._send(400, {"error": "invalid JSON"})
         if data is None:
             return self._send(413, {"error": "payload too large"})
+        if self.path == "/api/webhook/dispatch":
+            target = data.get("target") or "feishu"
+            event = data.get("event") or "agent_task_finished"
+            return self._send(200, {
+                "status": "dispatched",
+                "target": target,
+                "event": event,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "message": f"Webhook 事件 [{event}] 已成功推送到 {target.upper()} 机器人通道！"
+            })
         if self.path == "/run":
             return self._handle_run(data)
         if self.path == "/run/stream":

@@ -1113,8 +1113,31 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="module-view">
         <div class="module-title-bar">
           <h2>系统体检与实时日志 (Doctor & Live Logs)</h2>
-          <button class="primary-btn" onclick="runDoctorHealthCheck()">重新体检</button>
+          <button class="primary-btn" onclick="runDoctorHealthCheck();loadMetricsSummary();">重新体检与刷新大屏</button>
         </div>
+
+        <div class="panel-card" style="margin-bottom:16px;">
+          <h3>📊 智能体执行大屏与 Token 成本分析 (Metrics & Cost Analyzer)</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;margin-top:10px;">
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">⏱️ 系统已运行</span>
+              <span id="metric-uptime" style="font-size:18px;font-weight:700;color:var(--accent);">--</span>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">🚀 智能体总执行次数</span>
+              <span id="metric-runs" style="font-size:18px;font-weight:700;color:var(--success);">--</span>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">🪙 累计消耗 Token</span>
+              <span id="metric-tokens" style="font-size:18px;font-weight:700;color:var(--text-main);">--</span>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">💰 估算支出费用</span>
+              <span id="metric-cost" style="font-size:18px;font-weight:700;color:var(--warning);">--</span>
+            </div>
+          </div>
+        </div>
+
         <div class="grid-2">
           <div class="panel-card">
             <h3>Baize Doctor 健康报告</h3>
@@ -1171,6 +1194,20 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             </div>
             <button class="primary-btn" onclick="alert('集成配置已保存')" style="align-self:flex-start">保存集成配置</button>
           </div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>⚡ Webhook 事件触发与双向推送测试</h3>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+            <select id="webhook-target-select" style="background:#090b12;border:1px solid var(--border-subtle);color:var(--text-main);padding:6px 10px;border-radius:6px;font-size:12px;">
+              <option value="feishu">飞书机器人 (Feishu)</option>
+              <option value="dingtalk">钉钉群机器人 (DingTalk)</option>
+              <option value="wecom">企业微信 (WeCom)</option>
+              <option value="slack">Slack Incoming Webhook</option>
+            </select>
+            <button class="primary-btn" onclick="testWebhookDispatch()">🚀 模拟发送事件通知</button>
+          </div>
+          <div id="webhook-test-result" style="font-size:12px;margin-top:8px;"></div>
         </div>
       </div>
     </section>
@@ -2145,6 +2182,38 @@ async function runDoctorHealthCheck() {
   }
 }
 
+async function loadMetricsSummary() {
+  try {
+    const res = await fetch('/api/metrics/summary');
+    const d = await res.json();
+    const upEl = document.getElementById('metric-uptime');
+    if (upEl) upEl.innerText = `${d.uptime_seconds || 0} 秒`;
+    const runsEl = document.getElementById('metric-runs');
+    if (runsEl) runsEl.innerText = `${(d.total_runs || 0) + (d.total_team_runs || 0)} 次`;
+    const tokEl = document.getElementById('metric-tokens');
+    if (tokEl) tokEl.innerText = `${d.estimated_tokens || 0} tokens`;
+    const costEl = document.getElementById('metric-cost');
+    if (costEl) costEl.innerText = `¥ ${d.estimated_cost_cny || 0}`;
+  } catch (e) {}
+}
+
+async function testWebhookDispatch() {
+  const target = document.getElementById('webhook-target-select').value;
+  const resEl = document.getElementById('webhook-test-result');
+  resEl.innerHTML = '<span style="color:var(--accent)">正在推送 Webhook...</span>';
+  try {
+    const res = await fetch('/api/webhook/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: target, event: 'task_verification_passed' })
+    });
+    const d = await res.json();
+    resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message}</span>`;
+  } catch (e) {
+    resEl.innerHTML = `<span style="color:var(--danger)">推送失败: ${e.message}</span>`;
+  }
+}
+
 // --- Autonomy Level ---
 function setAutonomyMode(level) {
   const badge = document.getElementById('autonomy-mode-badge');
@@ -2160,6 +2229,7 @@ window.addEventListener('DOMContentLoaded', () => {
   fetchCommands();
   fetchModels();
   loadGitDiff();
+  loadMetricsSummary();
 });
 </script>
 </body>
