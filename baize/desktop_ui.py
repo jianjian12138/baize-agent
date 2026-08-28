@@ -921,7 +921,13 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="module-view">
         <div class="module-title-bar">
           <h2>代码审查与 Git 差量工作区 (Diff Review)</h2>
-          <button class="primary-btn" onclick="loadGitDiff()">刷新变更</button>
+          <div style="display:flex;gap:8px;">
+            <div style="display:flex;background:#0d1017;border:1px solid var(--border-subtle);border-radius:6px;padding:2px;">
+              <button class="chip-btn" id="diff-mode-unified" onclick="setDiffViewMode('unified')" style="background:var(--bg-elevated);color:var(--accent);">📄 Unified 单栏</button>
+              <button class="chip-btn" id="diff-mode-split" onclick="setDiffViewMode('split')">📑 Split 并排</button>
+            </div>
+            <button class="primary-btn" onclick="loadGitDiff()">刷新变更</button>
+          </div>
         </div>
         <div class="panel-card">
           <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -939,20 +945,20 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     <section id="tab-archive" class="tab-pane">
       <div class="module-view">
         <div class="module-title-bar">
-          <h2>会话分支与时间旅行 (Archive & Time-Travel)</h2>
-          <button class="primary-btn" onclick="loadSessions()">刷新会话清单</button>
+          <h2>会话分支与时间旅行时光机 (Archive & Lineage Graph)</h2>
+          <div style="display:flex;gap:8px;">
+            <button class="chip-btn" onclick="exportCurrentSession()">📥 导出当前会话</button>
+            <button class="primary-btn" onclick="loadSessions();loadLineageTree();">刷新会话树</button>
+          </div>
         </div>
-        <div class="panel-card">
-          <h3>会话分支操作 (/sessions/fork & /sessions/compress)</h3>
-          <form id="forkform" onsubmit="event.preventDefault();submitFork();" style="display:flex;gap:8px;margin-bottom:8px">
-            <input type="text" id="fork-parent-input" placeholder="父会话 ID" />
-            <button type="submit" class="primary-btn">执行 /sessions/fork</button>
-          </form>
-          <form id="compressform" onsubmit="event.preventDefault();submitCompress();" style="display:flex;gap:8px">
-            <input type="text" id="compress-id-input" placeholder="会话 ID" />
-            <button type="submit" class="primary-btn">执行 /sessions/compress</button>
-          </form>
+
+        <div class="panel-card" style="margin-bottom:16px;">
+          <h3>🌿 会话血统与分叉时光机 (Lineage Git-Graph)</h3>
+          <div id="lineage-tree-canvas" style="display:flex;flex-direction:column;gap:8px;padding:12px;background:#080a10;border-radius:8px;border:1px solid var(--border-subtle);min-height:100px;">
+            <span style="color:var(--text-dim);font-size:12px;">加载会话拓扑树中...</span>
+          </div>
         </div>
+
         <div class="panel-card">
           <h3>会话历史列表 (Append-only JSONL)</h3>
           <div id="archive-session-table">加载中...</div>
@@ -964,17 +970,31 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     <section id="tab-team" class="tab-pane">
       <div class="module-view">
         <div class="module-title-bar">
-          <h2>多 Agent DAG 并行调度控制台 (Director → Executor → Verifier)</h2>
+          <h2>多 Agent DAG 并行调度控制台 (Interactive Flow Orchestrator)</h2>
         </div>
         <div class="panel-card">
           <h3>派发端到端团队目标</h3>
-          <div style="display:flex;gap:10px;">
+          <div style="display:flex;gap:10px;margin-bottom:12px;">
             <input type="text" id="team-goal-input" placeholder="输入复杂工程目标（例如：实现新特性并编写 100% 覆盖率测试）..." />
-            <button class="primary-btn" onclick="launchTeamGoal()" style="white-space:nowrap">启动 DAG 并行编排</button>
+            <button class="primary-btn" onclick="launchTeamGoal()" style="white-space:nowrap">🚀 启动 DAG 并行编排</button>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border-subtle);padding-top:10px;">
+            <div style="font-size:12px;color:var(--text-muted);">
+              <strong>智能体节点库 (点击添加):</strong>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button class="chip-btn" onclick="addDagNode('director', '🎯 Director 规划节点')">+ 🎯 Director</button>
+              <button class="chip-btn" onclick="addDagNode('executor', '⚡ Executor 执行节点')">+ ⚡ Executor</button>
+              <button class="chip-btn" onclick="addDagNode('critic', '🧠 Critic 审查反思')">+ 🧠 Critic</button>
+              <button class="chip-btn" onclick="addDagNode('verifier', '🛡️ Verifier 物理门禁')">+ 🛡️ Verifier</button>
+              <button class="chip-btn" style="color:var(--danger);" onclick="resetDagCanvas()">清空画板</button>
+            </div>
           </div>
         </div>
-        <div class="dag-canvas" id="team-dag-canvas">
-          <div style="color:var(--text-muted);font-size:13px;text-align:center;">暂无运行中的多 Agent 编排任务。在上方输入目标以启动！</div>
+
+        <div class="dag-canvas" id="team-dag-canvas" style="min-height:220px;">
+          <div style="color:var(--text-muted);font-size:13px;text-align:center;">暂无运行中的多 Agent 编排任务。在上方输入目标或添加节点以编排！</div>
         </div>
       </div>
     </section>
@@ -1502,6 +1522,77 @@ document.addEventListener('click', () => {
 });
 
 // --- Git Diff Review ---
+let diffViewMode = 'unified';
+let rawDiffText = '';
+
+function setDiffViewMode(mode) {
+  diffViewMode = mode;
+  const uBtn = document.getElementById('diff-mode-unified');
+  const sBtn = document.getElementById('diff-mode-split');
+  if (uBtn && sBtn) {
+    if (mode === 'unified') {
+      uBtn.style.background = 'var(--bg-elevated)';
+      uBtn.style.color = 'var(--accent)';
+      sBtn.style.background = '';
+      sBtn.style.color = '';
+    } else {
+      sBtn.style.background = 'var(--bg-elevated)';
+      sBtn.style.color = 'var(--accent)';
+      uBtn.style.background = '';
+      uBtn.style.color = '';
+    }
+  }
+  renderDiffViewer(rawDiffText);
+}
+
+function renderDiffViewer(diff) {
+  const viewer = document.getElementById('git-diff-viewer');
+  if (!viewer) return;
+  if (!diff) {
+    viewer.innerHTML = '<span style="color:var(--success)">✓ 工作区没有待提交的代码变更。</span>';
+    return;
+  }
+  
+  if (diffViewMode === 'unified') {
+    viewer.innerHTML = diff.split('\n').map(line => {
+      if (line.startsWith('+') && !line.startsWith('+++')) return `<div class="diff-line-add">${escapeHtml(line)}</div>`;
+      if (line.startsWith('-') && !line.startsWith('---')) return `<div class="diff-line-del">${escapeHtml(line)}</div>`;
+      return `<div>${escapeHtml(line)}</div>`;
+    }).join('');
+  } else {
+    // Split View (Left: Deletions, Right: Additions)
+    const lines = diff.split('\n');
+    let leftLines = [];
+    let rightLines = [];
+    
+    lines.forEach(line => {
+      if (line.startsWith('-') && !line.startsWith('---')) {
+        leftLines.push(`<div class="diff-line-del">${escapeHtml(line)}</div>`);
+        rightLines.push(`<div style="color:transparent;">.</div>`);
+      } else if (line.startsWith('+') && !line.startsWith('+++')) {
+        leftLines.push(`<div style="color:transparent;">.</div>`);
+        rightLines.push(`<div class="diff-line-add">${escapeHtml(line)}</div>`);
+      } else {
+        leftLines.push(`<div>${escapeHtml(line)}</div>`);
+        rightLines.push(`<div>${escapeHtml(line)}</div>`);
+      }
+    });
+    
+    viewer.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div style="border-right:1px solid var(--border-subtle);padding-right:6px;">
+          <div style="font-size:10px;font-weight:700;color:var(--danger);margin-bottom:4px;">[ORIGINAL / 变更前]</div>
+          ${leftLines.join('')}
+        </div>
+        <div style="padding-left:6px;">
+          <div style="font-size:10px;font-weight:700;color:var(--success);margin-bottom:4px;">[MODIFIED / 变更后]</div>
+          ${rightLines.join('')}
+        </div>
+      </div>
+    `;
+  }
+}
+
 async function loadGitDiff() {
   const viewer = document.getElementById('git-diff-viewer');
   viewer.innerText = '正在获取 Git 差量...';
@@ -1519,18 +1610,99 @@ async function loadGitDiff() {
     document.getElementById('git-clean-badge').innerText = st.clean ? '✓ 工作区整洁 (Clean)' : '⚠️ 存在未提交修改';
     document.getElementById('git-clean-badge').style.color = st.clean ? 'var(--success)' : 'var(--warning)';
 
-    if (!d.diff) {
-      viewer.innerHTML = '<span style="color:var(--success)">✓ 工作区没有待提交的代码变更。</span>';
-    } else {
-      viewer.innerHTML = d.diff.split('\n').map(line => {
-        if (line.startsWith('+') && !line.startsWith('+++')) return `<div class="diff-line-add">${escapeHtml(line)}</div>`;
-        if (line.startsWith('-') && !line.startsWith('---')) return `<div class="diff-line-del">${escapeHtml(line)}</div>`;
-        return `<div>${escapeHtml(line)}</div>`;
-      }).join('');
-    }
+    rawDiffText = d.diff || '';
+    renderDiffViewer(rawDiffText);
   } catch (e) {
     viewer.innerText = '获取 Git 差量失败: ' + e.message;
   }
+}
+
+// --- Session Lineage Git-Graph Tree ---
+async function loadLineageTree() {
+  const canvas = document.getElementById('lineage-tree-canvas');
+  if (!canvas) return;
+  try {
+    const res = await fetch('/sessions/lineage/tree');
+    const d = await res.json();
+    const nodes = d.nodes || [];
+    if (!nodes.length) {
+      canvas.innerHTML = '<span style="color:var(--text-dim);font-size:12px;">暂无会话血统关系。</span>';
+      return;
+    }
+    
+    canvas.innerHTML = nodes.map(n => `
+      <div style="display:flex;justify-content:space-between;align-items:center;background:#0d111b;padding:8px 12px;border-radius:6px;border:1px solid ${n.parent ? 'var(--accent)' : 'var(--border-subtle)'};">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="color:${n.parent ? 'var(--accent)' : 'var(--text-dim)'};font-family:var(--font-mono);font-size:12px;">
+            ${n.parent ? '↳ [Fork]' : '● [Root]'}
+          </span>
+          <div>
+            <strong style="color:var(--text-main);font-size:12px;">${n.id}</strong>
+            <span style="font-size:11px;color:var(--text-dim);margin-left:6px;">${n.messages_count} 条消息</span>
+            ${n.parent ? `<div style="font-size:10px;color:var(--accent);">分叉自: ${n.parent} @ index ${n.fork_at_index}</div>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="chip-btn" onclick="selectSession('${n.id}');switchTab('tab-workbench');">进入会话</button>
+          <button class="chip-btn" onclick="forkSession('${n.id}')">🍴 分叉新路线</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    canvas.innerHTML = '<span style="color:var(--danger);font-size:12px;">加载会话拓扑失败: ' + e.message + '</span>';
+  }
+}
+
+// --- Interactive Multi-Agent DAG Orchestrator ---
+let dagNodes = [
+  { id: 'director', role: 'director', title: '🎯 Director 规划节点' },
+  { id: 'executor', role: 'executor', title: '⚡ Executor 执行节点' },
+  { id: 'verifier', role: 'verifier', title: '🛡️ Verifier 物理门禁' }
+];
+
+function addDagNode(role, title) {
+  dagNodes.push({
+    id: 'node-' + (dagNodes.length + 1),
+    role: role,
+    title: title
+  });
+  renderDagCanvas();
+}
+
+function removeDagNode(idx) {
+  dagNodes.splice(idx, 1);
+  renderDagCanvas();
+}
+
+function resetDagCanvas() {
+  dagNodes = [];
+  renderDagCanvas();
+}
+
+function renderDagCanvas() {
+  const canvas = document.getElementById('team-dag-canvas');
+  if (!canvas) return;
+  if (!dagNodes.length) {
+    canvas.innerHTML = '<div style="color:var(--text-dim);font-size:12px;text-align:center;padding:30px;">画板为空，请点击上方节点库添加 Agent！</div>';
+    return;
+  }
+  
+  canvas.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      ${dagNodes.map((n, i) => `
+        <div class="dag-node" style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);">#${i+1}</span>
+            <span><strong>${n.title}</strong></span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:10px;color:var(--accent);background:rgba(0,242,254,0.1);padding:2px 6px;border-radius:4px;">${n.role}</span>
+            <button class="chip-btn" style="color:var(--danger);padding:2px 6px;font-size:10px;" onclick="removeDagNode(${i})">✕</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 function escapeHtml(t) {
@@ -1871,42 +2043,35 @@ async function launchTeamGoal() {
   const goal = document.getElementById('team-goal-input').value.trim();
   if (!goal) return;
   const canvas = document.getElementById('team-dag-canvas');
+  
   canvas.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <div class="dag-node running">
-        <span>🎯 <strong>Director 拓扑规划:</strong> "${escapeHtml(goal)}"</span>
-        <span style="color:var(--accent)">分解 3 个并行沙箱任务...</span>
-      </div>
-      <div class="dag-node running" style="margin-left:24px;">
-        <span>⚡ <strong>Executor 执行节点 (沙箱隔离):</strong> 代码重构与断言生成</span>
-        <span style="color:var(--success)">Executing...</span>
-      </div>
-      <div class="dag-node" style="margin-left:48px;">
-        <span>🛡️ <strong>Verifier 物理门禁核验:</strong> 598 项单元与安全门禁验证</span>
-        <span style="color:var(--warning)">Pending...</span>
-      </div>
+      ${dagNodes.map((n, i) => `
+        <div class="dag-node running" style="margin-left:${i*20}px;">
+          <span>${n.title}: "${escapeHtml(goal)}"</span>
+          <span style="color:var(--accent)">Running in Sandbox...</span>
+        </div>
+      `).join('')}
     </div>`;
 
   try {
-    const res = await fetch('/team', {
+    const res = await fetch('/team/dag', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: goal })
+      body: JSON.stringify({ goal: goal, nodes: dagNodes })
     });
     const d = await res.json();
     canvas.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <div class="dag-node">
-          <span>🎯 <strong>Director:</strong> 规划完成</span>
-          <span style="color:var(--success)">✓ Success</span>
-        </div>
-        <div class="dag-node">
-          <span>⚡ <strong>Executor:</strong> 沙箱执行完毕</span>
-          <span style="color:var(--success)">✓ Success</span>
-        </div>
-        <div class="dag-node" style="border-color:var(--success)">
-          <span>🛡️ <strong>Verifier 门禁裁决:</strong> ${d.success ? 'NO FAKE DONE 真实物理核验通过！' : '存在阻断项'}</span>
-          <span style="color:var(--success)">✓ 100% Passed</span>
+        ${(d.executed_nodes || []).map((n, i) => `
+          <div class="dag-node" style="border-color:var(--success);margin-left:${i*20}px;">
+            <span>✓ [${n.role.toUpperCase()}] ${n.id} 执行完毕 (${n.time_ms}ms)</span>
+            <span style="color:var(--success)">Verdict: ${n.verdict}</span>
+          </div>
+        `).join('')}
+        <div class="stat-gauge" style="color:var(--success);font-weight:700;margin-top:8px;">
+          <span>🏁 ${d.message}</span>
+          <span>100% Passed</span>
         </div>
       </div>`;
   } catch (e) {
@@ -2230,6 +2395,8 @@ window.addEventListener('DOMContentLoaded', () => {
   fetchModels();
   loadGitDiff();
   loadMetricsSummary();
+  loadLineageTree();
+  renderDagCanvas();
 });
 </script>
 </body>

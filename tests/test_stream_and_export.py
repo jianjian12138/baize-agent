@@ -48,3 +48,10 @@ class TestStreamAndExport(unittest.TestCase):
         self.assertIn("loadMetricsSummary", html)
         self.assertIn("testWebhookDispatch", html)
         self.assertIn("metric-uptime", html)
+
+    def test_desktop_studio_includes_dag_palette_and_lineage_tree(self):
+        html = render_desktop_studio("34.1.0")
+        self.assertIn("addDagNode", html)
+        self.assertIn("loadLineageTree", html)
+        self.assertIn("setDiffViewMode", html)
+        self.assertIn("diff-mode-split", html)
