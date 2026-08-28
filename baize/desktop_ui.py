@@ -31,7 +31,7 @@ def render_desktop_studio(version: str = __version__) -> str:
     return _STUDIO_HTML.replace("__VER__", v_tag)
 
 
-_STUDIO_HTML = """<!DOCTYPE html>
+_STUDIO_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN" class="dark">
 <head>
 <meta charset="utf-8">
@@ -379,27 +379,54 @@ _STUDIO_HTML = """<!DOCTYPE html>
     border-color: var(--border-strong);
   }
 
-  /* Chat Input Dock */
+  /* Exquisite Chat Input Dock (Aligned with Hermes Desktop Reference) */
   .chat-dock {
-    padding: 12px 24px 16px;
+    padding: 12px 24px 20px;
     max-width: 880px;
     width: 100%;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
   }
   .dock-box {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
-    padding: 10px 14px;
+    background: #141721;
+    border: 1px solid #282f42;
+    border-radius: 16px;
+    padding: 12px 16px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    gap: 10px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    position: relative;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
   .dock-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  
+  .dock-chips-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .file-chip {
+    background: #1c2233;
+    border: 1px solid #333d59;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+  }
+  .file-chip-close {
+    cursor: pointer;
+    color: var(--text-dim);
+  }
+  .file-chip-close:hover { color: var(--danger); }
+
   .dock-textarea {
     width: 100%;
     background: transparent;
@@ -411,42 +438,110 @@ _STUDIO_HTML = """<!DOCTYPE html>
     resize: none;
     min-height: 48px;
     max-height: 180px;
+    line-height: 1.6;
   }
+  .dock-textarea::placeholder { color: #5a647e; }
+
   .dock-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.03);
   }
-  .dock-actions-left { display: flex; gap: 8px; align-items: center; }
-  .chip-btn {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-muted);
-    cursor: pointer;
+  .dock-left-tools {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 10px;
   }
-  .chip-btn:hover { color: var(--text-main); background: var(--bg-hover); }
+  .dock-right-tools {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 
-  .send-btn {
-    background: linear-gradient(135deg, var(--accent), var(--accent-alt));
-    color: #050b14;
-    font-weight: 700;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 6px 14px;
-    font-size: 13px;
+  .inline-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #8c97b2;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 6px;
-    transition: opacity 0.15s;
+    gap: 5px;
+    transition: all 0.15s;
+    font-weight: 500;
   }
-  .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .inline-btn:hover {
+    background: #1c2233;
+    border-color: #333d59;
+    color: var(--text-main);
+  }
+
+  .round-action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #252b3d;
+    border: 1px solid #38425d;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .round-action-btn:hover {
+    background: var(--accent);
+    color: #050b14;
+    border-color: var(--accent);
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+  .round-action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: #1a1e2b;
+  }
+
+  /* Dropdown Popup Menus */
+  .popup-menu {
+    position: absolute;
+    bottom: 75px;
+    background: #161a26;
+    border: 1px solid #313a52;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    padding: 6px;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 100;
+    min-width: 200px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .popup-menu.show { display: flex; }
+  .popup-item {
+    padding: 7px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .popup-item:hover, .popup-item.selected {
+    background: #232a3d;
+    color: var(--text-main);
+  }
+  .popup-item-desc {
+    font-size: 10px;
+    color: var(--text-dim);
+  }
 
   /* Generic Module Views */
   .module-view {
@@ -518,6 +613,20 @@ _STUDIO_HTML = """<!DOCTYPE html>
     cursor: pointer;
   }
 
+  .chip-btn {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .chip-btn:hover { color: var(--text-main); background: var(--bg-hover); }
+
   /* Log Console */
   .log-terminal {
     background: #06070a;
@@ -553,7 +662,7 @@ _STUDIO_HTML = """<!DOCTYPE html>
     </div>
 
     <div class="mode-pill" id="autonomy-mode-badge" onclick="switchTab('tab-security')">
-      <span>🛡️ 模式: 受限半监督 (Supervised)</span>
+      <span>🛡️ 默认权限 (Supervised)</span>
     </div>
 
     <button class="icon-btn" onclick="toggleTheme()" title="切换明亮/暗黑主题">
@@ -637,20 +746,56 @@ _STUDIO_HTML = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Dock Input Box -->
+          <!-- Exquisite Dock Input Box (Aligned with Reference UI) -->
           <div class="chat-dock">
+            <!-- Autocomplete Popups -->
+            <div class="popup-menu" id="file-autocomplete-popup" style="left:24px;width:320px;"></div>
+            <div class="popup-menu" id="cmd-autocomplete-popup" style="left:24px;width:300px;"></div>
+            <div class="popup-menu" id="model-select-popup" style="right:70px;width:240px;"></div>
+            <div class="popup-menu" id="auth-select-popup" style="left:50px;width:220px;"></div>
+
             <div class="dock-box">
-              <textarea class="dock-textarea" id="chat-input" placeholder="输入工程任务（如：重构某模块、编写测试、分析代码）... [Enter 发送，Shift+Enter 换行]" onkeydown="handleInputKey(event)"></textarea>
+              <!-- Context Chips -->
+              <div class="dock-chips-bar" id="attached-files-bar" style="display:none;"></div>
+
+              <textarea class="dock-textarea" id="chat-input" placeholder="今天帮你做些什么？@ 引用对话文件，/ 调用技能与指令" oninput="handleTextareaInput(event)" onkeydown="handleInputKey(event)"></textarea>
+
+              <!-- Bottom Tool Bar -->
               <div class="dock-toolbar">
-                <div class="dock-actions-left">
-                  <span class="chip-btn" onclick="attachFilePrompt()">📎 @file 附加文件</span>
-                  <span class="chip-btn" onclick="insertPrompt('运行 doctor 体检并报告环境状态')">🩺 /doctor</span>
-                  <span class="chip-btn" onclick="insertPrompt('对当前工作区进行全面安全与架构审计')">🔍 /audit</span>
+                <div class="dock-left-tools">
+                  <!-- '+' Attachment button -->
+                  <button class="inline-btn" onclick="triggerFilePicker()" title="引用工作区文件 (@)">
+                    <span style="font-size:16px;font-weight:700;line-height:1">+</span>
+                  </button>
+
+                  <!-- Autonomy / Permission dropdown -->
+                  <button class="inline-btn" id="dock-auth-btn" onclick="toggleAuthPopup(event)" title="切换操作权限">
+                    <span id="dock-auth-label">🛡️ 默认权限</span>
+                    <span style="font-size:9px;margin-left:2px">⌄</span>
+                  </button>
                 </div>
-                <button class="send-btn" id="send-btn" onclick="submitChat()">
-                  <span>发送执行</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                </button>
+
+                <div class="dock-right-tools">
+                  <!-- Spinner (Thinking indicator) -->
+                  <span id="thinking-indicator" style="display:none;color:var(--accent);font-size:13px;animation:spin 1s linear infinite;">◌</span>
+
+                  <!-- Inline Model Selector -->
+                  <button class="inline-btn" id="dock-model-btn" onclick="toggleModelPopup(event)" title="秒级热切换活跃大模型">
+                    <span>☯</span>
+                    <span id="dock-model-label">DeepSeek V3</span>
+                    <span style="font-size:9px;margin-left:2px">⌄</span>
+                  </button>
+
+                  <!-- Mic Icon -->
+                  <button class="inline-btn" style="padding:4px;" title="语音输入 (准备中)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  </button>
+
+                  <!-- Circular Action Button -->
+                  <button class="round-action-btn" id="send-btn" onclick="submitChat()" title="发送执行 (Enter)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -849,6 +994,11 @@ _STUDIO_HTML = """<!DOCTYPE html>
 let activeTab = 'tab-workbench';
 let activeSessionId = '';
 let currentSkills = [];
+let workspaceFiles = [];
+let availableCommands = [];
+let attachedFiles = [];
+let activeModel = 'deepseek-chat';
+let availableModels = [];
 
 function switchTab(tabId) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -875,17 +1025,252 @@ function toggleTheme() {
   document.documentElement.classList.toggle('dark');
 }
 
+// --- Autocomplete & Context Attachment ---
+async function fetchWorkspaceFiles() {
+  try {
+    const res = await fetch('/api/workspace/files');
+    const d = await res.json();
+    workspaceFiles = d.files || [];
+  } catch (e) {
+    workspaceFiles = [];
+  }
+}
+
+async function fetchCommands() {
+  try {
+    const res = await fetch('/api/commands');
+    const d = await res.json();
+    availableCommands = d.commands || [];
+  } catch (e) {
+    availableCommands = [];
+  }
+}
+
+async function fetchModels() {
+  try {
+    const res = await fetch('/api/models');
+    const d = await res.json();
+    activeModel = d.active_model || 'deepseek-chat';
+    availableModels = d.models || [];
+    updateModelButtonLabel();
+  } catch (e) {}
+}
+
+function updateModelButtonLabel() {
+  const m = availableModels.find(x => x.id === activeModel);
+  const label = m ? m.name : activeModel;
+  document.getElementById('dock-model-label').innerText = label.split(' ')[0];
+}
+
+function handleTextareaInput(e) {
+  const val = e.target.value;
+  const cursor = e.target.selectionStart;
+  const textBefore = val.slice(0, cursor);
+  
+  // Close popups by default
+  hidePopups();
+
+  // Trigger @ file autocomplete
+  const atMatch = textBefore.match(/@([a-zA-Z0-9_.\-\\/]*)$/);
+  if (atMatch) {
+    showFileAutocomplete(atMatch[1]);
+    return;
+  }
+
+  // Trigger / command autocomplete
+  const slashMatch = textBefore.match(/^\/([a-zA-Z0-9_]*)$/);
+  if (slashMatch) {
+    showCommandAutocomplete(slashMatch[1]);
+    return;
+  }
+}
+
+function showFileAutocomplete(query) {
+  const popup = document.getElementById('file-autocomplete-popup');
+  const filtered = workspaceFiles.filter(f => f.toLowerCase().includes(query.toLowerCase())).slice(0, 10);
+  if (!filtered.length) {
+    popup.classList.remove('show');
+    return;
+  }
+  popup.innerHTML = `
+    <div style="font-size:10px;font-weight:700;color:var(--text-dim);padding:4px 8px;">引用工作区文件 (@)</div>
+  ` + filtered.map((f, i) => `
+    <div class="popup-item ${i === 0 ? 'selected' : ''}" onclick="selectFileFromAutocomplete('${f}')">
+      <span>📄 ${f}</span>
+    </div>
+  `).join('');
+  popup.classList.add('show');
+}
+
+function showCommandAutocomplete(query) {
+  const popup = document.getElementById('cmd-autocomplete-popup');
+  const filtered = availableCommands.filter(c => c.name.toLowerCase().includes(('/' + query).toLowerCase()));
+  if (!filtered.length) {
+    popup.classList.remove('show');
+    return;
+  }
+  popup.innerHTML = `
+    <div style="font-size:10px;font-weight:700;color:var(--text-dim);padding:4px 8px;">调用快捷指令与技能 (/)</div>
+  ` + filtered.map((c, i) => `
+    <div class="popup-item ${i === 0 ? 'selected' : ''}" onclick="selectCmdFromAutocomplete('${c.name}')">
+      <span><strong>${c.name}</strong></span>
+      <span class="popup-item-desc">${c.desc}</span>
+    </div>
+  `).join('');
+  popup.classList.add('show');
+}
+
+function selectFileFromAutocomplete(filePath) {
+  addFileChip(filePath);
+  const input = document.getElementById('chat-input');
+  input.value = input.value.replace(/@[a-zA-Z0-9_.\-\\/]*$/, '').trim();
+  hidePopups();
+  input.focus();
+}
+
+function selectCmdFromAutocomplete(cmdName) {
+  const input = document.getElementById('chat-input');
+  input.value = cmdName + ' ';
+  hidePopups();
+  input.focus();
+}
+
+function addFileChip(filePath) {
+  if (!attachedFiles.includes(filePath)) {
+    attachedFiles.push(filePath);
+    renderFileChips();
+  }
+}
+
+function removeFileChip(filePath) {
+  attachedFiles = attachedFiles.filter(f => f !== filePath);
+  renderFileChips();
+}
+
+function renderFileChips() {
+  const bar = document.getElementById('attached-files-bar');
+  if (!attachedFiles.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = 'flex';
+  bar.innerHTML = attachedFiles.map(f => `
+    <span class="file-chip">
+      <span>📄 @${f}</span>
+      <span class="file-chip-close" onclick="removeFileChip('${f}')">×</span>
+    </span>
+  `).join('');
+}
+
+function triggerFilePicker() {
+  const popup = document.getElementById('file-autocomplete-popup');
+  if (popup.classList.contains('show')) {
+    popup.classList.remove('show');
+  } else {
+    hidePopups();
+    showFileAutocomplete('');
+  }
+}
+
+function toggleModelPopup(e) {
+  e.stopPropagation();
+  const popup = document.getElementById('model-select-popup');
+  if (popup.classList.contains('show')) {
+    popup.classList.remove('show');
+  } else {
+    hidePopups();
+    popup.innerHTML = `
+      <div style="font-size:10px;font-weight:700;color:var(--text-dim);padding:4px 8px;">切换活跃大模型 (LLM)</div>
+    ` + availableModels.map(m => `
+      <div class="popup-item ${m.id === activeModel ? 'selected' : ''}" onclick="selectActiveModel('${m.id}')">
+        <span>${m.name}</span>
+        <span style="font-size:10px;color:var(--text-dim)">${m.provider}</span>
+      </div>
+    `).join('');
+    popup.classList.add('show');
+  }
+}
+
+async function selectActiveModel(modelId) {
+  activeModel = modelId;
+  updateModelButtonLabel();
+  hidePopups();
+  try {
+    await fetch('/api/models/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelId })
+    });
+  } catch (e) {}
+}
+
+function toggleAuthPopup(e) {
+  e.stopPropagation();
+  const popup = document.getElementById('auth-select-popup');
+  if (popup.classList.contains('show')) {
+    popup.classList.remove('show');
+  } else {
+    hidePopups();
+    popup.innerHTML = `
+      <div style="font-size:10px;font-weight:700;color:var(--text-dim);padding:4px 8px;">操作权限与自主度</div>
+      <div class="popup-item" onclick="setInlineAuth(2)">
+        <span>🛡️ 默认权限 (Supervised)</span>
+      </div>
+      <div class="popup-item" onclick="setInlineAuth(1)">
+        <span>🔒 只读安全模式 (Read-Only)</span>
+      </div>
+      <div class="popup-item" onclick="setInlineAuth(3)">
+        <span>⚡ 全自主极客模式 (YOLO Mode)</span>
+      </div>
+    `;
+    popup.classList.add('show');
+  }
+}
+
+function setInlineAuth(level) {
+  setAutonomyMode(level);
+  const label = document.getElementById('dock-auth-label');
+  if (level === 1) label.innerText = '🔒 只读安全';
+  if (level === 2) label.innerText = '🛡️ 默认权限';
+  if (level === 3) label.innerText = '⚡ 全自主模式';
+  hidePopups();
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ autonomy_level: level })
+  }).catch(() => {});
+}
+
+function hidePopups() {
+  document.querySelectorAll('.popup-menu').forEach(p => p.classList.remove('show'));
+}
+
+document.addEventListener('click', () => {
+  hidePopups();
+});
+
 // --- Chat & Workbench Logic ---
 async function submitChat() {
   const input = document.getElementById('chat-input');
-  const text = input.value.trim();
-  if (!text) return;
+  let text = input.value.trim();
+  if (!text && !attachedFiles.length) return;
+  
+  // Prepend attached files
+  if (attachedFiles.length) {
+    const filePrefix = attachedFiles.map(f => `@${f}`).join(' ');
+    text = `${filePrefix} ${text}`.trim();
+    attachedFiles = [];
+    renderFileChips();
+  }
   
   appendMessage('user', text);
   input.value = '';
   
   const sendBtn = document.getElementById('send-btn');
+  const spinner = document.getElementById('thinking-indicator');
   sendBtn.disabled = true;
+  if (spinner) spinner.style.display = 'inline-block';
   
   try {
     const res = await fetch('/run', {
@@ -904,12 +1289,22 @@ async function submitChat() {
     appendMessage('baize', '❌ 网络连接错误: ' + err.message);
   } finally {
     sendBtn.disabled = false;
+    if (spinner) spinner.style.display = 'none';
     loadSessions();
   }
 }
 
 function handleInputKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
+    const popup = document.querySelector('.popup-menu.show');
+    if (popup) {
+      const selected = popup.querySelector('.popup-item.selected');
+      if (selected) {
+        e.preventDefault();
+        selected.click();
+        return;
+      }
+    }
     e.preventDefault();
     submitChat();
   }
@@ -940,23 +1335,10 @@ function appendMessage(role, content) {
   container.scrollTop = container.scrollHeight;
 }
 
-function insertPrompt(p) {
-  const input = document.getElementById('chat-input');
-  input.value = p;
-  input.focus();
-}
-
-function attachFilePrompt() {
-  const p = prompt('请输入要注入上下文的工作区相对路径 (如 baize/agent.py):');
-  if (p) {
-    const input = document.getElementById('chat-input');
-    input.value = `@${p} ` + input.value;
-    input.focus();
-  }
-}
-
 function startNewSession() {
   activeSessionId = '';
+  attachedFiles = [];
+  renderFileChips();
   document.getElementById('chat-messages').innerHTML = `
     <div class="msg-row">
       <div class="avatar baize">白</div>
@@ -1211,14 +1593,17 @@ async function runDoctorHealthCheck() {
 // --- Autonomy Level ---
 function setAutonomyMode(level) {
   const badge = document.getElementById('autonomy-mode-badge');
-  if (level === 1) badge.innerHTML = '<span>🛡️ 模式: 只读安全 (Read-Only)</span>';
-  if (level === 2) badge.innerHTML = '<span>🛡️ 模式: 受限半监督 (Supervised)</span>';
-  if (level === 3) badge.innerHTML = '<span>⚡ 模式: YOLO 极客模式 (Autonomous)</span>';
+  if (level === 1) badge.innerHTML = '<span>🔒 只读安全 (Read-Only)</span>';
+  if (level === 2) badge.innerHTML = '<span>🛡️ 默认权限 (Supervised)</span>';
+  if (level === 3) badge.innerHTML = '<span>⚡ 全自主模式 (YOLO)</span>';
 }
 
 // Initialize on page load
 window.addEventListener('DOMContentLoaded', () => {
   loadSessions();
+  fetchWorkspaceFiles();
+  fetchCommands();
+  fetchModels();
 });
 </script>
 </body>

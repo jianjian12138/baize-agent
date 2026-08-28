@@ -108,6 +108,60 @@ class Handler(BaseHTTPRequestHandler):
                 "fork_of": lineage.get("parent") if lineage else None,
                 "fork_at_index": lineage.get("at_index") if lineage else None,
             })
+        if self.path == "/api/workspace/files":
+            from pathlib import Path
+            root = Path(load_config().get("BAIZE_WORKSPACE_DIR", "."))
+            files = []
+            try:
+                for p in root.rglob("*"):
+                    if p.is_file():
+                        rel = str(p.relative_to(root)).replace("\\", "/")
+                        if not any(part.startswith(".") or part in ("__pycache__", "node_modules", "persistence") for part in rel.split("/")):
+                            files.append(rel)
+                            if len(files) >= 500:
+                                break
+            except Exception:
+                pass
+            return self._send(200, {"files": files})
+
+        if self.path == "/api/commands":
+            cmds = [
+                {"name": "/help", "desc": "查看全部可用指令与技能列表"},
+                {"name": "/doctor", "desc": "运行系统与环境健康体检诊断"},
+                {"name": "/audit", "desc": "对当前工作区进行架构与安全审计"},
+                {"name": "/trace", "desc": "查看上一次运行的毫秒级 Trace 链路与 Span 耗时"},
+                {"name": "/cost", "desc": "查看 Token 消耗统计与成本预估"},
+                {"name": "/fork", "desc": "从当前步骤平行分叉出新实验分支"},
+                {"name": "/rewind", "desc": "时间旅行回退会话历史状态"},
+                {"name": "/clear", "desc": "清空当前会话屏幕输出"},
+                {"name": "/setup", "desc": "重新启动大模型配置向导"},
+            ]
+            return self._send(200, {"commands": cmds})
+
+        if self.path == "/api/models":
+            cfg = load_config()
+            return self._send(200, {
+                "active_model": cfg.get("BAIZE_MODEL_NAME", "deepseek-chat"),
+                "base_url": cfg.get("BAIZE_MODEL_BASE_URL", "https://api.deepseek.com"),
+                "models": [
+                    {"id": "deepseek-chat", "name": "DeepSeek V3 (Chat)", "provider": "DeepSeek"},
+                    {"id": "deepseek-reasoner", "name": "DeepSeek R1 (Reasoner)", "provider": "DeepSeek"},
+                    {"id": "gpt-4o", "name": "OpenAI GPT-4o", "provider": "OpenAI"},
+                    {"id": "gpt-4o-mini", "name": "OpenAI GPT-4o Mini", "provider": "OpenAI"},
+                    {"id": "claude-3-7-sonnet", "name": "Claude 3.7 Sonnet", "provider": "Anthropic"},
+                    {"id": "qwen2.5-coder:latest", "name": "Qwen 2.5 Coder (Local)", "provider": "Ollama"},
+                    {"id": "llama3.3:latest", "name": "Llama 3.3 (Local)", "provider": "Ollama"},
+                ]
+            })
+
+        if self.path == "/api/config":
+            cfg = load_config()
+            return self._send(200, {
+                "autonomy_level": int(cfg.get("BAIZE_AUTONOMY_LEVEL", 2)),
+                "yolo_mode": bool(int(cfg.get("BAIZE_YOLO_MODE", 0))),
+                "workspace": cfg.get("BAIZE_WORKSPACE_DIR", "."),
+            })
+
         return self._send(404, {"error": "not found"})
 
     def do_HEAD(self):
@@ -142,6 +196,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_fork(data)
         if self.path == "/sessions/compress":
             return self._handle_compress(data)
+        if self.path == "/api/models/active":
+            model_id = (data.get("model") or "").strip()
+            if model_id:
+                import os
+                os.environ["BAIZE_MODEL_NAME"] = model_id
+                return self._send(200, {"active_model": model_id, "status": "updated"})
+            return self._send(400, {"error": "missing model id"})
+        if self.path == "/api/config":
+            level = data.get("autonomy_level")
+            if level is not None:
+                import os
+                os.environ["BAIZE_AUTONOMY_LEVEL"] = str(level)
+                os.environ["BAIZE_YOLO_MODE"] = "1" if int(level) == 3 else "0"
+                return self._send(200, {"autonomy_level": level, "status": "updated"})
+            return self._send(400, {"error": "missing config field"})
         return self._send(404, {"error": "not found"})
 
     def do_OPTIONS(self):
