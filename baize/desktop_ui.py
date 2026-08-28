@@ -818,9 +818,14 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               <span style="font-size:12px;font-weight:700;color:var(--text-muted)">会话历史</span>
             </div>
-            <button class="icon-btn" onclick="startNewSession()" title="新建会话">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
+            <div style="display:flex;gap:4px;">
+              <button class="icon-btn" onclick="exportCurrentSession()" title="导出当前会话为 Markdown 报告">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </button>
+              <button class="icon-btn" onclick="startNewSession()" title="新建会话">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
           </div>
           <div class="session-list" id="workbench-session-list">
             <div style="font-size:11px;color:var(--text-dim);padding:20px 8px;text-align:center;line-height:1.6;">暂无历史会话<br><span style="color:var(--accent);cursor:pointer;" onclick="startNewSession()">+ 点击开启新会话</span></div>
@@ -1492,6 +1497,46 @@ function escapeHtml(t) {
   return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+let codeBlockCounter = 0;
+
+function copyCodeBlock(btn, codeId) {
+  const codeEl = document.getElementById(codeId);
+  if (!codeEl) return;
+  navigator.clipboard.writeText(codeEl.innerText).then(() => {
+    const orig = btn.innerText;
+    btn.innerText = '✓ 已复制';
+    btn.style.color = 'var(--success)';
+    setTimeout(() => {
+      btn.innerText = orig;
+      btn.style.color = '';
+    }, 2000);
+  });
+}
+
+function renderRichMarkdown(text) {
+  if (!text) return '';
+  let html = text.replace(/<thinking>([\s\S]*?)<\/thinking>/gi, (match, p1) => {
+    return `<details class="thinking-drawer" style="background:#090b12;border:1px solid rgba(0,242,254,0.25);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px;"><summary style="cursor:pointer;color:var(--accent);font-weight:600;">🧠 CoT 深度思考与沙箱推理轨迹</summary><div style="color:var(--text-muted);margin-top:6px;white-space:pre-wrap;line-height:1.5;">${escapeHtml(p1.trim())}</div></details>`;
+  });
+
+  html = html.replace(/```([a-zA-Z0-9_\-\+]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    codeBlockCounter++;
+    const codeId = 'code-block-' + codeBlockCounter;
+    const l = lang || 'code';
+    return `
+      <div class="code-container" style="background:#06080e;border:1px solid var(--border-strong);border-radius:8px;margin:10px 0;overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;align-items:center;background:#111522;padding:4px 12px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-dim);font-family:var(--font-mono);">
+          <span>${l}</span>
+          <button class="chip-btn" onclick="copyCodeBlock(this, '${codeId}')" style="padding:2px 6px;font-size:10px;">📋 复制</button>
+        </div>
+        <pre style="padding:12px;margin:0;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;color:#cbd5e1;"><code id="${codeId}">${escapeHtml(code.trim())}</code></pre>
+      </div>`;
+  });
+
+  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg-elevated);border:1px solid var(--border-subtle);padding:1px 5px;border-radius:4px;font-family:var(--font-mono);font-size:12px;color:var(--accent);">$1</code>');
+  return html.replace(/\n\n/g, '<br><br>');
+}
+
 // --- Chat & Workbench Logic ---
 async function submitChat() {
   const input = document.getElementById('chat-input');
@@ -1512,22 +1557,61 @@ async function submitChat() {
   const spinner = document.getElementById('thinking-indicator');
   sendBtn.disabled = true;
   if (spinner) spinner.style.display = 'inline-block';
+
+  const liveBubble = appendMessage('baize', '正在连接沙箱推理内核...');
+  let streamText = '';
   
   try {
-    const res = await fetch('/run', {
+    const res = await fetch('/run/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ goal: text, session_id: activeSessionId })
     });
-    const data = await res.json();
-    if (data.error) {
-      appendMessage('baize', '❌ 错误: ' + data.error);
+
+    const cType = res.headers.get('Content-Type') || '';
+    if (cType.includes('text/event-stream')) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.event === 'think') {
+                liveBubble.innerHTML = `<span style="color:var(--accent);font-size:12px;">🧠 ${escapeHtml(data.content || '')}</span>`;
+              } else if (data.event === 'delta') {
+                if (streamText === '') liveBubble.innerHTML = '';
+                streamText += data.text || '';
+                liveBubble.innerHTML = renderRichMarkdown(streamText);
+              } else if (data.event === 'done') {
+                activeSessionId = data.session_id || activeSessionId;
+                if (data.final_text) {
+                  liveBubble.innerHTML = renderRichMarkdown(data.final_text);
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      }
     } else {
-      activeSessionId = data.session_id || activeSessionId;
-      appendMessage('baize', data.final_text || '任务执行完毕。');
+      const data = await res.json();
+      if (data.error) {
+        liveBubble.innerHTML = '❌ 错误: ' + data.error;
+      } else {
+        activeSessionId = data.session_id || activeSessionId;
+        liveBubble.innerHTML = renderRichMarkdown(data.final_text || '任务执行完毕。');
+      }
     }
   } catch (err) {
-    appendMessage('baize', '❌ 网络连接错误: ' + err.message);
+    liveBubble.innerHTML = '❌ 网络连接错误: ' + err.message;
   } finally {
     sendBtn.disabled = false;
     if (spinner) spinner.style.display = 'none';
@@ -1562,7 +1646,11 @@ function appendMessage(role, content) {
   
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
-  bubble.innerText = content;
+  if (role === 'user') {
+    bubble.innerText = content;
+  } else {
+    bubble.innerHTML = renderRichMarkdown(content);
+  }
   
   if (role === 'user') {
     row.appendChild(bubble);
@@ -1574,12 +1662,21 @@ function appendMessage(role, content) {
   
   container.appendChild(row);
   container.scrollTop = container.scrollHeight;
+  return bubble;
 }
 
 function insertPrompt(p) {
   const input = document.getElementById('chat-input');
   input.value = p;
   input.focus();
+}
+
+function exportCurrentSession() {
+  if (!activeSessionId) {
+    alert('当前没有活跃会话可导出，请先选择或开始一个会话！');
+    return;
+  }
+  window.open('/sessions/' + activeSessionId + '/export', '_blank');
 }
 
 function startNewSession() {

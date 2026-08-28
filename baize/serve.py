@@ -92,6 +92,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, gate_mod.run_gate())
         if self.path == "/sessions" or self.path.startswith("/sessions?"):
             return self._send(200, {"sessions": Session.list_sessions()})
+        if self.path.startswith("/sessions/") and self.path.endswith("/export"):
+            sid = self.path[len("/sessions/"):len(self.path) - len("/export")].strip()
+            return self._handle_export_session(sid)
         if self.path.startswith("/sessions/"):
             sid = self.path[len("/sessions/"):]
             if not sid or "/" in sid:
@@ -226,6 +229,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(413, {"error": "payload too large"})
         if self.path == "/run":
             return self._handle_run(data)
+        if self.path == "/run/stream":
+            return self._handle_run_stream(data)
         if self.path == "/team":
             return self._handle_team(data)
         if self.path == "/v30/speculative":
@@ -384,6 +389,78 @@ class Handler(BaseHTTPRequestHandler):
             "steps": res.steps,
             "session_id": res.session_id,
         })
+
+    def _handle_run_stream(self, data: dict) -> None:
+        goal = (data.get("goal") or "").strip()
+        if not goal:
+            return self._send(400, {"error": "missing goal"})
+        client = LLMClient()
+        if not client.configured:
+            return self._send(422, {"error": "model endpoint not configured"})
+        if not _has_real_key(client):
+            return self._send(422, {"error": "model API key not set (placeholder in .env)"})
+
+        agent = Agent(role="executor", client=client)
+        obs.inc("serve_run")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(event_type: str, payload: dict):
+            msg = f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            try:
+                self.wfile.write(msg.encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        emit("think", {"content": f"正在解析任务意图与沙箱上下文: {goal}"})
+        res = agent.run(goal)
+
+        # Stream delta text chunks
+        text = res.final_text or "任务执行完毕。"
+        chunk_size = 20
+        for i in range(0, len(text), chunk_size):
+            emit("delta", {"text": text[i:i+chunk_size]})
+            time.sleep(0.01)
+
+        emit("done", {
+            "final_text": res.final_text,
+            "session_id": res.session_id,
+            "steps": res.steps,
+            "stopped_reason": res.stopped_reason,
+        })
+
+    def _handle_export_session(self, sid: str) -> None:
+        try:
+            recs = sessions_mod._read_records(sid)
+        except FileNotFoundError:
+            return self._send(404, {"error": "session not found"})
+        msgs = [r.get("message", r) for r in recs if r.get("kind") == "message"]
+        lines = [
+            f"# 白泽智能体执行轨迹与审计报告",
+            f"",
+            f"- **会话 ID**: `{sid}`",
+            f"- **导出时间**: `{time.strftime('%Y-%m-%d %H:%M:%S')}`",
+            f"- **执行内核**: Baize Agent V{__version__} (NO FAKE DONE Physical Gate Certified)",
+            f"",
+            f"---",
+            f"",
+            f"## 📋 对话与执行记录明细",
+            f"",
+        ]
+        for idx, m in enumerate(msgs, 1):
+            role = "🧑 User" if m.get("role") == "user" else "🤖 Baize Agent"
+            lines.append(f"### {idx}. {role}")
+            lines.append(m.get("content", ""))
+            lines.append("")
+
+        md_text = "\n".join(lines)
+        return self._send_text(200, md_text, "text/markdown; charset=utf-8")
 
     def _handle_team(self, data: dict) -> None:
         goal = (data.get("goal") or "").strip()
