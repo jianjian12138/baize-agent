@@ -1004,8 +1004,19 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="module-view">
         <div class="module-title-bar">
           <h2>技能自进化中心 (246+ Standard Engineering Skills)</h2>
-          <button class="primary-btn" onclick="openSkillCreator()">+ 新建自定义技能</button>
+          <div style="display:flex;gap:8px;">
+            <button class="chip-btn" onclick="loadToolHub()">🧬 浏览元工具生态市场</button>
+            <button class="primary-btn" onclick="openSkillCreator()">+ 新建自定义技能</button>
+          </div>
         </div>
+
+        <div class="panel-card" id="tool-hub-panel" style="display:none;margin-bottom:16px;">
+          <h3>🧬 达尔文元工具生态市场 (Meta-Tool Hub & Hot-Reload)</h3>
+          <div id="tool-hub-list" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;margin-top:10px;">
+            加载中...
+          </div>
+        </div>
+
         <div class="panel-card">
           <div style="display:flex;gap:10px;">
             <input type="text" id="skill-search-input" placeholder="搜索 246+ 内置工程技能库（支持名称、领域、关键词）..." oninput="filterSkills()" />
@@ -2215,7 +2226,10 @@ async function runCausalLab() {
         <div style="background:#090a0f;padding:10px;border-radius:6px;border:1px solid var(--border-strong);">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div style="color:var(--accent);font-weight:700;font-size:12px;">🎯 AST 切片目标: ${d.target_function} (${d.ast_node_type})</div>
-            <button class="chip-btn" onclick="applyCausalHeal('${d.target_function}')" style="color:var(--accent);border-color:var(--accent);font-size:11px;">🧪 一键应用抗脆弱自愈补丁</button>
+            <div style="display:flex;gap:6px;">
+              <button class="chip-btn" onclick="applyCausalHeal('${d.target_function}')" style="color:var(--accent);border-color:var(--accent);font-size:11px;">🧪 应用自愈补丁</button>
+              <button class="primary-btn" onclick="persistCausalTest('${d.target_function}')" style="font-size:11px;padding:4px 8px;">💾 一键生成持久化测试文件</button>
+            </div>
           </div>
           <div style="color:var(--warning);font-size:11px;margin-top:4px;">嫌疑变量: <strong>${d.culprit_variables.join(', ')}</strong></div>
           <div style="color:var(--text-dim);font-size:11px;margin-top:4px;">合成对抗变异用例: ${d.mutations.map(m => m.name).join(', ')}</div>
@@ -2224,6 +2238,20 @@ async function runCausalLab() {
     `;
   } catch (e) {
     box.innerText = '因果诊断异常: ' + e.message;
+  }
+}
+
+async function persistCausalTest(fn) {
+  try {
+    const res = await fetch('/v30/causal/persist_test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_function: fn })
+    });
+    const d = await res.json();
+    alert('【测试用例持久化写入成功】\n\n' + d.message + '\n文件路径: ' + d.path);
+  } catch (e) {
+    alert('持久化写入失败: ' + e.message);
   }
 }
 
@@ -2238,6 +2266,76 @@ async function applyCausalHeal(fn) {
     alert('【AST 变异自愈补丁生效】\n\n' + d.message);
   } catch (e) {
     alert('自愈补丁应用失败: ' + e.message);
+  }
+}
+
+// --- Meta-Tool Hub (建议 #03) ---
+async function loadToolHub() {
+  const panel = document.getElementById('tool-hub-panel');
+  const listEl = document.getElementById('tool-hub-list');
+  if (panel.style.display === 'block') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  listEl.innerHTML = '<span style="color:var(--accent);font-size:12px;">正在连接达尔文元工具生态市场...</span>';
+  try {
+    const res = await fetch('/api/tools/hub');
+    const d = await res.json();
+    const tools = d.tools || [];
+    listEl.innerHTML = tools.map(t => `
+      <div style="background:#0a0d14;border:1px solid var(--border-strong);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <strong style="color:var(--accent);font-size:12px;">${t.name}</strong>
+          <span style="font-size:10px;color:var(--text-dim);">v${t.version}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);">${t.desc}</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">${t.gene}</div>
+        <button class="primary-btn" onclick="importMetaTool('${t.name}')" style="margin-top:4px;font-size:10px;padding:4px 8px;">⬇️ 一键导入并热加载</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = `<span style="color:var(--danger);font-size:12px;">加载失败: ${e.message}</span>`;
+  }
+}
+
+async function importMetaTool(name) {
+  try {
+    const res = await fetch('/api/tools/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name })
+    });
+    const d = await res.json();
+    alert('【元工具导入成功】\n\n' + d.message);
+  } catch (e) {
+    alert('导入失败: ' + e.message);
+  }
+}
+
+async function testRagSearch() {
+  const q = document.getElementById('rag-query-input').value.trim();
+  if (!q) return;
+  const resBox = document.getElementById('rag-results');
+  resBox.innerHTML = '<span style="color:var(--accent)">正在执行长程记忆与工程规约混合检索 (Hybrid RAG)...</span>';
+  try {
+    const res = await fetch('/api/memory/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q })
+    });
+    const d = await res.json();
+    resBox.innerHTML = (d.results || []).map(r => `
+      <div class="stat-gauge" style="margin-bottom:6px;flex-direction:column;align-items:flex-start;gap:2px;">
+        <div style="display:flex;justify-content:space-between;width:100%;">
+          <strong style="color:var(--accent);font-size:11px;">[${r.source}]</strong>
+          <span style="color:var(--success);font-size:11px;">相关度: ${Math.round(r.relevance * 100)}%</span>
+        </div>
+        <span style="font-size:11px;color:var(--text-main);">${r.snippet}</span>
+      </div>
+    `).join('') || '<div style="color:var(--text-dim);font-size:11px;">未检索到相关记忆</div>';
+  } catch (e) {
+    resBox.innerHTML = `<span style="color:var(--danger)">检索失败: ${e.message}</span>`;
   }
 }
 

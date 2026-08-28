@@ -55,3 +55,10 @@ class TestStreamAndExport(unittest.TestCase):
         self.assertIn("loadLineageTree", html)
         self.assertIn("setDiffViewMode", html)
         self.assertIn("diff-mode-split", html)
+
+    def test_desktop_studio_includes_sprint2_features(self):
+        html = render_desktop_studio("34.2.0")
+        self.assertIn("persistCausalTest", html)
+        self.assertIn("loadToolHub", html)
+        self.assertIn("importMetaTool", html)
+        self.assertIn("testRagSearch", html)
