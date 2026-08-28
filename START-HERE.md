@@ -1,21 +1,21 @@
-# START-HERE — 10 分钟上手白泽引擎 V24.0.0
+# START-HERE — 10 分钟上手白泽引擎 V33.0.0
 
 ## 你拿到的是什么
 
 一套真实可运行的 Agent 研发操作系统：
-**技能规约层**（文档 + 249 技能索引，被 AI 客户端加载或注入 Agent 提示词）
-+ **baize Agent 运行时**（纯 Python 标准库：自主循环、多 Agent 编排、校验门禁、持久记忆）。
+**技能规约层**（文档 + 249+ 技能索引，被 AI 客户端加载或注入 Agent 提示词）
++ **baize Agent 运行时**（纯 Python 标准库：持续交互 REPL 终端、自主循环、多 Agent 编排、校验门禁、持久记忆、差量补丁、代码沙箱、链路追踪）。
 
-## 第 1 步：环境（2 分钟）
+## 第 1 步：一键环境部署（1 分钟）
 
-> 想一条命令搞定？直接跑 `python install/bootstrap.py`：它会自动准备 `.env`、跑 `doctor`，
-> 且**若本机没有 Python ≥ 3.10，会自动安装（winget / Homebrew / apt-dnf-apk / python.org）后重启**——
-> 裸机也能一键部署（与 hermes 一致）。不想自动装 Python 就加 `--no-auto-python`。
+> 想要一行命令搞定？直接运行：
+> - **Linux / macOS / WSL**：`curl -fsSL https://raw.githubusercontent.com/jianjian12138/baize-agent/main/install/install.sh | bash`
+> - **Windows PowerShell**：`irm https://raw.githubusercontent.com/jianjian12138/baize-agent/main/install/install.ps1 | iex`
+> - **或本地执行**：`python install/bootstrap.py`
 
 ```bash
 cp .env.example .env
-# 打开 .env（SKILL_LIBRARY_PATHS 已默认指向仓库自带的 ./assets/skills，
-#   新鲜克隆可直接通过 doctor，无需改动）：
+# 打开 .env：
 #   如需运行自主 Agent，配置 BAIZE_MODEL_BASE_URL / BAIZE_MODEL_NAME / BAIZE_MODEL_API_KEY
 python -m baize doctor        # 必须 RESULT: PASSED
 ```
@@ -27,16 +27,36 @@ doctor 会真实探测：Python 版本、核心目录、persistence 写权限、
 
 ```bash
 python -m baize index build           # 扫描全部技能库（3 来源自动去重）
-python -m baize index search 关键词   # 例如 tdd / vue / golang
+python -m baize index search tdd      # 例如 tdd / vue / golang
 ```
 
 ## 第 3 步：跑通测试（1 分钟）
 
 ```bash
-python -m pytest tests/     # 69 个真实测试，全部应通过
+python -m pytest tests/ -q            # 593 个真实测试，全部通过
 ```
 
-## 第 4 步：运行你的第一个 Agent（3 分钟，需模型端点）
+## 第 4 步：体验极致交互式终端（3 分钟，推荐）
+
+```bash
+# 启动行业领先的连续交互 REPL 终端
+python -m baize
+
+# 交互终端内直接使用斜线命令：
+# > /help       - 查看完整命令列表
+# > /trace      - 可视化查看步骤时间线与 Span 工具执行耗时
+# > /cost       - 实时查看 Token 消耗与计费仪表盘
+# > /model deepseek-reasoner - 秒级热切换活跃模型
+# > /fork       - 平行分叉出新的实验分支
+# > /rewind 1   - 时间旅行回退 1 轮会话
+# > /paste      - 进入多行长代码粘贴模式
+#
+# 高级特性：
+# > baize-agent > 帮我重构 @baize/agent.py:10-30 中的方法  (@直接注入文件上下文)
+# > baize-agent > """粘贴多行代码"""                       (三引号多行块)
+```
+
+## 第 5 步：CLI 单次执行与多 Agent 团队
 
 ```bash
 # 单 Agent 自主执行（思考→工具→观察循环，JSONL 会话持久化）

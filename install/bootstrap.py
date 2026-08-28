@@ -31,7 +31,7 @@ MIN_PY = (3, 10)
 BANNER = r"""
    ___    __  __    _    ___  ___
   / __|  |  \/  |  / \  |__ \|__ \   Baize Agent
- | |__   | |\/| | / _ \   / /   / /   autonomous agent runtime — V19
+ | |__   | |\/| | / _ \   / /   / /   autonomous agent runtime — V31
  |___/   |_|  |_|/_/ \_\ |___| |___/   one-command installer
 """
 

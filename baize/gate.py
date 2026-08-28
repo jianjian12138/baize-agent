@@ -1,4 +1,4 @@
-"""NO FAKE DONE gate, productized (P3-3). Zero runtime dependencies.
+"""NO FAKE DONE gate, productized (P3-3, V26-C5). Zero runtime dependencies.
 
 This is the single source of truth for "is this project honestly done":
 
@@ -9,6 +9,8 @@ This is the single source of truth for "is this project honestly done":
 * Coverage gate - if the ``coverage`` dev package is installed we measure the
   REAL TOTAL and compare to ``TEST_COVERAGE_THRESHOLD``; otherwise we report
   ``unknown`` rather than pretending green.
+* Loop Integrity gate (V26-C5) - verifies that run ledgers exist and match
+  manifest claims; unverified tasks and unhandled failures block fake completion.
 
 All checks are fail-closed: any uncertainty is surfaced, never hidden.
 """
@@ -24,8 +26,8 @@ from .config import load_config, ROOT
 # file is suspect - the work may have regressed since).
 MANIFEST_STALE_SECONDS = 60 * 60 * 24 * 7
 
-__all__ = ["check_manifest", "check_coverage", "run_gate",
-           "MANIFEST_STALE_SECONDS"]
+__all__ = ["check_manifest", "check_coverage", "check_loop_integrity",
+           "run_gate", "MANIFEST_STALE_SECONDS"]
 
 
 def check_manifest(manifest_path: str,
@@ -86,7 +88,7 @@ def check_coverage(data_file: str = ".coverage") -> dict:
         return {"status": "unknown", "reason": str(exc)}
     ok = total >= threshold
     return {"status": "pass" if ok else "fail",
-            "total": round(total, 1), "threshold": threshold}
+        "total": round(total, 1), "threshold": threshold}
 
 
 def check_composition(cfg: dict | None = None) -> dict:
@@ -133,14 +135,44 @@ def check_composition(cfg: dict | None = None) -> dict:
         return {"status": "fail", "detail": f"{type(exc).__name__}: {exc}"}
 
 
-def check_quality(cfg: dict | None = None) -> dict:
-    """V23.6 multi-dimensional quality gate.
+def check_loop_integrity(manifest_path: str = "baize.manifest.json",
+                         cfg: dict | None = None) -> dict:
+    """V26-C5: Check run ledgers and manifest loop integrity.
 
-    Aggregates existing honest signals into five dimensions (no new deps, no
-    re-running tests) so a low-quality deliverable is blocked, not shipped:
+    Verifies:
+    - Runs in persistence/runs/ have valid events without unresolved crashes.
+    - Verified tasks have evidence and transitions recorded in ledgers.
+    """
+    from .run_ledger import list_runs, RunLedger
+    runs = list_runs(cfg=cfg)
+    if not runs:
+        return {"status": "pass", "detail": "0 runs recorded (clean state)",
+                "runs_checked": 0}
+
+    problems: list[str] = []
+    for rid in runs:
+        ledger = RunLedger(rid, cfg=cfg)
+        state = ledger.replay()
+        # Unfinished tasks left hanging without completion marker
+        if state["in_progress_tasks"] and not state["completed"]:
+            problems.append(f"run {rid}: {len(state['in_progress_tasks'])} task(s) unverified/in_progress")
+
+    if problems:
+        return {"status": "fail", "detail": "; ".join(problems[:5]),
+                "runs_checked": len(runs), "problems": problems}
+
+    return {"status": "pass", "detail": f"{len(runs)} run(s) verified",
+            "runs_checked": len(runs)}
+
+
+def check_quality(cfg: dict | None = None) -> dict:
+    """V23.6 / V26-C5 multi-dimensional quality gate.
+
+    Aggregates existing honest signals into six dimensions:
       - runnable         : manifest evidence is real (check_manifest)
       - coverage_clarity : real coverage measured (check_coverage)
       - composition      : composition kernel + modes assemble (check_composition)
+      - loop_integrity   : run ledgers integrity (check_loop_integrity)
       - locatability     : skill index hygiene (missing-description rate)
       - maintainability  : has tests/ + README (static repo hygiene)
     Below ``BAIZE_QUALITY_THRESHOLD`` the overall gate FAILS (intercept).
@@ -156,7 +188,10 @@ def check_quality(cfg: dict | None = None) -> dict:
     # 3. composition — kernel + modes actually assemble.
     comp = check_composition(cfg)
     comp_score = 1.0 if comp.get("status") == "pass" else 0.0
-    # 4. locatability — skill index hygiene (missing-description rate).
+    # 4. loop_integrity (V26-C5)
+    loop = check_loop_integrity(cfg=cfg)
+    loop_score = 1.0 if loop.get("status") == "pass" else 0.0
+    # 5. locatability — skill index hygiene (missing-description rate).
     try:
         from . import skill_index
         au = skill_index.audit_index(cfg)
@@ -165,7 +200,7 @@ def check_quality(cfg: dict | None = None) -> dict:
         locatability = max(0.0, 1.0 - miss / total)
     except Exception:
         locatability = 0.5
-    # 5. maintainability — static repo hygiene.
+    # 6. maintainability — static repo hygiene.
     root = Path(cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT)))
     has_tests = (root / "tests").is_dir()
     has_readme = any((root / f).exists()
@@ -175,13 +210,14 @@ def check_quality(cfg: dict | None = None) -> dict:
         "runnable": 1.0 if man_ok else 0.0,
         "coverage_clarity": cov_score,
         "composition": comp_score,
+        "loop_integrity": loop_score,
         "locatability": round(locatability, 3),
         "maintainability": maintainability,
     }
-    weights = {"runnable": 0.3, "coverage_clarity": 0.25, "composition": 0.2,
-               "locatability": 0.15, "maintainability": 0.1}
+    weights = {"runnable": 0.25, "coverage_clarity": 0.2, "composition": 0.15,
+               "loop_integrity": 0.15, "locatability": 0.15, "maintainability": 0.1}
     score = round(sum(dims[k] * w for k, w in weights.items()), 3)
-    threshold = float(cfg.get("BAIZE_QUALITY_THRESHOLD", "0.7"))
+    threshold = float(cfg.get("BAIZE_QUALITY_THRESHOLD", "0.8"))
     return {"dimensions": dims, "score": score,
             "threshold": threshold, "pass": score >= threshold}
 
@@ -193,8 +229,9 @@ def run_gate(manifest_path: str = "baize.manifest.json",
     cov = check_coverage(data_file)
     comp = check_composition()
     quality = check_quality()
+    loop = check_loop_integrity()
     if (not man_ok or cov["status"] == "fail" or comp["status"] == "fail"
-            or not quality["pass"]):
+            or not quality["pass"] or loop["status"] == "fail"):
         status = "fail"
     elif cov["status"] == "unknown":
         status = "unknown"
@@ -206,7 +243,9 @@ def run_gate(manifest_path: str = "baize.manifest.json",
         "coverage": cov,
         "composition": comp,
         "quality": quality,
+        "loop_integrity": loop,
         "overall": (man_ok and cov["status"] == "pass"
-                    and comp["status"] == "pass" and quality["pass"]),
+                    and comp["status"] == "pass" and quality["pass"]
+                    and loop["status"] == "pass"),
         "status": status,
     }

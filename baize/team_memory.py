@@ -20,6 +20,7 @@ Backends (BAIZE_TEAM_MEMORY_BACKEND):
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -32,12 +33,13 @@ MAX_CONTEXT_ENTRIES = 12   # bounded prompt injection - newest wins
 
 
 class TeamMemory:
-    """Append-only shared blackboard for one team run."""
+    """Append-only shared blackboard for one team run (thread-safe)."""
 
     def __init__(self, team_id: str = "default", cfg: dict | None = None):
         self.cfg = cfg or load_config()
         self.team_id = "".join(c for c in team_id
                                if c.isalnum() or c in "-_") or "default"
+        self._lock = threading.RLock()
         self.backend = self.cfg.get("BAIZE_TEAM_MEMORY_BACKEND", "local")
         if self.backend not in ("local", "shared"):
             raise ValueError(f"unknown team memory backend: {self.backend}")
@@ -56,21 +58,23 @@ class TeamMemory:
         return d / f"{self.team_id}.jsonl"
 
     def _read(self) -> list[dict]:
-        f = self.file
-        if not f.exists():
-            return []
-        out = []
-        for line in f.read_text(encoding="utf-8").splitlines():
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue  # defensive: a bad line never breaks the board
-        return out
+        with self._lock:
+            f = self.file
+            if not f.exists():
+                return []
+            out = []
+            for line in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue  # defensive: a bad line never breaks the board
+            return out
 
     def _append(self, rec: dict) -> dict:
-        with self.file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        return rec
+        with self._lock:
+            with self.file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            return rec
 
     # --- blackboard API -----------------------------------------------------
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "baize-agent"
-version = "24.0.0"
+version = "33.0.0"
 description = "Baize Agent — autonomous agent runtime (pure Python standard library, zero third-party dependencies)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,8 +36,11 @@ baize = "baize.cli:main"
 [tool.setuptools.packages.find]
 include = ["baize*"]
 
+[tool.setuptools.package-data]
+baize = ["py.typed"]
+
 [tool.pytest.ini_options]
 # Only the real suite lives in tests/; skill scripts under skills/ have their
 # own harness and must not be collected by the root `pytest` run.
 testpaths = ["tests"]
-norecursedirs = ["assets", "examples", "skills", "install", "benchmarks", "docs", ".github"]
+norecursedirs = ["assets", "examples", "skills", "install", "benchmarks", "docs", ".github", "ext"]  # V25 F7: 裸 pytest 不收集 ext 测试（ext 测试须显式 pytest tests/test_mcp*.py 运行，importorskip 守卫）

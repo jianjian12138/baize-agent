@@ -1,4 +1,9 @@
-"""Autonomous agent loop - the heart of baize (V20).
+"""Autonomous agent loop - the heart of baize (V33).
+
+V33 additions:
+- Structured CoT <thinking> injection for complex reasoning (B1)
+- Trace IDs (run_id / span_id) per step written to JSONL (E1)
+- Tool argument JSON parse failure retry up to BAIZE_TOOL_RETRY_MAX (B3)
 
 V20 additions: periodic self-reflection checkpoints, dead-loop detection with
 graceful abort, long-horizon context compression, plugin hooks and metrics.
@@ -47,6 +52,15 @@ REFLECTION_PROMPT = (
     "3) What is the single most valuable next action?\n"
     "Answer in 2-3 short lines, then continue working (or give the final answer if done).")
 
+# V33-B1: Structured Chain-of-Thought instruction injected into every system prompt.
+# Encourages the model to reason before acting on complex tasks while skipping
+# the overhead for trivial single-step responses.
+COT_SYSTEM_INSTRUCTION = (
+    "When facing complex tasks, multi-step decisions, or ambiguous situations, "
+    "ALWAYS begin your response with a <thinking>...</thinking> block that outlines "
+    "your reasoning step-by-step before proceeding with tool calls or a final answer. "
+    "For trivial single-step responses you may skip the thinking block.")
+
 
 # ---------------------------------------------------------------------------
 # Session persistence (pi-style append-only JSONL)
@@ -78,12 +92,15 @@ class Session:
                 self.messages.append(rec["message"])
 
     def append(self, message: dict, kind: str = "message") -> None:
-        if kind == "message":
-            self.messages.append(message)
         # P0-4: secrets must never land in the session JSONL in cleartext.
         stored = message
         if isinstance(message, dict) and isinstance(message.get("content"), str):
-            stored = {**message, "content": redact(message["content"])}
+            clean_content = message["content"].replace("\r\n", "\n")
+            stored = {**message, "content": redact(clean_content)}
+            if kind == "message":
+                message["content"] = clean_content
+        if kind == "message":
+            self.messages.append(message)
         rec = {"kind": kind, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                "message": stored}
         with self.file.open("a", encoding="utf-8") as fh:
@@ -170,10 +187,12 @@ def build_system_prompt(role: str = "executor",
     }
     base = role_prompts.get(role, role_prompts["executor"])
     parts = [
-        "You are Baize, an autonomous engineering agent (V20 runtime). "
+        "You are Baize, an autonomous engineering agent (V33 runtime). "
         "You may receive REFLECTION CHECKPOINT prompts - use them to "
         "self-assess and correct course instead of repeating failing actions.",
         base,
+        # V33-B1: structured CoT instruction
+        COT_SYSTEM_INSTRUCTION,
         f"Available tools: {', '.join(registry.names())}.",
         skill_hint,
         "Persist important learnings with memory_log; reusable workflows "
@@ -235,11 +254,13 @@ def _total_chars(messages: list[dict]) -> int:
 
 
 def _evidence_note(content: str) -> str:
-    """Build a structured, evidence-preserving stub for an old observation.
+    """Build a structured, bi-directional evidence-preserving stub for an old observation.
 
-    P3-2 fix: instead of blindly truncating to N chars (which could erase a
-    Verifier verdict or error), we keep the verdict/error signal explicitly so
-    the proof a task completed survives compaction.
+    P3-2 & V33 fix: preserves:
+    - Verifier verdict (pass/fail)
+    - Error indicators & exit codes
+    - Head 120 chars (command/request context)
+    - Tail 150 chars (stack trace, error message, or exit summary)
     """
     low = content.lower()
     verdict = None
@@ -248,8 +269,13 @@ def _evidence_note(content: str) -> str:
             if tok in low:
                 verdict = tok
                 break
-    has_error = ("error" in low) or ("traceback" in low) or ("exception" in low)
-    snippet = content[:200].replace("\n", " ")
+    has_error = ("error" in low) or ("traceback" in low) or ("exception" in low) or ("exit=" in low and "exit=0" not in low)
+    if len(content) <= 300:
+        snippet = content.replace("\n", " ")
+    else:
+        head = content[:120].replace("\n", " ")
+        tail = content[-150:].replace("\n", " ")
+        snippet = f"{head} [...truncated {len(content)-270} chars...] {tail}"
     return (f"[compressed old observation | verdict={verdict or 'n/a'} "
             f"errors={'yes' if has_error else 'no'}] {snippet}")
 
@@ -346,11 +372,17 @@ class Agent:
         return self.loop.run(self, goal, extra_system)
 
     def _run_loop(self, goal: str, extra_system: str = "") -> AgentResult:
+        extra = extra_system
+        ws_scope = getattr(self, "_workspace_scope", "")
+        if ws_scope:
+            scope_note = f"Workspace scope constraint: you are confined to path prefix '{ws_scope}'."
+            extra = f"{extra}\n\n{scope_note}".strip() if extra else scope_note
+
         sys_prompt = build_system_prompt(self.role, self.cfg,
-                                         self.registry, extra_system)
+                                         self.registry, extra)
         if not self.session.messages:
             self.session.append({"role": "system", "content": sys_prompt})
-            mem = recall_context(goal, self.cfg)
+            mem = "" if getattr(self, "_no_memory", False) else recall_context(goal, self.cfg)
             user_content = f"{mem}\n\nTASK: {goal}" if mem else goal
             self.session.append({"role": "user", "content": user_content})
             self.hooks.user_prompt_submit(user_content)
@@ -368,6 +400,10 @@ class Agent:
         obs.inc("agent_runs")
         # V21 P1-1: lifecycle hooks fire for real (no tool gate here).
         self.hooks.session_start(goal)
+
+        # V33-E1: generate a unique run_id for this execution for trace correlation
+        run_id = uuid.uuid4().hex[:8]
+        tool_retry_max = int(self.cfg.get("BAIZE_TOOL_RETRY_MAX", "2"))
 
         for step in range(1, self.max_steps + 1):
             # V20: long-horizon context compression (in-memory only)
@@ -400,10 +436,19 @@ class Agent:
 
             calls = msg.get("tool_calls") or []
             if not calls:  # plain answer -> done
-                self._emit("final", msg.get("content") or "")
                 res = AgentResult(self.session.id, msg.get("content") or "",
                                   step, n_tool_calls, "final",
                                   self.session.messages)
+                if str(self.cfg.get("BAIZE_AUTO_HARVEST_SKILLS", "1")).lower() in ("1", "true"):
+                    try:
+                        from .skill_harvester import SkillHarvester
+                        harvester = SkillHarvester(self.cfg)
+                        if harvester.should_harvest(res):
+                            h_path = harvester.harvest(res, goal=goal)
+                            if h_path:
+                                self._emit("skill_harvested", f"distilled skill to {h_path.name}")
+                    except Exception:
+                        pass
                 self.hooks.session_end(res)
                 return res
 
@@ -411,10 +456,47 @@ class Agent:
                 n_tool_calls += 1
                 fn = call.get("function", {})
                 name = fn.get("name", "")
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
+                # V33-B3: retry JSON parse failure up to tool_retry_max times
+                raw_args = fn.get("arguments") or "{}"
+                args = {}
+                parse_ok = False
+                for _attempt in range(tool_retry_max + 1):
+                    try:
+                        args = json.loads(raw_args)
+                        parse_ok = True
+                        break
+                    except json.JSONDecodeError:
+                        if _attempt < tool_retry_max:
+                            obs.inc("tool_arg_parse_retries")
+                            # Inject a correction nudge into the session so model
+                            # knows to fix its tool call format
+                            self.session.append({
+                                "role": "user",
+                                "content": (
+                                    f"[system] Tool call '{name}' had malformed JSON "
+                                    f"arguments. Please retry with valid JSON."
+                                ),
+                            })
+                            try:
+                                msgs2 = self.client.build_messages(
+                                    sys_prompt, tool_schemas, self.session.messages)
+                                retry_msg = self.client.chat(msgs2, tools=tool_schemas)
+                                retry_calls = retry_msg.get("tool_calls") or []
+                                if retry_calls:
+                                    fn = retry_calls[0].get("function", {})
+                                    name = fn.get("name", name)
+                                    raw_args = fn.get("arguments") or "{}"
+                            except LLMError:
+                                break
+                        else:
+                            break
+                if not parse_ok:
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": f"ERROR: could not parse JSON arguments for '{name}' after {tool_retry_max} retries",
+                    })
+                    continue
 
                 # V20: dead-loop detection on identical consecutive calls
                 sig = f"{name}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
@@ -467,7 +549,21 @@ class Agent:
                 self.on_event("tool", f"{name}({json.dumps(args, ensure_ascii=False)[:200]})")
                 plugin_registry.fire("on_tool_call", name, args)
                 obs.inc("tool_calls")
+                # V33-E1: record span timing for this tool call
+                span_start = time.time()
+                span_id = uuid.uuid4().hex[:6]
                 observation = self.registry.execute(name, args)
+                span_elapsed_ms = int((time.time() - span_start) * 1000)
+                # Write span to session JSONL for trace inspection
+                self.session.append_record({
+                    "kind": "span",
+                    "run_id": run_id,
+                    "span_id": span_id,
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "tool": name,
+                    "elapsed_ms": span_elapsed_ms,
+                    "ok": not str(observation).startswith("ERROR"),
+                })
                 if repeat_count == self.loop_window and not warned_loop:
                     warned_loop = True
                     observation = (str(observation)

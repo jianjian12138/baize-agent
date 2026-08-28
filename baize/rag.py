@@ -55,12 +55,63 @@ def build_corpus(cfg: dict | None = None) -> TfidfIndex:
     return index
 
 
+# Common dev synonym mapping for query expansion
+SYNONYM_MAP: dict[str, list[str]] = {
+    "bug": ["错误", "异常", "fix", "defect"],
+    "调试": ["debug", "排查", "log", "trace"],
+    "测试": ["test", "pytest", "unit", "check"],
+    "配置": ["config", "env", "settings"],
+    "网络": ["network", "http", "fetch", "url"],
+    "工具": ["tool", "plugin", "skill"],
+    "部署": ["deploy", "docker", "release"],
+}
+
+
+def expand_query(query: str) -> str:
+    """Expand query with relevant synonyms."""
+    extra = []
+    q_lower = query.lower()
+    for word, syns in SYNONYM_MAP.items():
+        if word in q_lower:
+            extra.extend(syns)
+    if extra:
+        return f"{query} {' '.join(extra)}"
+    return query
+
+
 def retrieve(query: str, cfg: dict | None = None, top_k: int = 5,
              corpus: TfidfIndex | None = None) -> list[dict]:
+    """Hybrid RAG retrieval combining TF-IDF and BM25 with Reciprocal Rank Fusion."""
     corpus = corpus or build_corpus(cfg)
-    hits = corpus.search(query, top_k=top_k)
+    expanded = expand_query(query)
+
+    # Search with TF-IDF
+    tfidf_hits = corpus.search(expanded, top_k=top_k * 2, method="tfidf")
+    # Search with BM25
+    bm25_hits = corpus.search(expanded, top_k=top_k * 2, method="bm25")
+
+    # Reciprocal Rank Fusion (RRF): score(d) = sum(1 / (k + rank))
+    k = 60
+    rrf_scores: dict[str, float] = {}
+    meta_map: dict[str, dict] = {}
+
+    for rank, h in enumerate(tfidf_hits):
+        doc_id = h["id"]
+        rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + (1.0 / (k + rank + 1))
+        meta_map[doc_id] = h.get("meta", {})
+
+    for rank, h in enumerate(bm25_hits):
+        doc_id = h["id"]
+        rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + (1.0 / (k + rank + 1))
+        meta_map[doc_id] = h.get("meta", {})
+
+    # Sort merged results by fused score
+    fused = [
+        {"id": doc_id, "score": round(score * 100, 3), "meta": meta_map[doc_id]}
+        for doc_id, score in sorted(rrf_scores.items(), key=lambda kv: -kv[1])
+    ]
     obs.inc("rag_queries")
-    return hits
+    return fused[:top_k]
 
 
 def augment(goal: str, cfg: dict | None = None, top_k: int = 5) -> str:
@@ -69,14 +120,21 @@ def augment(goal: str, cfg: dict | None = None, top_k: int = 5) -> str:
     if not hits:
         return ""
     lines = []
+    seen = set()
     for h in hits:
         m = h["meta"]
         if m.get("kind") == "skill":
-            lines.append(f"- [skill {h['score']}] {m['name']} "
-                         f"(load with load_skill: {m['skill_file']})")
+            name = m.get("name", "")
+            if name and name not in seen:
+                seen.add(name)
+                lines.append(f"- [skill {h['score']}] {name} "
+                             f"(load with load_skill: {m.get('skill_file', '')})")
         else:
-            lines.append(f"- [memory {h['score']}] {m.get('text', '')}")
-    return "Retrieved context (RAG):\n" + "\n".join(lines)
+            text = m.get("text", "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                lines.append(f"- [memory {h['score']}] {text}")
+    return ("Retrieved context (RAG):\n" + "\n".join(lines)) if lines else ""
 
 
 # --- skill usage scoring -----------------------------------------------------

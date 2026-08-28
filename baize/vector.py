@@ -37,24 +37,29 @@ def tokenize(text: str) -> list[str]:
 
 
 class TfidfIndex:
-    """In-memory TF-IDF index with cosine similarity search."""
+    """In-memory index supporting both TF-IDF cosine similarity and BM25 ranking."""
 
     def __init__(self) -> None:
         self._docs: dict[str, Counter] = {}      # doc_id -> term freq
         self._meta: dict[str, dict] = {}
         self._df: Counter = Counter()            # term -> doc freq
+        self._doc_lengths: dict[str, int] = {}   # doc_id -> total tokens
         self._built = False
         self._idf: dict[str, float] = {}
+        self._bm25_idf: dict[str, float] = {}
         self._norms: dict[str, float] = {}
+        self._avgdl: float = 1.0
 
     def add(self, doc_id: str, text: str, meta: dict | None = None) -> None:
-        tf = Counter(tokenize(text))
+        tokens = tokenize(text)
+        tf = Counter(tokens)
         if not tf:
             return
         if doc_id in self._docs:                 # re-add = replace
             for term in self._docs[doc_id]:
                 self._df[term] -= 1
         self._docs[doc_id] = tf
+        self._doc_lengths[doc_id] = len(tokens)
         self._meta[doc_id] = meta or {}
         for term in tf:
             self._df[term] += 1
@@ -64,6 +69,12 @@ class TfidfIndex:
         n = max(1, len(self._docs))
         self._idf = {t: math.log((n + 1) / (df + 1)) + 1.0
                      for t, df in self._df.items() if df > 0}
+        # BM25 probabilistic IDF: ln((N - df + 0.5) / (df + 0.5) + 1)
+        self._bm25_idf = {
+            t: max(0.0, math.log((n - df + 0.5) / (df + 0.5) + 1.0))
+            for t, df in self._df.items() if df > 0
+        }
+        self._avgdl = (sum(self._doc_lengths.values()) / n) if n > 0 else 1.0
         self._norms = {}
         for doc_id, tf in self._docs.items():
             norm = math.sqrt(sum(
@@ -71,12 +82,37 @@ class TfidfIndex:
             self._norms[doc_id] = norm or 1.0
         self._built = True
 
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
+    def search(self, query: str, top_k: int = 5, method: str = "tfidf") -> list[dict]:
         if not self._built:
             self.build()
-        q_tf = Counter(tokenize(query))
+        q_tokens = tokenize(query)
+        q_tf = Counter(q_tokens)
         if not q_tf or not self._docs:
             return []
+
+        if method == "bm25":
+            # BM25: k1=1.5, b=0.75
+            k1 = 1.5
+            b = 0.75
+            scored = []
+            for doc_id, tf in self._docs.items():
+                dl = self._doc_lengths.get(doc_id, 1)
+                score = 0.0
+                for term in q_tf:
+                    if term not in tf:
+                        continue
+                    f = tf[term]
+                    idf = self._bm25_idf.get(term, 0.0)
+                    denom = f + k1 * (1.0 - b + b * (dl / (self._avgdl or 1.0)))
+                    score += idf * (f * (k1 + 1.0)) / (denom or 1.0)
+                if score > 0:
+                    scored.append({"id": doc_id,
+                                   "score": round(score, 4),
+                                   "meta": self._meta.get(doc_id, {})})
+            scored.sort(key=lambda h: -h["score"])
+            return scored[:top_k]
+
+        # Default: TF-IDF cosine similarity
         q_vec = {t: freq * self._idf.get(t, 0.0) for t, freq in q_tf.items()}
         q_norm = math.sqrt(sum(w * w for w in q_vec.values())) or 1.0
         scored = []

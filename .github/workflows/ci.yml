@@ -59,6 +59,20 @@ jobs:
           print("OK: baize/ imports stdlib only")
           PY
 
+      - name: Static grep gate (red line C — ext fail-closed)
+        shell: bash
+        run: |
+          # Core baize/*.py must NEVER do a TOP-LEVEL `import baize.ext`.
+          # Indented (function-body) imports are the sanctioned exception
+          # (tools.register_mcp_client / cli.cmd_mcp). Anchor at column 0 so
+          # indented imports are NOT flagged. We scan only top-level core
+          # modules, never baize/ext/ itself.
+          if grep -rnE '^(import|from) baize\.ext' baize/*.py; then
+            echo "RED LINE C VIOLATION: top-level import baize.ext in core"
+            exit 1
+          fi
+          echo "OK: no top-level import baize.ext in baize/*.py"
+
       - name: Doctor
         run: python -m baize doctor
 

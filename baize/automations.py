@@ -21,6 +21,7 @@ only). This is a deliberate constraint from the project's iron rules.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -35,6 +36,60 @@ from .observability import obs
 log = get_logger("automations")
 
 Runner = Callable[["AutomationSpec"], object]
+
+
+def parse_nl_schedule(text: str) -> str:
+    """Parse natural language scheduling hints into a 5-field cron or interval string."""
+    t = text.strip().lower()
+    if t.startswith("cron:") or t.startswith("interval:"):
+        return text
+
+    # Minute intervals
+    m_min = re.search(r"(?:每|every\s+)(\d+)\s*(?:分钟|分|mins?|minutes?)", t)
+    if m_min:
+        n = int(m_min.group(1))
+        return f"cron: */{n} * * * *"
+
+    # Hour intervals
+    m_hr = re.search(r"(?:每|every\s+)(\d+)\s*(?:小时|个半小时|hrs?|hours?)", t)
+    if m_hr:
+        n = int(m_hr.group(1))
+        return f"cron: 0 */{n} * * *"
+
+    # Second intervals
+    m_sec = re.search(r"(?:每|every\s+)(\d+)\s*(?:秒|secs?|seconds?)", t)
+    if m_sec:
+        n = int(m_sec.group(1))
+        return f"interval:{n}"
+
+    # Hour parsing for daily routines
+    hour = 9
+    m_time = re.search(r"(?:早上|上午|早|早晨|am)\s*(\d+)", t) or re.search(r"(\d+)\s*(?:am|点早|点半早)", t)
+    if m_time:
+        hour = int(m_time.group(1))
+    else:
+        m_pm = re.search(r"(?:晚上|下午|晚|晚间|pm)\s*(\d+)", t) or re.search(r"(\d+)\s*(?:pm|点晚)", t)
+        if m_pm:
+            h_raw = int(m_pm.group(1))
+            hour = h_raw + 12 if h_raw < 12 else h_raw
+
+    if any(k in t for k in ("工作日", "weekdays", "weekday")):
+        return f"cron: 0 {hour} * * 1-5"
+    if any(k in t for k in ("周末", "weekends", "weekend")):
+        return f"cron: 0 {hour} * * 0,6"
+    if any(k in t for k in ("每周", "weekly", "week")):
+        return f"cron: 0 {hour} * * 1"
+    if any(k in t for k in ("每月", "monthly", "month")):
+        return f"cron: 0 {hour} 1 * *"
+    if any(k in t for k in ("每天", "daily", "day", "每晚", "每早")):
+        return f"cron: 0 {hour} * * *"
+    if any(k in t for k in ("每小时", "hourly", "hour")):
+        return "cron: 0 * * * *"
+
+    if len(t.split()) == 5:
+        return f"cron: {t}"
+
+    return text
 
 
 # ---------------------------------------------------------------------------

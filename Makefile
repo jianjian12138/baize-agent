@@ -2,10 +2,18 @@
 # Works on Unix/macOS and Windows (via Git Bash / WSL).
 PY ?= python
 
-.PHONY: install doctor test index clean cov gate
+.PHONY: install doctor test index clean cov gate chat serve repl
 
 install:
 	$(PY) install/bootstrap.py
+
+chat:
+	$(PY) -m baize chat
+
+repl: chat
+
+serve:
+	$(PY) -m baize serve
 
 doctor:
 	$(PY) -m baize.cli doctor

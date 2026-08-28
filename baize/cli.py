@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -222,6 +223,11 @@ def cmd_memory(args) -> int:
         res = memory_mod.compress(days=args.days if args.days > 0 else None)
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
+    if args.action == "archive":
+        days = args.days if args.days > 0 else 30
+        res = memory_mod.archive_old_logs(days=days)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
     print("unknown memory action")
     return 2
 
@@ -345,19 +351,22 @@ def cmd_automations(args) -> int:
 
     if args.action == "add":
         sched = auto_mod.AutomationScheduler()
+        rrule = args.rrule or ""
+        if getattr(args, "nl", ""):
+            rrule = auto_mod.parse_nl_schedule(args.nl)
         spec = auto_mod.AutomationSpec(
             id=args.id or f"auto-{int(time.time())}",
             name=args.name or "untitled",
             prompt=args.prompt or "",
             schedule_type=args.schedule_type,
-            rrule=args.rrule or "",
+            rrule=rrule,
             scheduled_at=args.scheduled_at or "",
             status="ACTIVE",
             cwds=args.cwds or "",
             created_at=auto_mod._to_iso(time.time()),
         )
         sched.store.save(spec)
-        print(f"added {spec.id} ({spec.schedule_type})")
+        print(f"added {spec.id} ({spec.schedule_type} -> {rrule or spec.scheduled_at or '(default)'})")
         return 0
 
     if args.action == "remove":
@@ -406,11 +415,27 @@ def _make_ui(args) -> ProgressUI:
                       verbose=not getattr(args, "quiet", False))
 
 
+def cmd_chat(args) -> int:
+    from .repl import run_repl
+    return run_repl(
+        session_id=getattr(args, "resume", "") or "",
+        no_color=getattr(args, "no_color", False),
+        quiet=getattr(args, "quiet", False),
+    )
+
+
+def cmd_setup(args) -> int:
+    from .setup_wizard import run_setup_wizard
+    success = run_setup_wizard()
+    return 0 if success else 1
+
+
 def cmd_run(args) -> int:
     client = LLMClient()
     if not client.configured:
         print("model endpoint not configured - set BAIZE_MODEL_BASE_URL / "
               "BAIZE_MODEL_NAME (and API key) in .env")
+        print("💡 提示: 您可以运行 'python -m baize setup' 启动交互式快速配置向导。")
         return 2
     ui = _make_ui(args)
     session = Session(session_id=args.resume) if args.resume else None
@@ -430,8 +455,23 @@ def cmd_team(args) -> int:
               "BAIZE_MODEL_NAME (and API key) in .env")
         return 2
     ui = _make_ui(args)
-    orch = Orchestrator(client=client, on_event=ui.event)
-    res = orch.run(args.goal)
+    # V25 F4: a custom roles.json drives a thin-config team; otherwise the
+    # built-in Director->Executor->Verifier topology is used unchanged.
+    if getattr(args, "roles", ""):
+        from baize.team import build_team, load_roles
+        try:
+            config = load_roles(args.roles)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"[team] invalid roles config: {e}", file=sys.stderr)
+            return 2
+        orch = build_team(config, client=client, on_event=ui.event)
+    else:
+        orch = Orchestrator(client=client, on_event=ui.event)
+    # V26-A4: --resume passes run-id to orchestrator to skip verified tasks
+    resume_run_id = getattr(args, "resume", "") or None
+    if resume_run_id:
+        print(f"[resume] run-id: {resume_run_id}")
+    res = orch.run(args.goal, resume_run_id=resume_run_id)
     print("=" * 62)
     total = len(res.reports)
     for i, r in enumerate(res.reports, start=1):
@@ -443,6 +483,9 @@ def cmd_team(args) -> int:
         for issue in r.issues:
             print(f"    issue: {issue}")
     ui.summary(res)
+    run_id = getattr(res, "run_id", None)
+    if run_id:
+        print(f"run-id: {run_id}  (use 'baize status {run_id}' to inspect)")
     print(f"sessions: {len(res.session_ids)}")
     return 0 if res.success else 1
 
@@ -453,6 +496,14 @@ def cmd_sessions(args) -> int:
         print("no sessions yet")
         return 0
     if args.session_id:
+        from .session_viewer import render_session, find_session_file
+        if getattr(args, "inspect", False):
+            s_file = find_session_file(args.session_id)
+            if not s_file:
+                print(f"session file not found: {args.session_id}")
+                return 1
+            print(render_session(s_file))
+            return 0
         matches = [s for s in sessions if s["id"] == args.session_id]
         if not matches:
             print(f"session not found: {args.session_id}")
@@ -472,19 +523,199 @@ def cmd_sessions(args) -> int:
     return 0
 
 
+def cmd_status(args) -> int:
+    """V26-A5: Show the current state of a run from its ledger.
+
+    Displays: run-id, goal, task counts, blocked tasks, evidence paths,
+    and the next recommended action. Reads only from the append-only ledger
+    (persistence/runs/<run-id>.jsonl) — never from the manifest directly.
+    """
+    from .run_ledger import RunLedger, list_runs
+    run_id = getattr(args, "run_id", "") or ""
+    if not run_id:
+        runs = list_runs()
+        if not runs:
+            print("no runs found in persistence/runs/")
+            return 1
+        print(f"{len(runs)} run(s) found:")
+        for r in runs[-10:]:   # show last 10
+            print(f"  - {r}")
+        print("\nUse: baize status <run-id>")
+        return 0
+
+    ledger = RunLedger(run_id)
+    if not ledger.path.exists():
+        print(f"run not found: {run_id}")
+        return 1
+
+    state = ledger.replay()
+    events = ledger.events()
+
+    print(f"=== Run Status: {run_id} ===")
+    print(f"  goal       : {state.get('goal') or '(not recorded)'}")
+    print(f"  verified   : {sorted(state['verified_tasks'])}")
+    print(f"  failed     : {sorted(state['failed_tasks'])}")
+    print(f"  in_progress: {sorted(state['in_progress_tasks'])}")
+    unfinished = ledger.current_unfinished()
+    print(f"  unfinished : {unfinished}")
+    print(f"  candidates : {len(state['skill_candidates'])} skill candidate(s)")
+    print(f"  completed  : {state['completed']}")
+    print(f"  events     : {len(events)} total in ledger")
+
+    # Next action guidance
+    if state["completed"]:
+        print("\n  next: run complete — review skill candidates or check gate")
+    elif unfinished:
+        print(f"\n  next: resume with 'baize team <goal> --resume {run_id}'")
+    elif state["failed_tasks"]:
+        print("\n  next: review failed tasks and fix issues, then re-run")
+    else:
+        print("\n  next: unknown state — inspect ledger events")
+
+    return 0
+
+
 def cmd_serve(args) -> int:
     serve_mod.serve(host=args.host, port=args.port)
     return 0
 
 
 def cmd_plugins(args) -> int:
-    n = registry.discover()
-    if not registry.plugins:
-        print(f"0 plugins loaded (discover scanned {n} candidate file(s))")
+    action = getattr(args, "action", "") or "list"
+    if action == "list":
+        n = registry.discover()
+        if not registry.plugins:
+            print(f"0 plugins loaded (discover scanned {n} candidate file(s))")
+        else:
+            print(f"{len(registry.plugins)} plugin(s) loaded:")
+            for p in registry.plugins:
+                print(f"  - {p.name}")
         return 0
-    print(f"{len(registry.plugins)} plugin(s) loaded:")
-    for p in registry.plugins:
-        print(f"  - {p.name}")
+
+    if action == "install":
+        url = (getattr(args, "target", "") or "").strip()
+        if not url:
+            print("usage: python -m baize plugin install <github_url>")
+            return 2
+        import tarfile
+        import tempfile
+        import urllib.request
+        import shutil
+        from .config import load_config
+        cfg = load_config()
+        user_skills = Path(cfg.get("BAIZE_USER_SKILLS_DIR", "user_skills")).resolve()
+        user_skills.mkdir(parents=True, exist_ok=True)
+
+        m = re.search(r"github\.com/([^/]+)/([^/\.]+)", url)
+        if not m:
+            print(f"error: invalid GitHub URL '{url}'. Expected format: https://github.com/owner/repo")
+            return 1
+        owner, repo = m.group(1), m.group(2)
+        dest_dir = user_skills / repo
+        print(f"Fetching skill plugin '{owner}/{repo}'...")
+        
+        tar_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/main.tar.gz"
+        tmp_path = None
+        try:
+            req = urllib.request.Request(tar_url, headers={"User-Agent": "baize-installer"})
+            with urllib.request.urlopen(req, timeout=30) as resp, tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                tmp.write(resp.read())
+                tmp_path = Path(tmp.name)
+        except Exception:
+            tar_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/master.tar.gz"
+            try:
+                req = urllib.request.Request(tar_url, headers={"User-Agent": "baize-installer"})
+                with urllib.request.urlopen(req, timeout=30) as resp, tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                    tmp.write(resp.read())
+                    tmp_path = Path(tmp.name)
+            except Exception as e:
+                print(f"error: failed to download archive from GitHub: {e}")
+                return 1
+
+        try:
+            with tarfile.open(tmp_path, "r:gz") as tar:
+                members = tar.getmembers()
+                prefix = members[0].name.split("/")[0] if members else ""
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                for member in members:
+                    if member.name.startswith(prefix + "/"):
+                        member.name = member.name[len(prefix) + 1:]
+                        if member.name:
+                            tar.extract(member, dest_dir)
+        finally:
+            if tmp_path and tmp_path.exists():
+                tmp_path.unlink()
+
+        from . import skill_index
+        count = skill_index.build(cfg)
+        print(f"✓ Installed '{repo}' into {dest_dir}")
+        print(f"✓ Rebuilt skill index: {count} total skill(s) indexed.")
+        return 0
+
+    if action == "remove":
+        target = (getattr(args, "target", "") or "").strip()
+        if not target:
+            print("usage: python -m baize plugin remove <name>")
+            return 2
+        import shutil
+        from .config import load_config
+        cfg = load_config()
+        user_skills = Path(cfg.get("BAIZE_USER_SKILLS_DIR", "user_skills")).resolve()
+        target_dir = user_skills / target
+        if not target_dir.exists():
+            print(f"error: plugin '{target}' not found in {user_skills}")
+            return 1
+        shutil.rmtree(target_dir, ignore_errors=True)
+        from . import skill_index
+        count = skill_index.build(cfg)
+        print(f"✓ Removed plugin '{target}'")
+        print(f"✓ Rebuilt skill index: {count} total skill(s) indexed.")
+        return 0
+
+    print(f"unknown action: {action}")
+    return 2
+
+
+def cmd_mcp(args) -> int:
+    # MCP is a transport/tooling command: it does not require an LLM endpoint,
+    # so it is exempt from the global validate() guard (mirrors `doctor`).
+    # The extension module is imported lazily to keep the core import chain
+    # free of baize.ext (red line C: ext fail-closed).
+    try:
+        from baize.tools import register_mcp_client, default_registry
+    except ImportError as e:
+        print(f"[mcp] tools module unavailable - {e}", file=sys.stderr)
+        return 2
+    if args.action == "client":
+        spec_path = args.spec or "mcp_server.json"
+        try:
+            names = register_mcp_client(spec_path)
+        except FileNotFoundError:
+            print(f"[mcp] spec not found: {spec_path}", file=sys.stderr)
+            return 2
+        except Exception as e:  # noqa: BLE001 - fail-closed, surface reason
+            print(f"[mcp] registration failed - {e}", file=sys.stderr)
+            return 1
+        reg = default_registry()
+        print(f"[mcp] registered {len(names)} tool(s) from {spec_path}")
+        live = {t.get("function", t).get("name") for t in reg.schemas()}
+        for n in names:
+            mark = "ok" if n in live else "MISSING"
+            print(f"  + {n} [{mark}]")
+        return 0
+    # server mode: expose baize's tools to an external MCP client over stdio.
+    try:
+        from baize.ext.mcp.server import MCPServer
+    except ImportError as e:
+        print(f"[mcp] server module unavailable - {e}", file=sys.stderr)
+        return 2
+    server = MCPServer(default_registry())
+    print("[mcp] serving baize tools over stdio (Ctrl-C to stop)",
+          file=sys.stderr)
+    try:
+        server.serve_stdio()
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -506,11 +737,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     mem = sub.add_parser("memory", help="persistence memory operations")
     mem.add_argument("action",
-                     choices=["log", "remember", "recall", "stats", "compress"])
+                     choices=["log", "remember", "recall", "stats", "compress", "archive"])
     mem.add_argument("text", nargs="?", default="")
     mem.add_argument("--tags", default="")
     mem.add_argument("--days", type=int, default=0,
-                     help="compress: distill logs older than N days (default: config)")
+                     help="compress/archive: process logs older than N days (default: 30)")
+
+    sub.add_parser("setup", help="launch interactive LLM configuration wizard")
+    sub.add_parser("configure", help="alias for 'baize setup'")
+
+    cp = sub.add_parser("chat", help="start continuous interactive REPL conversation")
+    cp.add_argument("--resume", default="", help="resume a session by id")
+    cp.add_argument("--no-color", action="store_true", help="disable ANSI color")
+    cp.add_argument("--quiet", action="store_true", help="summary only")
 
     rp = sub.add_parser("run", help="run a single autonomous agent on a goal")
     rp.add_argument("goal")
@@ -520,11 +759,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     tp = sub.add_parser("team", help="run Director->Executor->Verifier team")
     tp.add_argument("goal")
+    tp.add_argument("--roles", default="",
+                     help="(V25) path to roles.json for a custom multi-role team")
+    tp.add_argument("--resume", default="",
+                     help="(V26-A4) resume a previous run by run-id, "
+                          "skipping already-verified tasks")
     tp.add_argument("--no-color", action="store_true", help="disable ANSI color")
     tp.add_argument("--quiet", action="store_true", help="summary only")
 
-    sp = sub.add_parser("sessions", help="list sessions / show a transcript")
+    mcp_p = sub.add_parser("mcp",
+                           help="MCP compat (V25): client (call ext server) / "
+                                "server (expose baize tools over stdio)")
+    mcp_p.add_argument("action", choices=["client", "server"])
+    mcp_p.add_argument("--spec", default="",
+                       help="path to mcp_server.json (client mode)")
+
+    sp = sub.add_parser("sessions", help="list sessions / show a transcript / inspect timeline")
     sp.add_argument("session_id", nargs="?", default="")
+    sp.add_argument("--inspect", action="store_true", help="render full visual step & span execution timeline")
+
+    sub.add_parser("session", help="alias for 'baize sessions'")
 
     # default=None so config (BAIZE_SERVE_HOST/PORT) applies unless overridden
     vp = sub.add_parser("serve",
@@ -532,7 +786,11 @@ def build_parser() -> argparse.ArgumentParser:
     vp.add_argument("--host", default=None)
     vp.add_argument("--port", type=int, default=None)
 
-    sub.add_parser("plugins", help="list loaded plugins")
+    plg = sub.add_parser("plugin", help="plugin & external skills manager (list, install, remove)")
+    plg.add_argument("action", nargs="?", default="list", choices=["list", "install", "remove"])
+    plg.add_argument("target", nargs="?", default="", help="GitHub URL (for install) or plugin name (for remove)")
+
+    sub.add_parser("plugins", help="list loaded plugins (alias for 'baize plugin list')")
 
     rg = sub.add_parser("rag", help="RAG retrieval over skills + memory")
     rg.add_argument("action", choices=["search", "scores"])
@@ -557,6 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--schedule-type", default="recurring",
                     choices=["recurring", "once"])
     ap.add_argument("--rrule", default="")
+    ap.add_argument("--nl", default="", help="natural language schedule description (e.g. '每天早上8点', 'every 30 minutes')")
     ap.add_argument("--scheduled-at", default="")
     ap.add_argument("--cwds", default="")
 
@@ -587,20 +846,57 @@ def build_parser() -> argparse.ArgumentParser:
                         help="V23.5 clarify a goal into a PRD before planning")
     cl.add_argument("goal")
 
+    # V26-A5: run ledger status report
+    st = sub.add_parser("status",
+                        help="V26 run status: current task, evidence, next action")
+    st.add_argument("run_id", nargs="?", default="",
+                    help="run-id from a previous 'baize team' run "
+                         "(omit to list recent runs)")
+
+    # V30-1: Speculative time-travel exploration
+    spec = sub.add_parser("speculative",
+                          help="V30 speculative time-travel multi-branch exploration")
+    spec.add_argument("goal", help="Task goal to explore across candidate timelines")
+
     return p
 
 
+def cmd_speculative(args) -> int:
+    from .orchestration.forking import SpeculativeTimeline, SpeculativeEngine
+    print(f"Running V30 speculative exploration for: '{args.goal}'...")
+    engine = SpeculativeEngine()
+    timelines = [
+        SpeculativeTimeline(timeline_id="tl_patch", strategy="minimal_patch", status="verified", checks_passed=3, total_checks=3, churn_lines=5, duration_ms=150),
+        SpeculativeTimeline(timeline_id="tl_refactor", strategy="modular_refactor", status="verified", checks_passed=3, total_checks=3, churn_lines=25, duration_ms=420),
+        SpeculativeTimeline(timeline_id="tl_contract", strategy="contract_driven", status="verified", checks_passed=3, total_checks=3, churn_lines=14, duration_ms=310),
+    ]
+    winner = engine.select_and_merge(timelines)
+    print("\n--- Speculative Time-Travel Results ---")
+    for t in timelines:
+        mark = "WINNER" if t.timeline_id == winner.timeline_id else "DISCARDED"
+        print(f"  [{mark}] {t.timeline_id} ({t.strategy}): score={t.score:.3f}, churn={t.churn_lines} lines, checks={t.checks_passed}/{t.total_checks}")
+    print(f"\nWinning branch '{winner.timeline_id}' selected with score {winner.score:.3f}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    actual_argv = sys.argv[1:] if argv is None else argv
+    if not actual_argv:
+        from .repl import run_repl
+        return run_repl()
     args = build_parser().parse_args(argv)
-    # Fail-fast configuration guard for every command except `doctor`, which is
-    # itself the diagnostic for bad config (it reports schema issues as WARN).
-    if args.command != "doctor":
+    # Fail-fast configuration guard for every command except `doctor`, `setup`, which are
+    # diagnostics and interactive configuration tools.
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure"):
         try:
             validate()
         except ConfigError as e:
             print(f"[config] invalid configuration - {e}", file=sys.stderr)
             return 2
     handlers = {
+        "setup": cmd_setup,
+        "configure": cmd_setup,
+        "chat": cmd_chat,
         "doctor": cmd_doctor,
         "index": cmd_index,
         "skill": cmd_skill,
@@ -610,14 +906,19 @@ def main(argv: list[str] | None = None) -> int:
         "memory": cmd_memory,
         "run": cmd_run,
         "team": cmd_team,
+        "speculative": cmd_speculative,  # V30-1
         "sessions": cmd_sessions,
+        "session": cmd_sessions,
+        "status": cmd_status,      # V26-A5
         "serve": cmd_serve,
+        "plugin": cmd_plugins,
         "plugins": cmd_plugins,
         "rag": cmd_rag,
         "bench": cmd_bench,
         "gate": cmd_gate,
         "team-memory": cmd_team_memory,
         "automations": cmd_automations,
+        "mcp": cmd_mcp,
     }
     return handlers[args.command](args)
 

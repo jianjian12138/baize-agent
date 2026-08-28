@@ -24,16 +24,36 @@ def _persistence_dir(cfg: dict | None = None) -> Path:
     return p
 
 
+VALID_CATEGORIES = frozenset({"fact", "decision", "assumption", "lesson"})
+
+
 def log_event(text: str, tags: list[str] | None = None,
+              category: str = "fact",
+              run_id: str | None = None,
+              task_id: str | None = None,
+              evidence: str | None = None,
               cfg: dict | None = None) -> Path:
-    """Append an event to today's JSONL log. Returns the log file path."""
+    """Append an event to today's JSONL log. Returns the log file path.
+
+    V26-C1: Supports memory layering (category) and provenance lineage
+    (run_id, task_id, evidence). Handles legacy callers where cfg was the 3rd arg.
+    """
+    if isinstance(category, dict) and cfg is None:
+        cfg = category
+        category = "fact"
+
     p = _persistence_dir(cfg)
     day = time.strftime("%Y-%m-%d")
     log_file = p / "logs" / f"{day}.jsonl"
+    cat = category if isinstance(category, str) and category in VALID_CATEGORIES else "fact"
     record = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "text": redact(text),
         "tags": tags or [],
+        "category": cat,
+        "run_id": run_id,
+        "task_id": task_id,
+        "evidence": evidence,
     }
     with log_file.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -51,18 +71,24 @@ def remember(text: str, cfg: dict | None = None) -> Path:
 
 
 def recall(query: str, cfg: dict | None = None, limit: int = 20,
-           tags: list[str] | None = None) -> list[dict]:
+           tags: list[str] | None = None,
+           category: str | None = None,
+           semantic: bool = False) -> list[dict]:
     """Search notes and all daily logs.
 
     - Multiple keywords (space-separated) use AND semantics: all must match.
     - If ``tags`` is given, only log records whose tags intersect the filter
       are returned (notes.md has no tags, so it is excluded when filtering).
+    - If ``category`` is given, only log records matching the category are
+      returned (notes.md is excluded when filtering by category).
     - Results are ranked by relevance (number of keyword hits, descending).
-    - Empty query returns everything (respecting limit / tags).
+    - If ``semantic=True``, augments results with TF-IDF fuzzy ranking.
+    - Empty query returns everything (respecting limit / tags / category).
     """
     p = _persistence_dir(cfg)
     keywords = [k.lower() for k in query.split() if k]
     tag_filter = {t.lower() for t in tags} if tags else None
+    cat_filter = category.lower() if category else None
     hits: list[dict] = []
 
     def _score(text: str) -> int:
@@ -78,16 +104,16 @@ def recall(query: str, cfg: dict | None = None, limit: int = 20,
                 return -1  # AND semantics: any miss = no match
         return total
 
-    # notes.md (no tags field — skip when tag filter is active)
+    # notes.md (no tags / category field — skip when tag or category filter is active)
     notes = p / "notes.md"
-    if notes.exists() and tag_filter is None:
+    if notes.exists() and tag_filter is None and cat_filter is None:
         for line in notes.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             score = _score(line)
             if score >= 0:
                 hits.append({"source": "notes.md", "text": line.strip(),
-                             "score": score})
+                             "category": "fact", "score": score})
 
     for log_file in sorted((p / "logs").glob("*.jsonl"), reverse=True):
         for line in log_file.read_text(encoding="utf-8").splitlines():
@@ -98,15 +124,77 @@ def recall(query: str, cfg: dict | None = None, limit: int = 20,
             rec_tags = {t.lower() for t in rec.get("tags", [])}
             if tag_filter is not None and not (rec_tags & tag_filter):
                 continue
+            rec_cat = str(rec.get("category", "fact")).lower()
+            if cat_filter is not None and rec_cat != cat_filter:
+                continue
             score = _score(rec.get("text", ""))
             if score >= 0:
-                hits.append({"source": log_file.name, "text": rec["text"],
-                             "ts": rec.get("ts", ""), "tags": rec.get("tags", []),
-                             "score": score})
-            if len(hits) >= limit * 3:
-                break
-
+                hits.append({
+                    "source": log_file.name,
+                    "text": rec["text"],
+                    "ts": rec.get("ts", ""),
+                    "tags": rec.get("tags", []),
+                    "category": rec.get("category", "fact"),
+                    "run_id": rec.get("run_id"),
+                    "task_id": rec.get("task_id"),
+                    "evidence": rec.get("evidence"),
+                    "score": score,
+                })
     hits.sort(key=lambda h: h.get("score", 0), reverse=True)
+    if not semantic or len(hits) >= limit or not keywords:
+        return hits[:limit]
+
+    # V31: TF-IDF semantic augmentation for partial / fuzzy semantic recall
+    try:
+        from .vector import TfidfIndex
+        idx = TfidfIndex()
+        candidates: list[dict] = []
+        # Collect all notes lines and log entries not already exact-hit
+        seen_texts = {h.get("text", "") for h in hits}
+        if notes.exists() and tag_filter is None and cat_filter is None:
+            for line in notes.read_text(encoding="utf-8").splitlines():
+                t = line.strip()
+                if t and t not in seen_texts:
+                    doc_id = f"note:{len(candidates)}"
+                    idx.add(doc_id, t, {"source": "notes.md", "text": t, "category": "fact"})
+                    candidates.append({"doc_id": doc_id, "source": "notes.md", "text": t, "category": "fact"})
+
+        for log_file in sorted((p / "logs").glob("*.jsonl"), reverse=True):
+            for line in log_file.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = rec.get("text", "")
+                if t and t not in seen_texts:
+                    doc_id = f"log:{len(candidates)}"
+                    idx.add(doc_id, t, {
+                        "source": log_file.name,
+                        "text": t,
+                        "ts": rec.get("ts", ""),
+                        "tags": rec.get("tags", []),
+                        "category": rec.get("category", "fact"),
+                    })
+                    candidates.append(rec)
+
+        if len(idx) > 0:
+            idx.build()
+            raw_hits = idx.search(query, top_k=limit - len(hits))
+            for rh in raw_hits:
+                if rh.get("score", 0) > 0.05:
+                    m = rh.get("meta", {})
+                    hits.append({
+                        "source": m.get("source", "memory"),
+                        "text": m.get("text", ""),
+                        "ts": m.get("ts", ""),
+                        "tags": m.get("tags", []),
+                        "category": m.get("category", "fact"),
+                        "score": round(rh.get("score", 0), 3),
+                        "semantic": True,
+                    })
+    except Exception:
+        pass
+
     return hits[:limit]
 
 
@@ -160,6 +248,39 @@ def compress(days: int | None = None, cfg: dict | None = None) -> dict:
     return {"compressed_files": compressed_files,
             "events_distilled": events_distilled,
             "notes": str(notes)}
+
+
+def archive_old_logs(days: int = 30, cfg: dict | None = None) -> dict:
+    """Archive logs older than ``days`` into persistence/archive/ (V33-C1).
+
+    Moves old daily JSONL logs into an archive directory and generates a
+    consolidated weekly/monthly summary. Returns summary statistics.
+    """
+    cfg = cfg or load_config()
+    p = _persistence_dir(cfg)
+    archive_dir = p / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    cutoff = time.strftime(
+        "%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    archived_files = 0
+    archived_events = 0
+
+    for log_file in sorted((p / "logs").glob("*.jsonl")):
+        day = log_file.stem
+        if day >= cutoff:
+            continue
+        # Move to archive directory
+        target = archive_dir / log_file.name
+        event_count = sum(1 for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip())
+        log_file.rename(target)
+        archived_files += 1
+        archived_events += event_count
+
+    return {
+        "archived_files": archived_files,
+        "archived_events": archived_events,
+        "archive_dir": str(archive_dir),
+    }
 
 
 def stats(cfg: dict | None = None) -> dict:

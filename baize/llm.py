@@ -15,6 +15,7 @@ fallback and response-parsing are always exercised for real.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -39,13 +40,35 @@ class LLMError(RuntimeError):
     """Raised when the model endpoint cannot produce a usable response."""
 
 
+def _friendly_llm_error(exc: Exception) -> str:
+    """Format low-level HTTP/LLM exceptions into clean, human-friendly error messages without exposing raw internal URLs."""
+    raw = str(exc)
+    low = raw.lower()
+    if "unknown url type" in low or "invalid url" in low or "nonnumeric port" in low or "nodename nor servname" in low:
+        return "大模型服务连接失败：接口 Base URL 格式无效（必须以 http:// 或 https:// 开头）。请检查 .env 配置或在终端输入 /setup 重新设置。"
+    if "401" in raw or "unauthorized" in low:
+        return "大模型身份认证失败：API Key 无效或未授权。请检查 .env 中的 API Key 或输入 /setup 重新设置。"
+    if "404" in raw or "not found" in low:
+        return "大模型接口未找到 (HTTP 404)：模型名称或 Base URL 路径不存在。请检查 .env 中的模型名称或输入 /setup 重新设置。"
+    if "429" in raw or "rate limit" in low or "quota" in low:
+        return "大模型请求频次超限或账户余额不足 (HTTP 429)。请稍后重试或检查账户额度。"
+    if "connection refused" in low or "actively refused" in low or "10061" in raw:
+        return "大模型连接被拒绝：无法连接到目标服务（若使用本地 Ollama 请确保已运行 ollama serve）。"
+    if "timed out" in low or "timeout" in low:
+        return "大模型请求超时：网络连接缓慢或服务无响应，请检查网络。"
+
+    cleaned = re.sub(r"https?://[^\s\'\",]+", "<api-endpoint>", raw)
+    return f"大模型调用失败: {cleaned}（可输入 /setup 重新配置）"
+
+
 @dataclass
 class ModelSpec:
     name: str
     base_url: str
     api_key: str = ""
     weight: float = 1.0
-    provider: str = "openai"   # openai | anthropic | ollama
+    provider: str = "openai"   # openai | anthropic | ollama | deepseek
+    max_tokens: int = 4096      # per-model cap; env BAIZE_MAX_TOKENS overrides at load
 
 
 class RateLimiter:
@@ -128,7 +151,8 @@ def _anthropic_request(spec: "ModelSpec", messages: list[dict],
                 and isinstance(m.get("content"), str)]
     convo = [{"role": m["role"], "content": m["content"]}
              for m in messages if m.get("role") in ("user", "assistant")]
-    body: dict = {"model": spec.name, "max_tokens": 4096, "messages": convo}
+    body: dict = {"model": spec.name, "max_tokens": spec.max_tokens,
+                  "messages": convo}
     if sys_msgs:
         # P3-4: if a system block carries cache_control, render it as an
         # Anthropic cacheable text block (enables prompt caching). Otherwise
@@ -171,6 +195,11 @@ def _openai_parse(raw: dict) -> dict:
     out = {"role": "assistant", "content": msg.get("content")}
     if msg.get("tool_calls"):
         out["tool_calls"] = msg["tool_calls"]
+    # DeepSeek (and compatible) expose chain-of-thought on OpenAI-shaped
+    # responses via ``reasoning_content``; surface it so callers can log/verify
+    # the reasoning trace instead of discarding it.
+    if msg.get("reasoning_content"):
+        out["reasoning_content"] = msg["reasoning_content"]
     return out
 
 
@@ -229,6 +258,51 @@ def _http_stream_transport(url: str, headers: dict, payload: dict) -> Iterator[d
         conn.close()
 
 
+def _anthropic_stream_transport(url: str, headers: dict, payload: dict) -> Iterator[dict]:
+    """Real SSE reader for Anthropic ``/v1/messages`` streaming.
+
+    Anthropic emits ``event:`` / ``data:`` framed JSON events; we translate the
+    ``content_block_delta`` (``text_delta``) events into the OpenAI-shaped
+    ``{"choices":[{"delta":{"content": ...}}]}`` chunk the caller's parser
+    expects, so ``_stream`` needs no provider-specific branch in its loop.
+    """
+    parsed = urllib.parse.urlparse(url)
+    payload = dict(payload, stream=True)
+    body = json.dumps(payload).encode("utf-8")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    conn = (http.client.HTTPSConnection(host, port, timeout=120)
+            if parsed.scheme == "https" else
+            http.client.HTTPConnection(host, port, timeout=120))
+    try:
+        conn.request("POST", parsed.path, body=body, headers=headers)
+        resp = conn.getresponse()
+        buf = b""
+        for raw in resp:  # http.client yields raw bytes across chunk boundaries
+            buf += raw
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                line = line.strip()
+                if not line.startswith(b"data:"):
+                    continue
+                data = line[5:].strip()
+                if not data:
+                    continue
+                try:
+                    evt = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if evt.get("type") == "content_block_delta":
+                    delta = evt.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        yield {"choices": [{"delta": {
+                            "content": delta.get("text", "")}}]}
+                # message_start / content_block_start / message_delta /
+                # message_stop / ping are intentionally ignored here.
+    finally:
+        conn.close()
+
+
 class LLMClient:
     """Chat-completions client with routing, streaming and rate limiting."""
 
@@ -256,6 +330,10 @@ class LLMClient:
 
     def _route_from_config(self) -> None:
         self.models: list[ModelSpec] = []
+        # Env override (red line B: explicit, not silent). A single value caps
+        # every model; per-model caps can still be set in the router JSON.
+        _mt_raw = (self.cfg.get("BAIZE_MAX_TOKENS") or "").strip()
+        mt_override = int(_mt_raw) if _mt_raw else 4096
         router = (self.cfg.get("BAIZE_MODEL_ROUTER") or "").strip()
         if router:
             try:
@@ -267,6 +345,7 @@ class LLMClient:
                         api_key=m.get("api_key", ""),
                         weight=float(m.get("weight", 1)),
                         provider=provider,
+                        max_tokens=int(m.get("max_tokens", mt_override)),
                     ))
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 obs.record_error("router_config_errors")
@@ -278,7 +357,9 @@ class LLMClient:
             if base and name:
                 provider = self.cfg.get("BAIZE_MODEL_PROVIDER") \
                     or _infer_provider(base)
-                self.models.append(ModelSpec(name, base, key, provider=provider))
+                self.models.append(ModelSpec(
+                    name, base, key, provider=provider,
+                    max_tokens=mt_override))
 
     @property
     def configured(self) -> bool:
@@ -306,9 +387,21 @@ class LLMClient:
 
     @staticmethod
     def provider_capabilities(provider: str) -> dict:
-        """Declared capability of a provider (drives routing)."""
-        # All three adapters support streaming + tool calling through urllib.
-        return {"stream": True, "tools": True}
+        """Declared capability of a provider (drives routing + honest reporting).
+
+        Red line B (NO FAKE DONE): only report what the adapter genuinely
+        implements. The built-in adapters all speak chat/completions-style
+        streaming and tool calling through urllib. Anthropic streaming is now a
+        *real* ``/v1/messages`` SSE (see ``_anthropic_stream_transport``) rather
+        than the prior non-streamed fallback, so its ``stream`` flag is
+        truthful. DeepSeek exposes ``reasoning_content`` on its OpenAI-shaped
+        responses, surfaced via the ``reasoning`` capability flag.
+        """
+        p = (provider or "").lower()
+        caps = {"stream": True, "tools": True}
+        if "deepseek" in p:
+            caps["reasoning"] = True
+        return caps
 
     # --- P3-4: prompt-cache-friendly message shaping ----------------------
     @staticmethod
@@ -386,23 +479,23 @@ class LLMClient:
                     obs.inc(f"llm_error_{type(exc).__name__}")
                     if attempt < self.max_retries:
                         time.sleep(1.5 * (attempt + 1))
-        raise LLMError(
-            f"model call failed after {self.max_retries + 1} attempts across "
-            f"{len(self.models)} model(s): {type(last_err).__name__}: {last_err}")
+        err_msg = (f"model call failed after {self.max_retries + 1} attempts across "
+                   f"{len(self.models)} model(s): {type(last_err).__name__}: {last_err}")
+        err_msg = re.sub(r"https?://[^\s\'\",]+", "<api-endpoint>", err_msg)
+        raise LLMError(err_msg)
 
     def _stream(self, messages: list[dict], tools: list[dict] | None,
                 temperature: float | None) -> Iterator[dict]:
         spec = self._select()[0]
-        # Anthropic SSE differs; we don't reimplement it here - fall back to a
-        # single non-streamed yield (honest: streaming reserved for openai/ollama).
-        if spec.provider == "anthropic":
-            full = self.chat(messages, tools, temperature, stream=False)
-            yield {"delta": full.get("content") or ""}
-            return
+        # Anthropic uses a different SSE dialect; route it through the real
+        # Anthropic SSE transport (which yields OpenAI-shaped chunks). This is a
+        # genuine stream, not the previous single non-streamed fallback.
+        transport = (_anthropic_stream_transport
+                     if spec.provider == "anthropic" else self.stream_transport)
         self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
         url = _endpoint(spec)
         try:
-            for chunk in self.stream_transport(
+            for chunk in transport(
                 url, self._headers(spec),
                 _build_request(spec, messages, tools, temperature),
             ):

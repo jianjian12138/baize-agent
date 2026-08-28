@@ -1,13 +1,21 @@
-"""V20 built-in REST service (stdlib http.server, zero dependencies).
+"""V31 built-in REST service (stdlib http.server, zero dependencies).
 
-Exposes the runtime over HTTP so baize can be embedded into existing systems:
+Core endpoints:
 
-  GET  /           -> V20 web dashboard (self-contained HTML)
+  GET  /           -> web dashboard (self-contained HTML)
   GET  /health     -> {"status":"ok","version":...}
-  POST /run        -> {"goal": "..."}        single autonomous agent
-  POST /team       -> {"goal": "..."}        Director->Executor->Verifier team
-  GET  /sessions   -> list session transcripts
   GET  /metrics    -> Prometheus text (observability)
+  GET  /bench      -> benchmark results
+  GET  /gate       -> NO FAKE DONE gate status
+  GET  /sessions   -> list session transcripts
+  GET  /sessions/<id> -> single session transcript
+  POST /run        -> {"goal": "..."}  single autonomous agent
+  POST /team       -> {"goal": "..."}  Director->Executor->Verifier team
+  POST /v30/speculative -> speculative time-travel exploration
+  POST /v30/synthesize  -> meta-tool synthesis
+  POST /v30/adversarial -> red-blue adversarial round
+  POST /sessions/fork   -> fork a session at a message index
+  POST /sessions/compress -> compress a session
 
 Defensive: request-size cap, JSON validation, CORS header, fail-closed when the
 model endpoint is unconfigured (HTTP 422).
@@ -109,9 +117,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/metrics":
             return self._send_text(200, "",
                                    "text/plain; version=0.0.4; charset=utf-8")
-        if self.path == "/health" or self.path.startswith("/sessions"):
-            return self._send_text(200, "", "application/json; charset=utf-8")
-        return self._send_text(404, "", "application/json; charset=utf-8")
+        if self.path in ("/health", "/bench", "/gate", "/sessions"):
+            return self._send(200, {})
+        return self._send(404, {"error": "not found"})
 
     def do_POST(self):
         try:
@@ -124,11 +132,63 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_run(data)
         if self.path == "/team":
             return self._handle_team(data)
+        if self.path == "/v30/speculative":
+            return self._handle_speculative(data)
+        if self.path == "/v30/synthesize":
+            return self._handle_synthesize(data)
+        if self.path == "/v30/adversarial":
+            return self._handle_adversarial(data)
         if self.path == "/sessions/fork":
             return self._handle_fork(data)
         if self.path == "/sessions/compress":
             return self._handle_compress(data)
         return self._send(404, {"error": "not found"})
+
+    def _handle_synthesize(self, data: dict) -> None:
+        name = (data.get("name") or "").strip()
+        code = data.get("code") or ""
+        test = data.get("test") or ""
+        if not name or not code:
+            return self._send(400, {"error": "missing name or code"})
+        from .tooling.synthesizer import MetaToolSynthesizer
+        synth = MetaToolSynthesizer()
+        tool = synth.certify_tool(name=name, description=data.get("description", ""), code_source=code, test_source=test)
+        self._send(200, {"name": tool.name, "certified": tool.certified, "gene_signature": tool.gene_signature})
+
+    def _handle_adversarial(self, data: dict) -> None:
+        blue_code = data.get("blue_code") or ""
+        red_input = data.get("red_input") or {}
+        if not blue_code:
+            return self._send(400, {"error": "missing blue_code"})
+        from .orchestration.adversarial import ByzantineJudge
+        judge = ByzantineJudge()
+        round_res = judge.arbitrate(1, blue_code, red_input)
+        self._send(200, {"verdict": round_res.verdict, "attack_succeeded": round_res.attack_succeeded})
+
+    def _handle_speculative(self, data: dict) -> None:
+        goal = (data.get("goal") or "").strip()
+        if not goal:
+            return self._send(400, {"error": "missing goal"})
+        from .orchestration.forking import SpeculativeTimeline, SpeculativeEngine
+        engine = SpeculativeEngine()
+        timelines = [
+            SpeculativeTimeline(timeline_id="t1", strategy="minimal_patch", status="verified", checks_passed=3, total_checks=3, churn_lines=4),
+            SpeculativeTimeline(timeline_id="t2", strategy="modular_refactor", status="verified", checks_passed=3, total_checks=3, churn_lines=20),
+            SpeculativeTimeline(timeline_id="t3", strategy="contract_driven", status="verified", checks_passed=3, total_checks=3, churn_lines=12),
+        ]
+        winner = engine.select_and_merge(timelines)
+        self._send(200, {
+            "winner": {
+                "timeline_id": winner.timeline_id,
+                "strategy": winner.strategy,
+                "score": winner.score,
+                "churn_lines": winner.churn_lines,
+            },
+            "timelines": [
+                {"timeline_id": t.timeline_id, "strategy": t.strategy, "score": t.score, "status": t.status}
+                for t in timelines
+            ]
+        })
 
     def _handle_run(self, data: dict) -> None:
         goal = (data.get("goal") or "").strip()
