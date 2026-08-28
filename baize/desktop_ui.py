@@ -1,20 +1,7 @@
 """Baize Agent Universal Desktop Studio UI (V33.0.0).
 
 A self-contained, high-fidelity, zero-dependency modern Single Page Application
-aligned with Hermes-CN-Desktop, Codex Desktop, and Pi Studio.
-
-Features:
-- 10 Comprehensive Modules:
-  1. 智能结对工作台 (Workbench) with Streaming Chat, Markdown/LaTeX/Mermaid, Collapsible Tool Cards, Thinking Drawer, Prompt Shelf
-  2. 代码审查与 Git 变更 (Diff Review) with Unified Diff Viewer, Branch Inspector, Changed Files Tree
-  3. 会话分支与时间旅行 (Archive) with Session Inspection, Fork Branch, Compress, Rewind, Export, Clear All
-  4. 多 Agent DAG 任务控制台 (Team DAG Console) with Visual DAG Dependency Graph & Trace Waterfall
-  5. 技能自进化中心 (Skills Hub) with 246+ Engineering Skills, Dynamic Search, Domain Tabs & Live SKILL.md Reader/Editor
-  6. 白泽深度引擎实验室 (Baize Deep Lab) with Speculative Time-Travel Forking, Causal Debugging, Meta-Tool Synthesis & Red-Blue Byzantine Judge
-  7. 分层记忆面板 (Memory Studio) with Tri-tier Memory & Hybrid BM25+TF-IDF RAG Testing Arena
-  8. 模型服务商中心 (Model Hub) with Cloud Providers & Local Ollama / LM Studio Auto-Discovery
-  9. 系统体检与实时日志 (Doctor & Logs) with Gauge Cards & Live Log Streamer
-  10. 安全与自主度 (Security & Autonomy) with Safe / Supervised / YOLO Mode Sliders & Deny-list Editor
+aligned with Cursor, Hermes-CN-Desktop, Codex Desktop, and Pi Studio.
 """
 from __future__ import annotations
 
@@ -40,24 +27,24 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
 <title>Baize Engine · Baize Agent Studio · 白泽智能桌面工作台 __VER__</title>
 <style>
   :root {
-    --bg-base: #090a0f;
-    --bg-surface: #11141c;
-    --bg-elevated: #181c28;
-    --bg-hover: #222738;
-    --border-subtle: #23293a;
-    --border-strong: #323b52;
-    --text-main: #f0f3fa;
-    --text-muted: #8b95ad;
-    --text-dim: #5c657e;
+    --bg-base: #08090d;
+    --bg-surface: #10121a;
+    --bg-elevated: #161a26;
+    --bg-hover: #1f2537;
+    --border-subtle: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --text-main: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
     --accent: #00f2fe;
     --accent-glow: rgba(0, 242, 254, 0.25);
-    --accent-alt: #4facfe;
+    --accent-alt: #38bdf8;
     --success: #10b981;
     --warning: #f59e0b;
     --danger: #ef4444;
     --info: #3b82f6;
-    --sidebar-w: 240px;
-    --header-h: 56px;
+    --rail-w: 64px;
+    --header-h: 50px;
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 14px;
@@ -112,17 +99,21 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     flex-shrink: 0;
   }
 
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
   .brand {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     font-weight: 700;
-    font-size: 16px;
-    letter-spacing: -0.3px;
+    font-size: 15px;
   }
   .brand-logo {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     background: linear-gradient(135deg, var(--accent), var(--accent-alt));
     border-radius: var(--radius-sm);
     display: flex;
@@ -130,7 +121,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     justify-content: center;
     color: #050b14;
     font-weight: 900;
-    font-size: 14px;
+    font-size: 13px;
     box-shadow: 0 0 12px var(--accent-glow);
   }
   .version-tag {
@@ -142,34 +133,44 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     color: var(--text-muted);
     font-weight: 500;
   }
+  .workspace-pill {
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+  }
 
   .header-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
 
   .status-pill {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
-    padding: 4px 10px;
+    font-size: 11px;
+    padding: 3px 8px;
     border-radius: 20px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
   }
   .status-dot {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--success);
-    box-shadow: 0 0 8px var(--success);
+    box-shadow: 0 0 6px var(--success);
   }
 
   .mode-pill {
-    font-size: 12px;
-    padding: 4px 10px;
+    font-size: 11px;
+    padding: 3px 8px;
     border-radius: var(--radius-sm);
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
@@ -187,8 +188,8 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     color: var(--text-muted);
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
@@ -197,6 +198,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     transition: all 0.2s;
   }
   .icon-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+  .icon-btn.active { background: var(--bg-hover); color: var(--accent); border-color: var(--accent); }
 
   /* App Body */
   .app-body {
@@ -205,49 +207,59 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     overflow: hidden;
   }
 
-  /* Navigation Sidebar */
-  nav.sidebar {
-    width: var(--sidebar-w);
+  /* Activity Rail (Slim 64px Cursor-style Navigation) */
+  nav.activity-rail {
+    width: var(--rail-w);
     background: var(--bg-surface);
     border-right: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
-    padding: 12px 8px;
-    flex-shrink: 0;
-    overflow-y: auto;
-  }
-
-  .nav-group { display: flex; flex-direction: column; gap: 3px; }
-  .nav-label {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-dim);
-    padding: 8px 12px 3px;
-  }
-
-  .nav-item {
-    display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 12px;
-    border-radius: var(--radius-sm);
+    justify-content: space-between;
+    padding: 10px 0;
+    flex-shrink: 0;
+  }
+  .rail-top-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    align-items: center;
+  }
+  .rail-item {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     color: var(--text-muted);
-    font-size: 13px;
-    font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s;
+    position: relative;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .nav-item:hover { background: var(--bg-hover); color: var(--text-main); }
-  .nav-item.active {
-    background: linear-gradient(90deg, rgba(0, 242, 254, 0.12), transparent);
+  .rail-item:hover {
+    background: var(--bg-elevated);
+    color: var(--text-main);
+  }
+  .rail-item.active {
+    background: rgba(0, 242, 254, 0.12);
     color: var(--accent);
-    font-weight: 600;
-    border-left: 3px solid var(--accent);
   }
-  .nav-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .rail-item.active::before {
+    content: '';
+    position: absolute;
+    left: -10px;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 0 4px 4px 0;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+  .rail-item svg { width: 18px; height: 18px; }
+  .rail-item span { font-size: 9px; margin-top: 3px; font-weight: 500; }
 
   /* Main Stage Container */
   main.stage-container {
@@ -268,7 +280,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   .tab-pane.active { display: flex; flex-direction: column; }
 
   /* =========================================================================
-     Module 1: 智能结对工作台 (Workbench)
+     Module 1: 智能结对工作台 (Workbench) 3-Column Flexible Layout
      ========================================================================= */
   .workbench-layout {
     display: flex;
@@ -284,9 +296,12 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
+  .session-sidebar.collapsed { width: 0; overflow: hidden; border-right: none; }
+
   .session-header {
-    padding: 12px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border-subtle);
     display: flex;
     justify-content: space-between;
@@ -295,10 +310,10 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   .session-list {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 6px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
   }
   .session-item {
     padding: 8px 10px;
@@ -332,7 +347,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     padding: 20px 24px;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 16px;
     user-select: text;
   }
 
@@ -346,13 +361,13 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   .msg-row.user { justify-content: flex-end; }
 
   .avatar {
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     flex-shrink: 0;
   }
@@ -386,7 +401,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     display: flex;
     gap: 8px;
     overflow-x: auto;
-    padding: 8px 0;
+    padding: 6px 0;
     max-width: 880px;
     width: 100%;
     margin: 0 auto;
@@ -395,7 +410,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 5px 10px;
     font-size: 11px;
     color: var(--text-muted);
     cursor: pointer;
@@ -413,7 +428,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
 
   /* Exquisite Chat Input Dock */
   .chat-dock {
-    padding: 6px 24px 18px;
+    padding: 4px 24px 16px;
     max-width: 880px;
     width: 100%;
     margin: 0 auto;
@@ -423,14 +438,14 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     position: relative;
   }
   .dock-box {
-    background: #141721;
-    border: 1px solid #282f42;
+    background: #12151e;
+    border: 1px solid #232a3d;
     border-radius: 16px;
-    padding: 12px 16px;
+    padding: 10px 14px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    gap: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
     position: relative;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
@@ -442,8 +457,8 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     gap: 6px;
   }
   .file-chip {
-    background: #1c2233;
-    border: 1px solid #333d59;
+    background: #1a2030;
+    border: 1px solid #2f3a54;
     border-radius: 6px;
     padding: 2px 8px;
     font-size: 11px;
@@ -453,10 +468,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     gap: 5px;
     font-family: var(--font-mono);
   }
-  .file-chip-close {
-    cursor: pointer;
-    color: var(--text-dim);
-  }
+  .file-chip-close { cursor: pointer; color: var(--text-dim); }
   .file-chip-close:hover { color: var(--danger); }
 
   .dock-textarea {
@@ -465,14 +477,14 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     border: none;
     outline: none;
     color: var(--text-main);
-    font-size: 14px;
+    font-size: 13.5px;
     font-family: inherit;
     resize: none;
-    min-height: 48px;
+    min-height: 44px;
     max-height: 180px;
-    line-height: 1.6;
+    line-height: 1.55;
   }
-  .dock-textarea::placeholder { color: #5a647e; }
+  .dock-textarea::placeholder { color: #4e5872; }
 
   .dock-toolbar {
     display: flex;
@@ -481,43 +493,35 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     padding-top: 4px;
     border-top: 1px solid rgba(255,255,255,0.03);
   }
-  .dock-left-tools {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .dock-right-tools {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
+  .dock-left-tools { display: flex; align-items: center; gap: 8px; }
+  .dock-right-tools { display: flex; align-items: center; gap: 8px; }
 
   .inline-btn {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
-    padding: 4px 8px;
-    font-size: 12px;
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 11.5px;
     color: #8c97b2;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     transition: all 0.15s;
     font-weight: 500;
   }
   .inline-btn:hover {
-    background: #1c2233;
-    border-color: #333d59;
+    background: #1a2030;
+    border-color: #2f3a54;
     color: var(--text-main);
   }
 
   .round-action-btn {
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
-    background: #252b3d;
-    border: 1px solid #38425d;
+    background: #202738;
+    border: 1px solid #333f5c;
     color: var(--text-main);
     display: flex;
     align-items: center;
@@ -531,26 +535,22 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     border-color: var(--accent);
     box-shadow: 0 0 10px var(--accent-glow);
   }
-  .round-action-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    background: #1a1e2b;
-  }
+  .round-action-btn:disabled { opacity: 0.4; cursor: not-allowed; background: #151924; }
 
   /* Dropdown Popup Menus */
   .popup-menu {
     position: absolute;
-    bottom: 65px;
-    background: #161a26;
-    border: 1px solid #313a52;
+    bottom: 60px;
+    background: #141824;
+    border: 1px solid #2d364d;
     border-radius: 12px;
-    box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.65);
     padding: 8px;
     display: none;
     flex-direction: column;
     gap: 2px;
     z-index: 999;
-    min-width: 220px;
+    min-width: 240px;
     max-height: 320px;
     overflow-y: auto;
   }
@@ -567,22 +567,19 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     gap: 8px;
   }
   .popup-item:hover, .popup-item.selected {
-    background: #232a3d;
+    background: #1f2638;
     color: var(--text-main);
   }
-  .popup-item-desc {
-    font-size: 10px;
-    color: var(--text-dim);
-  }
+  .popup-item-desc { font-size: 10px; color: var(--text-dim); }
 
   /* Generic Module Views */
   .module-view {
     flex: 1;
-    padding: 24px 32px;
+    padding: 24px 36px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 18px;
     max-width: 1100px;
     width: 100%;
     margin: 0 auto;
@@ -597,7 +594,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   .module-title-bar h2 { font-size: 18px; font-weight: 700; }
 
   .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 
   .panel-card {
     background: var(--bg-surface);
@@ -606,9 +603,9 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
-  .panel-card h3 { font-size: 14px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .panel-card h3 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 
   .stat-gauge {
     display: flex;
@@ -617,7 +614,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     padding: 8px 12px;
     background: var(--bg-elevated);
     border-radius: var(--radius-sm);
-    font-size: 13px;
+    font-size: 12.5px;
   }
   .stat-value { font-weight: 700; color: var(--accent); font-family: var(--font-mono); }
 
@@ -626,7 +623,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin: 8px 0;
+    margin: 6px 0;
   }
   .cat-pill {
     font-size: 11px;
@@ -666,7 +663,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     border: none;
     border-radius: var(--radius-sm);
     padding: 8px 16px;
-    font-size: 13px;
+    font-size: 12.5px;
     cursor: pointer;
   }
 
@@ -699,85 +696,109 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   }
   .diff-line-add { color: #34d399; background: rgba(16, 185, 129, 0.08); }
   .diff-line-del { color: #f87171; background: rgba(239, 68, 68, 0.08); }
+
+  .log-terminal {
+    background: #06070a;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #a0aec0;
+    height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  .log-entry.info { color: #60a5fa; }
 </style>
 </head>
 <body>
 
 <!-- Header -->
 <header class="app-header">
-  <div class="brand">
-    <div class="brand-logo">白</div>
-    <span>Baize Engine</span>
-    <span class="version-tag">__VER__</span>
+  <div class="header-left">
+    <button class="icon-btn" onclick="toggleSessionSidebar()" title="折叠/展开会话抽屉 (Ctrl+B)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+
+    <div class="brand">
+      <div class="brand-logo">白</div>
+      <span>Baize Studio</span>
+      <span class="version-tag">__VER__</span>
+    </div>
+
+    <span class="workspace-pill">📁 d:\tc\baize-agent</span>
   </div>
 
   <div class="header-actions">
+    <span class="status-pill" id="git-branch-badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+      <strong style="color:var(--accent)" id="header-branch-name">v30-dev</strong>
+    </span>
+
     <div class="status-pill">
       <span class="status-dot"></span>
-      <span id="server-status-text">127.0.0.1:8787 (Active)</span>
+      <span id="server-status-text">127.0.0.1:8787</span>
     </div>
 
     <div class="mode-pill" id="autonomy-mode-badge" onclick="switchTab('tab-security')">
-      <span>🛡️ 默认权限 (Supervised)</span>
+      <span>🛡️ 默认权限</span>
     </div>
 
     <button class="icon-btn" onclick="toggleTheme()" title="切换明亮/暗黑主题">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
   </div>
 </header>
 
 <div class="app-body">
-  <!-- Navigation Sidebar -->
-  <nav class="sidebar">
-    <div class="nav-group">
-      <div class="nav-label">核心工作区</div>
-      <div class="nav-item active" onclick="switchTab('tab-workbench')">
+  <!-- Slim 64px Activity Rail -->
+  <nav class="activity-rail">
+    <div class="rail-top-group">
+      <div class="rail-item active" onclick="switchTab('tab-workbench')" title="智能结对工作台">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        <span>智能结对工作台</span>
+        <span>工作台</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-diff')">
+      <div class="rail-item" onclick="switchTab('tab-diff')" title="代码审查与 Git 变更">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
-        <span>代码审查与 Git 变更</span>
+        <span>Git审查</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-archive')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-        <span>会话分支与时间旅行</span>
-      </div>
-      <div class="nav-item" onclick="switchTab('tab-team')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span>多 Agent DAG 控制台</span>
-      </div>
-      <div class="nav-item" onclick="switchTab('tab-skills')">
+      <div class="rail-item" onclick="switchTab('tab-skills')" title="技能自进化中心 (246+ 技能库)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-        <span>技能自进化中心 (246+)</span>
+        <span>技能库</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-lab')">
+      <div class="rail-item" onclick="switchTab('tab-lab')" title="白泽深度推理实验室 (影子推演/因果诊断/元工具)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        <span>白泽深度推理实验室</span>
+        <span>实验室</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-memory')">
+      <div class="rail-item" onclick="switchTab('tab-team')" title="多 Agent DAG 控制台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>多Agent</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-archive')" title="会话分支与时间旅行">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <span>时间旅行</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-memory')" title="分层记忆面板">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        <span>分层记忆面板</span>
+        <span>记忆台</span>
       </div>
-
-      <div class="nav-label">配置与治理</div>
-      <div class="nav-item" onclick="switchTab('tab-models')">
+      <div class="rail-item" onclick="switchTab('tab-models')" title="模型服务商中心">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-        <span>模型服务商中心</span>
+        <span>模型设置</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-doctor')">
+      <div class="rail-item" onclick="switchTab('tab-doctor')" title="系统体检与日志">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span>系统体检与日志</span>
+        <span>体检日志</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-security')">
+      <div class="rail-item" onclick="switchTab('tab-security')" title="安全与自主度">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span>安全与自主度</span>
+        <span>权限治理</span>
       </div>
-      <div class="nav-item" onclick="switchTab('tab-integrations')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
-        <span>平台生态集成</span>
-      </div>
+    </div>
+    <div class="rail-item" onclick="switchTab('tab-integrations')" title="平台生态集成">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+      <span>生态集成</span>
     </div>
   </nav>
 
@@ -788,9 +809,9 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
     <section id="tab-workbench" class="tab-pane active">
       <div class="workbench-layout">
         <!-- Sessions Left Drawer -->
-        <div class="session-sidebar">
+        <div class="session-sidebar" id="session-sidebar-panel">
           <div class="session-header">
-            <span style="font-size:12px;font-weight:700;color:var(--text-muted)">最近会话</span>
+            <span style="font-size:11px;font-weight:700;color:var(--text-muted)">最近会话</span>
             <button class="icon-btn" onclick="startNewSession()" title="新建会话">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
@@ -1153,15 +1174,20 @@ let attachedFiles = [];
 let activeModel = 'deepseek-chat';
 let availableModels = [];
 
+function toggleSessionSidebar() {
+  const bar = document.getElementById('session-sidebar-panel');
+  if (bar) bar.classList.toggle('collapsed');
+}
+
 function switchTab(tabId) {
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.rail-item').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
   
   const pane = document.getElementById(tabId);
   if (pane) pane.classList.add('active');
   
-  const navItems = document.querySelectorAll('.nav-item');
-  navItems.forEach(n => {
+  const railItems = document.querySelectorAll('.rail-item');
+  railItems.forEach(n => {
     if (n.getAttribute('onclick') && n.getAttribute('onclick').includes(tabId)) {
       n.classList.add('active');
     }
@@ -1432,7 +1458,11 @@ async function loadGitDiff() {
     const stRes = await fetch('/api/git/status');
     const st = await stRes.json();
     
-    document.getElementById('git-branch-label').innerText = st.branch || 'v30-dev';
+    const branchName = st.branch || 'v30-dev';
+    document.getElementById('git-branch-label').innerText = branchName;
+    const headerBranch = document.getElementById('header-branch-name');
+    if (headerBranch) headerBranch.innerText = branchName;
+    
     document.getElementById('git-clean-badge').innerText = st.clean ? '✓ 工作区整洁 (Clean)' : '⚠️ 存在未提交修改';
     document.getElementById('git-clean-badge').style.color = st.clean ? 'var(--success)' : 'var(--warning)';
 
@@ -1566,7 +1596,7 @@ async function loadSessions() {
     const list = data.sessions || [];
     
     const leftList = document.getElementById('workbench-session-list');
-    leftList.innerHTML = list.slice(0, 15).map(s => `
+    leftList.innerHTML = list.slice(0, 20).map(s => `
       <div class="session-item ${s.id === activeSessionId ? 'active' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div class="session-item-title" onclick="selectSession('${s.id}')">${s.id}</div>
@@ -1933,9 +1963,9 @@ async function runDoctorHealthCheck() {
 // --- Autonomy Level ---
 function setAutonomyMode(level) {
   const badge = document.getElementById('autonomy-mode-badge');
-  if (level === 1) badge.innerHTML = '<span>🔒 只读安全 (Read-Only)</span>';
-  if (level === 2) badge.innerHTML = '<span>🛡️ 默认权限 (Supervised)</span>';
-  if (level === 3) badge.innerHTML = '<span>⚡ 全自主模式 (YOLO)</span>';
+  if (level === 1) badge.innerHTML = '<span>🔒 只读安全</span>';
+  if (level === 2) badge.innerHTML = '<span>🛡️ 默认权限</span>';
+  if (level === 3) badge.innerHTML = '<span>⚡ 全自主模式</span>';
 }
 
 // Initialize on page load
@@ -1944,6 +1974,7 @@ window.addEventListener('DOMContentLoaded', () => {
   fetchWorkspaceFiles();
   fetchCommands();
   fetchModels();
+  loadGitDiff();
 });
 </script>
 </body>
