@@ -36,3 +36,9 @@ class TestStreamAndExport(unittest.TestCase):
                 p.unlink()
         except OSError:
             pass
+
+    def test_desktop_studio_includes_search_and_heal(self):
+        html = render_desktop_studio("34.0.0")
+        self.assertIn("filterSessions", html)
+        self.assertIn("mergeSpeculativeWinner", html)
+        self.assertIn("applyCausalHeal", html)

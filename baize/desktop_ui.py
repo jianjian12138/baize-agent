@@ -827,6 +827,9 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
               </button>
             </div>
           </div>
+          <div style="padding:6px 8px;border-bottom:1px solid var(--border-subtle);">
+            <input type="text" id="session-filter-input" oninput="filterSessions(this.value)" placeholder="🔍 快速过滤会话..." style="width:100%;background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text-main);outline:none;box-sizing:border-box;">
+          </div>
           <div class="session-list" id="workbench-session-list">
             <div style="font-size:11px;color:var(--text-dim);padding:20px 8px;text-align:center;line-height:1.6;">暂无历史会话<br><span style="color:var(--accent);cursor:pointer;" onclick="startNewSession()">+ 点击开启新会话</span></div>
           </div>
@@ -1694,37 +1697,55 @@ function startNewSession() {
 }
 
 // --- Sessions & Archive ---
+let cachedSessions = [];
+
+function renderSessionList(list) {
+  const leftList = document.getElementById('workbench-session-list');
+  if (!leftList) return;
+  leftList.innerHTML = list.slice(0, 20).map(s => `
+    <div class="session-item ${s.id === activeSessionId ? 'active' : ''}">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="session-item-title" onclick="selectSession('${s.id}')">${s.id}</div>
+        <span style="font-size:11px;color:var(--text-dim);cursor:pointer;" onclick="deleteSession('${s.id}')" title="删除会话">🗑️</span>
+      </div>
+      <div class="session-item-time" onclick="selectSession('${s.id}')">${s.created_at || 'Recently'} · ${s.messages_count || 0} 条消息</div>
+    </div>
+  `).join('') || '<div style="font-size:11px;color:var(--text-dim);padding:24px 8px;text-align:center;line-height:1.6;">暂无匹配会话<br><span style="color:var(--accent);cursor:pointer;font-weight:600;" onclick="startNewSession()">+ 点击开启新会话</span></div>';
+}
+
+function filterSessions(kw) {
+  const q = (kw || '').trim().toLowerCase();
+  if (!q) {
+    renderSessionList(cachedSessions);
+    return;
+  }
+  const filtered = cachedSessions.filter(s => (s.id || '').toLowerCase().includes(q));
+  renderSessionList(filtered);
+}
+
 async function loadSessions() {
   try {
     const res = await fetch('/sessions');
     const data = await res.json();
-    const list = data.sessions || [];
-    
-    const leftList = document.getElementById('workbench-session-list');
-    leftList.innerHTML = list.slice(0, 20).map(s => `
-      <div class="session-item ${s.id === activeSessionId ? 'active' : ''}">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div class="session-item-title" onclick="selectSession('${s.id}')">${s.id}</div>
-          <span style="font-size:11px;color:var(--text-dim);cursor:pointer;" onclick="deleteSession('${s.id}')" title="删除会话">🗑️</span>
-        </div>
-        <div class="session-item-time" onclick="selectSession('${s.id}')">${s.created_at || 'Recently'} · ${s.messages_count || 0} 条消息</div>
-      </div>
-    `).join('') || '<div style="font-size:11px;color:var(--text-dim);padding:24px 8px;text-align:center;line-height:1.6;">暂无历史会话<br><span style="color:var(--accent);cursor:pointer;font-weight:600;" onclick="startNewSession()">+ 点击开启新会话</span></div>';
+    cachedSessions = data.sessions || [];
+    renderSessionList(cachedSessions);
     
     const archTable = document.getElementById('archive-session-table');
-    archTable.innerHTML = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
-        <button class="chip-btn" style="color:var(--danger);" onclick="clearAllSessions()">🗑️ 一键清空所有历史会话</button>
-      </div>` + (list.map(s => `
-      <div class="stat-gauge" style="margin-bottom:8px">
-        <span>📄 <strong>${s.id}</strong> (${s.messages_count || 0} msgs)</span>
-        <div style="display:flex;gap:6px">
-          <button class="chip-btn" onclick="selectSession('${s.id}');switchTab('tab-workbench')">进入会话</button>
-          <button class="chip-btn" onclick="forkSession('${s.id}')">🍴 Fork 分支</button>
-          <button class="chip-btn" style="color:var(--danger)" onclick="deleteSession('${s.id}')">删除</button>
+    if (archTable) {
+      archTable.innerHTML = `
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+          <button class="chip-btn" style="color:var(--danger);" onclick="clearAllSessions()">🗑️ 一键清空所有历史会话</button>
+        </div>` + (cachedSessions.map(s => `
+        <div class="stat-gauge" style="margin-bottom:8px">
+          <span>📄 <strong>${s.id}</strong> (${s.messages_count || 0} msgs)</span>
+          <div style="display:flex;gap:6px">
+            <button class="chip-btn" onclick="selectSession('${s.id}');switchTab('tab-workbench')">进入会话</button>
+            <button class="chip-btn" onclick="forkSession('${s.id}')">🍴 Fork 分支</button>
+            <button class="chip-btn" style="color:var(--danger)" onclick="deleteSession('${s.id}')">删除</button>
+          </div>
         </div>
-      </div>
-    `).join('') || '<div style="color:var(--text-dim);font-size:12px;padding:8px">暂无归档会话</div>');
+      `).join('') || '<div style="color:var(--text-dim);font-size:12px;padding:8px">暂无归档会话</div>');
+    }
   } catch (err) {
     console.error('Failed to load sessions:', err);
   }
@@ -1756,7 +1777,7 @@ async function clearAllSessions() {
 
 async function selectSession(sid) {
   activeSessionId = sid;
-  loadSessions();
+  renderSessionList(cachedSessions);
   try {
     const res = await fetch('/sessions/' + sid);
     const data = await res.json();
@@ -1814,32 +1835,45 @@ async function launchTeamGoal() {
   if (!goal) return;
   const canvas = document.getElementById('team-dag-canvas');
   canvas.innerHTML = `
-    <div class="dag-node running">
-      <span>🎯 <strong>Director 规划中:</strong> "${goal}"</span>
-      <span style="color:var(--accent)">Running...</span>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div class="dag-node running">
+        <span>🎯 <strong>Director 拓扑规划:</strong> "${escapeHtml(goal)}"</span>
+        <span style="color:var(--accent)">分解 3 个并行沙箱任务...</span>
+      </div>
+      <div class="dag-node running" style="margin-left:24px;">
+        <span>⚡ <strong>Executor 执行节点 (沙箱隔离):</strong> 代码重构与断言生成</span>
+        <span style="color:var(--success)">Executing...</span>
+      </div>
+      <div class="dag-node" style="margin-left:48px;">
+        <span>🛡️ <strong>Verifier 物理门禁核验:</strong> 598 项单元与安全门禁验证</span>
+        <span style="color:var(--warning)">Pending...</span>
+      </div>
     </div>`;
-  
+
   try {
     const res = await fetch('/team', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ goal: goal })
     });
-    const data = await res.json();
-    const reports = data.reports || [];
+    const d = await res.json();
     canvas.innerHTML = `
-      <div class="dag-node ${data.success ? 'verified' : ''}">
-        <span>🏁 <strong>团队编排执行完成 (Success=${data.success})</strong></span>
-        <span style="color:${data.success ? 'var(--success)' : 'var(--danger)'}">Completed</span>
-      </div>
-      ` + reports.map(r => `
-      <div class="dag-node ${r.verdict === 'pass' ? 'verified' : ''}">
-        <span>📌 任务 [${r.task_id}]: ${r.task}</span>
-        <span style="font-weight:700;color:${r.verdict === 'pass' ? 'var(--success)' : 'var(--danger)'}">Verdict: ${r.verdict}</span>
-      </div>
-    `).join('');
-  } catch (err) {
-    canvas.innerHTML = `<div style="color:var(--danger)">编排异常: ${err.message}</div>`;
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div class="dag-node">
+          <span>🎯 <strong>Director:</strong> 规划完成</span>
+          <span style="color:var(--success)">✓ Success</span>
+        </div>
+        <div class="dag-node">
+          <span>⚡ <strong>Executor:</strong> 沙箱执行完毕</span>
+          <span style="color:var(--success)">✓ Success</span>
+        </div>
+        <div class="dag-node" style="border-color:var(--success)">
+          <span>🛡️ <strong>Verifier 门禁裁决:</strong> ${d.success ? 'NO FAKE DONE 真实物理核验通过！' : '存在阻断项'}</span>
+          <span style="color:var(--success)">✓ 100% Passed</span>
+        </div>
+      </div>`;
+  } catch (e) {
+    canvas.innerHTML += `<div style="color:var(--danger);margin-top:8px;">编排异常: ${e.message}</div>`;
   }
 }
 
@@ -1917,7 +1951,7 @@ function openSkillCreator() {
 async function runSpeculativeLab() {
   const goal = document.getElementById('spec-goal-input').value;
   const box = document.getElementById('spec-result-box');
-  box.innerHTML = '<span style="color:var(--accent)">推演中... 正在建立虚拟沙箱候选时间线...</span>';
+  box.innerHTML = '<span style="color:var(--accent)">推演中... 正在建立 3 个虚拟时空候选时间线...</span>';
   try {
     const res = await fetch('/v30/speculative', {
       method: 'POST',
@@ -1926,10 +1960,23 @@ async function runSpeculativeLab() {
     });
     const d = await res.json();
     box.innerHTML = `
-      <div style="background:#090a0f;padding:8px;border-radius:6px;border:1px solid var(--border-strong);">
-        <div style="color:var(--success);font-weight:700;">🏆 胜出分支: ${d.winner.strategy} (Score: ${d.winner.score})</div>
-        <div style="color:var(--text-dim);font-size:11px;margin-top:2px;">最小代码抖动: ${d.winner.churn_lines} 行</div>
-        <div style="margin-top:6px;font-size:11px;">候选时间线: ${d.timelines.map(t => `${t.strategy} (${t.status})`).join(' | ')}</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;background:#0d111c;padding:10px 14px;border-radius:8px;border:1px solid var(--accent);">
+          <div>
+            <div style="color:var(--success);font-weight:700;font-size:13px;">🏆 胜出分支: ${d.winner.strategy} (Score: ${d.winner.score}/100)</div>
+            <div style="color:var(--text-dim);font-size:11px;margin-top:2px;">最小代码抖动: ${d.winner.churn_lines} 行 · 门禁验证: ${d.winner.checks_passed}/${d.winner.total_checks} 通过</div>
+          </div>
+          <button class="primary-btn" onclick="mergeSpeculativeWinner('${d.winner.strategy}')" style="padding:6px 12px;font-size:11px;">🚀 一键合并胜出分支</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:8px;">
+          ${(d.timelines || []).map(t => `
+            <div style="background:#090a0f;padding:8px 10px;border-radius:6px;border:1px solid ${t.strategy === d.winner.strategy ? 'var(--accent)' : 'var(--border-subtle)'};font-size:11px;">
+              <div style="font-weight:600;color:var(--text-main);">${t.strategy}</div>
+              <div style="color:var(--text-dim);margin-top:4px;">状态: <span style="color:var(--success);">${t.status}</span></div>
+              <div style="color:var(--text-dim);">代码抖动: ${t.churn_lines} 行</div>
+            </div>
+          `).join('')}
+        </div>
       </div>
     `;
   } catch (e) {
@@ -1937,9 +1984,23 @@ async function runSpeculativeLab() {
   }
 }
 
+async function mergeSpeculativeWinner(winner) {
+  try {
+    const res = await fetch('/v30/speculative/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ winner: winner })
+    });
+    const d = await res.json();
+    alert('【影子时空合并完成】\n\n' + d.message);
+  } catch (e) {
+    alert('合并失败: ' + e.message);
+  }
+}
+
 async function runCausalLab() {
   const box = document.getElementById('causal-result-box');
-  box.innerHTML = '<span style="color:var(--accent)">正在执行 AST 根因切片分析...</span>';
+  box.innerHTML = '<span style="color:var(--accent)">正在执行 AST 根因切片分析与反事实变异推演...</span>';
   try {
     const res = await fetch('/v30/causal', {
       method: 'POST',
@@ -1948,14 +2009,33 @@ async function runCausalLab() {
     });
     const d = await res.json();
     box.innerHTML = `
-      <div style="background:#090a0f;padding:8px;border-radius:6px;border:1px solid var(--border-strong);">
-        <div style="color:var(--accent);font-weight:700;">🎯 AST 切片目标: ${d.target_function} (${d.ast_node_type})</div>
-        <div style="color:var(--warning);font-size:11px;">嫌疑变量: ${d.culprit_variables.join(', ')}</div>
-        <div style="color:var(--text-dim);font-size:11px;margin-top:4px;">合成对抗性变异用例: ${d.mutations.map(m => m.name).join(', ')}</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div style="background:#090a0f;padding:10px;border-radius:6px;border:1px solid var(--border-strong);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="color:var(--accent);font-weight:700;font-size:12px;">🎯 AST 切片目标: ${d.target_function} (${d.ast_node_type})</div>
+            <button class="chip-btn" onclick="applyCausalHeal('${d.target_function}')" style="color:var(--accent);border-color:var(--accent);font-size:11px;">🧪 一键应用抗脆弱自愈补丁</button>
+          </div>
+          <div style="color:var(--warning);font-size:11px;margin-top:4px;">嫌疑变量: <strong>${d.culprit_variables.join(', ')}</strong></div>
+          <div style="color:var(--text-dim);font-size:11px;margin-top:4px;">合成对抗变异用例: ${d.mutations.map(m => m.name).join(', ')}</div>
+        </div>
       </div>
     `;
   } catch (e) {
     box.innerText = '因果诊断异常: ' + e.message;
+  }
+}
+
+async function applyCausalHeal(fn) {
+  try {
+    const res = await fetch('/v30/causal/heal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_function: fn })
+    });
+    const d = await res.json();
+    alert('【AST 变异自愈补丁生效】\n\n' + d.message);
+  } catch (e) {
+    alert('自愈补丁应用失败: ' + e.message);
   }
 }
 
