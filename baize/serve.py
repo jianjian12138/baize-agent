@@ -202,6 +202,10 @@ class Handler(BaseHTTPRequestHandler):
             ]
             return self._send(200, {"commands": cmds})
 
+        if self.path == "/api/windows/status":
+            from .powershell import get_powershell_status
+            return self._send(200, get_powershell_status())
+
         if self.path == "/api/models":
             cfg = load_config()
             return self._send(200, {

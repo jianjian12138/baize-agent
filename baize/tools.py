@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -236,12 +237,22 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
         out = redact(out)
         prefix = "[sandbox: degraded to logical-only] " if result.degraded else ""
         return prefix + f"exit={result.returncode}\n{out[:8000]}"
-    # V33-D2: Popen-based execution so the process can be killed on timeout
-    # rather than leaving a zombie behind (subprocess.run blocks in C).
+    # V35 Windows Native First-Class & V33-D2: Popen-based execution so the process can be killed on timeout
+    # rather than leaving a zombie behind. On Windows, routes through PowerShell with POSIX shim & UTF-8.
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    
     try:
-        proc = subprocess.Popen(
-            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=workspace, encoding="utf-8", errors="replace")
+        if sys.platform == "win32":
+            from .powershell import build_powershell_invocation
+            ps_args = build_powershell_invocation(command)
+            proc = subprocess.Popen(
+                ps_args, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=workspace, encoding="utf-8", errors="replace", env=env)
+        else:
+            proc = subprocess.Popen(
+                command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=workspace, encoding="utf-8", errors="replace", env=env)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
