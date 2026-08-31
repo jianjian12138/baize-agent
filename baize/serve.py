@@ -235,6 +235,14 @@ class Handler(BaseHTTPRequestHandler):
             from .tool_market import list_market_tools
             return self._send(200, {"status": "ready", "tools": list_market_tools()})
 
+        if self.path == "/api/repomap":
+            from .repo_map import generate_workspace_repo_map
+            return self._send(200, {"status": "ready", "repo_map": generate_workspace_repo_map()})
+
+        if self.path == "/api/docs/list":
+            from .doc_crawler import DocCrawlerRegistry
+            return self._send(200, {"status": "ready", "docs": DocCrawlerRegistry.list_indexed_docs()})
+
         if self.path == "/api/models":
             cfg = load_config()
             return self._send(200, {
@@ -410,6 +418,17 @@ class Handler(BaseHTTPRequestHandler):
             text = data.get("text") or "Do you want to continue? [y/N]"
             from .interactive_detector import detect_interactive_prompt
             res = detect_interactive_prompt(text)
+            return self._send(200, res)
+        if self.path == "/api/docs/fetch":
+            url = data.get("url", "")
+            from .doc_crawler import DocCrawlerRegistry
+            res = DocCrawlerRegistry.index_url(url)
+            return self._send(200, res)
+        if self.path == "/api/browser/verify":
+            html = data.get("html", "")
+            name = data.get("name", "index.html")
+            from .browser_verify import verify_frontend_code
+            res = verify_frontend_code(html, name)
             return self._send(200, res)
         if self.path == "/run":
             return self._handle_run(data)
