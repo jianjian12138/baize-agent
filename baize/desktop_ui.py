@@ -1019,11 +1019,12 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
 
         <div class="panel-card">
           <div style="display:flex;gap:10px;">
-            <input type="text" id="skill-search-input" placeholder="搜索 246+ 内置工程技能库（支持名称、领域、关键词）..." oninput="filterSkills()" />
+            <input type="text" id="skill-search-input" placeholder="搜索 260+ 内置工程技能库（包含 Matt Pocock 严密工程规约、核心流水线等）..." oninput="filterSkills()" />
           </div>
           <!-- Category Filter Pills -->
           <div class="category-pills" id="skills-cat-pills">
             <span class="cat-pill active" onclick="setSkillDomainFilter('all', this)">全部 (All)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('mattpocock', this)" style="border-color:var(--accent);color:var(--accent);">⭐ Matt Pocock套件</span>
             <span class="cat-pill" onclick="setSkillDomainFilter('pipeline', this)">核心流水线 (P1-P12)</span>
             <span class="cat-pill" onclick="setSkillDomainFilter('arch', this)">架构设计 (Arch)</span>
             <span class="cat-pill" onclick="setSkillDomainFilter('refactor', this)">代码重构 (Refactor)</span>

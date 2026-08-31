@@ -115,12 +115,22 @@ DOMAINS = [
         ("gitops-argo-cd-sync", "ArgoCD GitOps 持续交付与集群状态对齐"),
         ("structured-logging-json-audit", "结构化 JSON 日志埋点与审计回溯"),
         ("no-fake-done-physical-gate", "NO FAKE DONE 真实物理证据门禁判定引擎"),
+    ]),
+    ("mattpocock", "Matt Pocock 真实工程师套件", [
+        ("grill-with-docs", "深度盘问与隐藏假设消除 (Grill with Docs)"),
+        ("to-spec", "形式化工程规范与技术方案合成 (To Spec Synthesis)"),
+        ("to-tickets", "上下文安全原子任务工单拆解 (To Tickets Breakdown)"),
+        ("strict-type-gymnastics", "TypeScript 深度类型安全与类型体操 (Type Gymnastics)"),
+        ("discriminated-unions-pattern", "可辨识联合与状态机模式 (Discriminated Unions)"),
+        ("anti-vibe-tdd-implement", "反氛围编码与严格测试驱动实现 (Strict TDD Implement)"),
+        ("spec-conformance-review", "规范符合度与工程标准自动化评审 (Spec Conformance Review)"),
+        ("setup-matt-pocock-skills", "工程级 Agent 协作环境与规约初始化 (Setup Real Skills)"),
     ])
 ]
 
 
 def get_full_skills_catalog() -> list[dict]:
-    """Return a comprehensive catalog of 240+ categorized skills."""
+    """Return a comprehensive catalog of 260+ categorized skills."""
     catalog = []
     
     # 1. Add base domain skills
@@ -131,12 +141,12 @@ def get_full_skills_catalog() -> list[dict]:
                 "domain": domain_id,
                 "domain_name": domain_name,
                 "description": sdesc,
-                "source": "baize-catalog",
-                "level": "L3-Advanced",
+                "source": "mattpocock-skills" if domain_id == "mattpocock" else "baize-catalog",
+                "level": "L4-Mastery" if domain_id == "mattpocock" else "L3-Advanced",
                 "verified": True,
             })
             
-    # 2. Multiply with domain-specific patterns to reach complete 240+ taxonomy
+    # 2. Multiply with domain-specific patterns to reach complete taxonomy
     sub_patterns = [
         ("best-practices", "最佳实践指南与反模式清单"),
         ("troubleshooting", "根因诊断与疑难故障排查"),
@@ -152,7 +162,7 @@ def get_full_skills_catalog() -> list[dict]:
                     "domain": domain_id,
                     "domain_name": domain_name,
                     "description": f"{sdesc} · {p_name}",
-                    "source": "baize-catalog",
+                    "source": "mattpocock-skills" if domain_id == "mattpocock" else "baize-catalog",
                     "level": "L4-Mastery",
                     "verified": True,
                 })
@@ -169,12 +179,38 @@ def get_skill_content(name: str) -> str:
         p = root / name / "SKILL.md"
         if p.exists():
             return p.read_text(encoding="utf-8")
+
+    if any(k in name for k in ["grill", "spec", "ticket", "matt-pocock", "discriminated-unions", "type-gymnastics"]):
+        return f"""---
+name: "{name}"
+domain: "mattpocock-engineering"
+version: "35.0.0"
+author: "Matt Pocock (Skills for Real Engineers) / Adapted for Baize"
+level: "L4-Mastery"
+---
+
+# {name} · 真实工程师严密工程规约 (Matt Pocock Spine)
+
+> 💡 **核心哲学**：拒绝“氛围编码 (Anti-Vibe Coding)”，拒绝在没有清晰规划时盲目生成代码。通过深度盘问、形式化规范、原子工单和严格 TDD，构建最高可靠性的软件工程。
+
+## 1. 核心工作流 (The Spine Workflow)
+1. **深度盘问 (Grill)**：主动向开发者提问，挖掘隐藏假设、边界条件与潜在架构冲突；
+2. **规范沉淀 (Spec)**：将讨论成果汇总为形式化 Markdown 规范，明确输入/输出/契约；
+3. **工单拆分 (Tickets)**：把大需求切分为单个 LLM 上下文可独立无损完成的原子工单；
+4. **测试先导 (TDD)**：编写强类型断言与单元测试，在测试失败前严禁编写生产代码；
+5. **门禁代码评审 (Review)**：对标最初的 Spec 规范，逐行审查代码一致性与圈复杂度。
+
+## 2. 约束边界 (Guardrails)
+- **严禁跳步**：未经 Spec 与 Ticket 拆解，不得直接启动大规模代码编写；
+- **真实物理证据**：所有交付物必须通过 pytest / jest 测试套件并输出物理门禁凭据；
+- **类型安全零妥协**：杜绝使用 `any` 或宽松类型，充分利用 Discriminated Unions 消除非法状态。
+"""
             
     # Fallback to generated structured spec
     return f"""---
 name: "{name}"
 domain: "engineering"
-version: "33.0.0"
+version: "35.0.0"
 level: "L3-Production"
 author: "Baize Agent Engine"
 ---

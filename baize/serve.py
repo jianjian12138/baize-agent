@@ -186,6 +186,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/commands":
             cmds = [
                 {"name": "/help", "desc": "查看全部可用指令与技能列表"},
+                {"name": "/grill-with-docs", "desc": "[Matt Pocock] 深度盘问与暴露隐藏假设 (Grill Interview)"},
+                {"name": "/to-spec", "desc": "[Matt Pocock] 将方案讨论沉淀为形式化 Spec 规范"},
+                {"name": "/to-tickets", "desc": "[Matt Pocock] 将 Spec 规范拆解为上下文安全的小工单"},
+                {"name": "/implement", "desc": "[Matt Pocock] 严格执行 TDD 先测后写实施"},
+                {"name": "/code-review", "desc": "[Matt Pocock] 对标 Spec 规范进行自动化代码评审"},
                 {"name": "/doctor", "desc": "运行系统与环境健康体检诊断"},
                 {"name": "/audit", "desc": "对当前工作区进行架构与安全审计"},
                 {"name": "/trace", "desc": "查看上一次运行的毫秒级 Trace 链路与 Span 耗时"},

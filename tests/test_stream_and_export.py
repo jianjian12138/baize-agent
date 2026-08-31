@@ -68,5 +68,20 @@ class TestStreamAndExport(unittest.TestCase):
         self.assertIn("runChaosSimulation", html)
         self.assertIn("applyRbacRules", html)
         self.assertIn("Baize-Gate-Verified", html)
+        self.assertIn("Matt Pocock套件", html)
         from pathlib import Path
         self.assertTrue(Path("Dockerfile").exists())
+
+    def test_mattpocock_skills_catalog_integration(self):
+        from baize.skills_catalog import get_full_skills_catalog, get_skill_content
+        catalog = get_full_skills_catalog()
+        matt_skills = [s for s in catalog if s.get("domain") == "mattpocock"]
+        self.assertGreaterEqual(len(matt_skills), 8)
+        names = {s["name"] for s in matt_skills}
+        self.assertIn("grill-with-docs", names)
+        self.assertIn("to-spec", names)
+        self.assertIn("to-tickets", names)
+
+        content = get_skill_content("grill-with-docs")
+        self.assertIn("Matt Pocock", content)
+        self.assertIn("The Spine Workflow", content)
