@@ -1,0 +1,66 @@
+{
+  "name": "baize-assistant-sidecar",
+  "displayName": "Baize Studio Assistant (白泽伴侣插件)",
+  "description": "Industrial AI Coding Assistant & Sidecar for VS Code / Cursor powered by Baize Agent Engine.",
+  "version": "35.0.0",
+  "publisher": "baize",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Programming Languages", "Machine Learning", "Snippets"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "baize.openStudio",
+        "title": "Baize: 打开桌面工作台 (Open Studio)",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
+        "command": "baize.inlineRefactor",
+        "title": "Baize: 行内智能重构与自愈 (Inline Refactor & Causal Heal)",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "baize.runDoctor",
+        "title": "Baize: 运行宿主健康体检 (Run Doctor)",
+        "icon": "$(heart)"
+      },
+      {
+        "command": "baize.indexSymbols",
+        "title": "Baize: 重建代码符号图谱 (Rebuild Symbol Graph)",
+        "icon": "$(symbol-class)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "baize.openStudio",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b"
+      },
+      {
+        "command": "baize.inlineRefactor",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Baize Agent Configuration",
+      "properties": {
+        "baize.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "本地白泽引擎服务监听地址"
+        },
+        "baize.autoHealOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "保存文件时自动触发 AST 因果诊断与自愈"
+        }
+      }
+    }
+  }
+}
