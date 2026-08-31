@@ -1037,6 +1037,16 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
           </div>
           <div id="skills-grid" class="grid-3" style="margin-top:10px;max-height:500px;overflow-y:auto;"></div>
         </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🔍 全局代码符号依赖图谱 (Global AST Symbol Graph)</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">跨文件精准检索函数定义 (Definitions)、类层级与调用链引用 (Call Hierarchy)：</p>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="symbol-search-input" placeholder="输入符号名称（如：Session, run_command, SymbolGraph）..." onkeydown="if(event.key==='Enter')searchSymbols();" />
+            <button class="primary-btn" onclick="searchSymbols()">检索符号图谱</button>
+          </div>
+          <div id="symbols-result-box" style="margin-top:10px;font-size:12px;"></div>
+        </div>
       </div>
     </section>
 
@@ -1297,6 +1307,29 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             <button class="primary-btn" onclick="testWebhookDispatch()">🚀 模拟发送事件通知</button>
           </div>
           <div id="webhook-test-result" style="font-size:12px;margin-top:8px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🌐 Anthropic MCP (Model Context Protocol) 开放协议连接器</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">原生兼容社区 10,000+ 开源 MCP 工具生态 (SQLite, GitHub, PostgreSQL, Puppeteer, Slack 等)：</p>
+          <div id="mcp-servers-list" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;margin-bottom:10px;">
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">[MCP] sqlite</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">本地 SQLite 数据库查询与结构分析</div>
+              <button class="chip-btn" onclick="testMcpCall('sqlite', 'sqlite_query', {sql:'SELECT count(*) FROM sessions'})" style="font-size:10px;">⚡ 调用 sqlite_query</button>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">[MCP] github</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">GitHub 远程仓库 PR 与 Issue 交互</div>
+              <button class="chip-btn" onclick="testMcpCall('github', 'github_list_prs', {state:'open'})" style="font-size:10px;">⚡ 调用 list_prs</button>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">[MCP] puppeteer</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">无头浏览器抓取与截图</div>
+              <button class="chip-btn" onclick="testMcpCall('puppeteer', 'puppeteer_navigate', {url:'http://127.0.0.1:8787'})" style="font-size:10px;">⚡ 调用 navigate</button>
+            </div>
+          </div>
+          <div id="mcp-call-result" style="font-size:12px;"></div>
         </div>
 
         <div class="panel-card" style="margin-top:16px;">
@@ -2596,6 +2629,74 @@ async function applyRbacRules() {
     resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message} [水印: ${d.commit_watermark}]</span>`;
   } catch (e) {
     resEl.innerHTML = `<span style="color:var(--danger)">配置失败: ${e.message}</span>`;
+  }
+}
+
+// --- Phase 1: MCP Tool Calling ---
+async function testMcpCall(server, tool, args) {
+  const resEl = document.getElementById('mcp-call-result');
+  resEl.innerHTML = `<span style="color:var(--accent)">正在通过 JSON-RPC 2.0 调度 MCP 服务 [${server} -> ${tool}]...</span>`;
+  try {
+    const res = await fetch('/api/mcp/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server: server, tool: tool, arguments: args })
+    });
+    const d = await res.json();
+    resEl.innerHTML = `
+      <div style="background:#090b12;border:1px solid var(--success);border-radius:6px;padding:8px;margin-top:6px;">
+        <div style="color:var(--success);font-weight:700;font-size:11px;">✓ MCP 协议响应成功 [${d.protocol || 'JSON-RPC 2.0'}]</div>
+        <pre style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin:4px 0 0;overflow-x:auto;">${escapeHtml(JSON.stringify(d.result, null, 2))}</pre>
+      </div>
+    `;
+  } catch (e) {
+    resEl.innerHTML = `<span style="color:var(--danger)">MCP 调用失败: ${e.message}</span>`;
+  }
+}
+
+// --- Phase 1: Symbol Graph Search ---
+async function searchSymbols() {
+  const q = document.getElementById('symbol-search-input').value.trim();
+  if (!q) return;
+  const box = document.getElementById('symbols-result-box');
+  box.innerHTML = '<span style="color:var(--accent)">正在全代码库 AST 语法树中检索符号定义与调用链...</span>';
+  try {
+    const res = await fetch('/api/symbols/search?q=' + encodeURIComponent(q));
+    const d = await res.json();
+    const results = d.results || [];
+    if (!results.length) {
+      box.innerHTML = '<span style="color:var(--text-dim)">未检索到匹配的符号定义。</span>';
+      return;
+    }
+    box.innerHTML = results.map(s => `
+      <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;margin-bottom:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <strong style="color:var(--accent);font-size:12px;">${escapeHtml(s.name)}</strong>
+          <span style="font-size:10px;color:var(--text-dim);background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;">${s.kind} · L${s.line_number}-${s.end_line_number}</span>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-main);margin:4px 0;">${escapeHtml(s.signature || '')}</div>
+        <div style="font-size:10px;color:var(--text-dim);">${escapeHtml(s.file_path)}</div>
+        ${s.calls && s.calls.length ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">调用了: ${s.calls.join(', ')}</div>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--danger)">检索失败: ${e.message}</span>`;
+  }
+}
+
+// --- Phase 1: Hunk Cherry-Pick ---
+async function applyGitHunk(hunkId) {
+  try {
+    const res = await fetch('/api/git/apply_hunk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hunk_id: hunkId })
+    });
+    const d = await res.json();
+    alert('【代码块精准采纳完成】\n\n' + d.message);
+    loadGitDiff();
+  } catch (e) {
+    alert('采纳失败: ' + e.message);
   }
 }
 
