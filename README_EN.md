@@ -29,7 +29,7 @@
 ## 📸 10-Second Autonomous Coding Showcase
 
 <div align="center">
-<img src="assets/demo_showcase.png" alt="Baize Agent Autonomous Coding Terminal & Byzantine Consensus Flow" width="92%" />
+<img src="assets/demo_showcase.gif" alt="Baize Agent Autonomous Coding Terminal & Byzantine Consensus Flow" width="92%" />
 </div>
 
 ---

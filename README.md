@@ -29,7 +29,7 @@
 ## 📸 10 秒自主编码全流程动态演示
 
 <div align="center">
-<img src="assets/demo_showcase.png" alt="Baize Agent 终端自愈与拜占庭共识演示" width="92%" />
+<img src="assets/demo_showcase.gif" alt="Baize Agent 终端自愈与拜占庭共识演示" width="92%" />
 </div>
 
 ---
