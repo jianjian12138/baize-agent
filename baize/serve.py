@@ -393,6 +393,24 @@ class Handler(BaseHTTPRequestHandler):
             from .byzantine import run_byzantine_consensus
             res = run_byzantine_consensus(code, goal)
             return self._send(200, res)
+        if self.path == "/api/invariants/anchor":
+            goal = data.get("goal") or "长期重构任务"
+            constraints = data.get("constraints") or None
+            from .invariants_anchor import create_invariants_anchor
+            anchor = create_invariants_anchor(goal, constraints)
+            sample_prompt = data.get("prompt") or "请开始第 42 步执行"
+            wrapped = anchor.inject_anchor_header(sample_prompt, turn_index=int(data.get("turn_index", 42)))
+            return self._send(200, {
+                "status": "anchored",
+                "invariants": anchor.invariants,
+                "wrapped_prompt_sample": wrapped,
+                "message": f"核心不变量锚点已成功激活！已为第 {data.get('turn_index', 42)} 步长程任务注入置顶约束。"
+            })
+        if self.path == "/api/interactive/detect":
+            text = data.get("text") or "Do you want to continue? [y/N]"
+            from .interactive_detector import detect_interactive_prompt
+            res = detect_interactive_prompt(text)
+            return self._send(200, res)
         if self.path == "/run":
             return self._handle_run(data)
         if self.path == "/run/stream":

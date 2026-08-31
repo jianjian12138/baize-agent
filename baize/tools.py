@@ -256,7 +256,11 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            if sys.platform == "win32":
+                from .powershell import kill_process_tree
+                kill_process_tree(proc.pid)
+            else:
+                proc.kill()
             proc.communicate()  # drain to avoid deadlock
             return f"ERROR: command timed out after {timeout}s (process killed)"
     except Exception as exc:
