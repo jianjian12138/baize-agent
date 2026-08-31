@@ -32,9 +32,11 @@ def main():
 
     print("[Baize Radar] 正在启动白泽全球 AI 演化雷达，全天候巡航 GitHub 竞品与全球顶尖 AI 思想领袖智库...")
     try:
-        report_file = generate_daily_evolution_report(args.output)
-        print(f"[Baize Radar] ✅ 今日全球 AI 演化研报已生成并归档至: {report_file}")
-        print(f"[Baize Radar] 📄 最新摘要链接: docs/radar/LATEST.md")
+        report_intel, report_rfc = generate_daily_evolution_report(args.output)
+        print(f"[Baize Radar] ✅ 今日全球 AI 演化研报已生成: {report_intel}")
+        print(f"[Baize Radar] 🛠️ 今日可升级借鉴功能方案 RFC: {report_rfc}")
+        print(f"[Baize Radar] 📄 最新研报指针: docs/radar/LATEST.md")
+        print(f"[Baize Radar] 📄 最新升级方案指针: docs/radar/UPGRADE_RFC_LATEST.md")
     except Exception as exc:
         print(f"[Baize Radar] ❌ 雷达生成失败: {exc}", file=sys.stderr)
         sys.exit(1)
