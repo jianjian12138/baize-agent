@@ -16,7 +16,7 @@
 
 <br/>
 
-**[ [中文文档](README.md) | [English README](README_EN.md) | [中文极速上手](docs/QUICKSTART_CN.md) | [English Quickstart](docs/QUICKSTART_EN.md) ]**
+**[ [中文文档](README.md) | [English README](README_EN.md) | [完整使用手册](docs/USAGE_GUIDE.md) | [中文极速上手](docs/QUICKSTART_CN.md) | [English Quickstart](docs/QUICKSTART_EN.md) ]**
 
 <br/>
 
