@@ -1068,11 +1068,14 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             <div id="spec-result-box" style="font-size:12px;margin-top:8px;"></div>
           </div>
 
-          <!-- Causal Debugger -->
+          <!-- Causal Debugger & Mutation Arena -->
           <div class="panel-card">
-            <h3>🔍 AST 因果反事实分析 (Causal Debugger)</h3>
-            <p style="font-size:12px;color:var(--text-muted)">自动提取故障 AST 切片并合成变异抗脆弱用例：</p>
-            <button class="primary-btn" onclick="runCausalLab()" style="align-self:flex-start">运行因果切片诊断</button>
+            <h3>🔍 AST 因果反事实分析与变异演练 (Causal & Mutation Arena)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">自动提取故障 AST 切片并注入边界变异算子，构建永久抗脆弱红绿网：</p>
+            <div style="display:flex;gap:8px;">
+              <button class="primary-btn" onclick="runCausalLab()">运行因果切片诊断</button>
+              <button class="chip-btn" onclick="runMutationArena()" style="font-size:11px;">🧪 触发 AST 变异测试网</button>
+            </div>
             <div id="causal-result-box" style="font-size:12px;margin-top:8px;"></div>
           </div>
 
@@ -1084,11 +1087,11 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             <div id="synth-result-box" style="font-size:12px;margin-top:8px;"></div>
           </div>
 
-          <!-- Red-Blue Game -->
+          <!-- Red-Blue Game & Byzantine Consensus -->
           <div class="panel-card">
-            <h3>⚔️ 红蓝对抗博弈仲裁 (Red/Blue Adversarial)</h3>
-            <p style="font-size:12px;color:var(--text-muted)">红队边界注入攻击 vs 蓝队沙箱防御判定：</p>
-            <button class="primary-btn" onclick="runAdversarialLab()" style="align-self:flex-start">执行博弈仲裁</button>
+            <h3>⚔️ 拜占庭多智能体对抗博弈仲裁 (Byzantine BFT Consensus)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">红队注入攻防 vs 蓝队沙箱防御 vs 仲裁法官全票共识签名：</p>
+            <button class="primary-btn" onclick="runByzantineConsensus()" style="align-self:flex-start">⚖️ 执行拜占庭共识仲裁</button>
             <div id="adv-result-box" style="font-size:12px;margin-top:8px;"></div>
           </div>
         </div>
@@ -1335,6 +1338,38 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             </div>
           </div>
           <div id="mcp-call-result" style="font-size:12px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🧬 达尔文自主繁衍元工具企业市场 (Darwin Marketplace)</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">跨团队共享与挂载自主演化的元工具，附带不可篡改的加密基因签名：</p>
+          <div id="darwin-market-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;margin-bottom:10px;">
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">k8s_manifest_validator</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">K8s YAML 规范与资源配额深度校验器</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span style="color:var(--success)">适应度: 98%</span>
+                <span style="font-family:var(--font-mono);color:var(--text-dim);">DARWIN-9A71</span>
+              </div>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">ast_sql_injection_guard</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">AST 语法树 SQL 拼接与注入扫描器</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span style="color:var(--success)">适应度: 99%</span>
+                <span style="font-family:var(--font-mono);color:var(--text-dim);">DARWIN-F42B</span>
+              </div>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">graphql_schema_differ</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">GraphQL 破坏性变更影响面分析器</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span style="color:var(--success)">适应度: 96%</span>
+                <span style="font-family:var(--font-mono);color:var(--text-dim);">DARWIN-81C3</span>
+              </div>
+            </div>
+          </div>
+          <button class="primary-btn" onclick="publishCustomTool()" style="font-size:11px;">+ 发布当前会话合成的元工具</button>
         </div>
 
         <div class="panel-card" style="margin-top:16px;">
@@ -2775,6 +2810,80 @@ class DataStore:
     `;
   } catch (e) {
     box.innerHTML = `<span style="color:var(--danger)">剪枝失败: ${e.message}</span>`;
+  }
+}
+
+// --- Phase 3: Mutation Arena ---
+async function runMutationArena() {
+  const box = document.getElementById('causal-result-box');
+  box.innerHTML = '<span style="color:var(--accent)">正在注入 AST 边界变异算子并检验击杀率...</span>';
+  try {
+    const res = await fetch('/api/causal/mutation_test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: "def validate_token(t):\n    return True if len(t) >= 10 else False",
+        target_function: "validate_token"
+      })
+    });
+    const d = await res.json();
+    box.innerHTML = `
+      <div style="background:#090b12;border:1px solid var(--success);border-radius:6px;padding:8px;margin-top:6px;">
+        <div style="color:var(--success);font-weight:700;">✓ ${d.message}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">变异击杀率: ${d.mutation_score} (生成 ${d.total_mutants_generated} 个变异体)</div>
+        <pre style="font-family:var(--font-mono);font-size:10px;color:var(--accent);margin:4px 0 0;overflow-x:auto;">${escapeHtml(d.synthesized_guardrail_test)}</pre>
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--danger)">变异演练失败: ${e.message}</span>`;
+  }
+}
+
+// --- Phase 3: Byzantine Consensus ---
+async function runByzantineConsensus() {
+  const box = document.getElementById('adv-result-box');
+  box.innerHTML = '<span style="color:var(--accent)">正在协调 3 节点拜占庭共识博弈仲裁 (Red/Blue/Judge)...</span>';
+  try {
+    const res = await fetch('/api/byzantine/arbitrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: "核心发布防伪物理门禁核验" })
+    });
+    const d = await res.json();
+    box.innerHTML = `
+      <div style="background:#090b12;border:1px solid var(--success);border-radius:6px;padding:8px;margin-top:6px;">
+        <div style="display:flex;justify-content:space-between;color:var(--success);font-weight:700;">
+          <span>✓ ${d.message}</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">${d.bft_signature}</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">共识协议: ${d.consensus_type} · 仲裁裁决: ${d.arbiter_decision}</div>
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--danger)">仲裁失败: ${e.message}</span>`;
+  }
+}
+
+// --- Phase 3: Darwin Tool Publish ---
+async function publishCustomTool() {
+  const name = prompt('请输入新合成元工具的名称:', 'ast_data_sanitizer');
+  if (!name) return;
+  try {
+    const res = await fetch('/api/market/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        category: 'Data & Security',
+        description: '自动对输入 AST 语法树进行敏感数据脱敏与注入阻断',
+        fitness_score: 0.99,
+        generation_id: 6
+      })
+    });
+    const d = await res.json();
+    alert('【达尔文元工具发布成功】\n\n' + d.message);
+  } catch (e) {
+    alert('发布失败: ' + e.message);
   }
 }
 

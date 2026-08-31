@@ -231,6 +231,10 @@ class Handler(BaseHTTPRequestHandler):
             graph = build_workspace_symbol_graph(load_config().get("BAIZE_WORKSPACE_DIR", "."))
             return self._send(200, {"query": q, "results": graph.search_symbols(q)})
 
+        if self.path == "/api/market/tools":
+            from .tool_market import list_market_tools
+            return self._send(200, {"status": "ready", "tools": list_market_tools()})
+
         if self.path == "/api/models":
             cfg = load_config()
             return self._send(200, {
@@ -373,6 +377,22 @@ class Handler(BaseHTTPRequestHandler):
                 "pr_number": 43,
                 "message": f"CI 故障已被白泽 AST 因果自愈引擎捕获，已自动创建修复分支并在 {repo} 开启 Pull Request #43！"
             })
+        if self.path == "/api/market/publish":
+            from .tool_market import publish_market_tool
+            res = publish_market_tool(data)
+            return self._send(200, res)
+        if self.path == "/api/causal/mutation_test":
+            code = data.get("code") or "def add(a, b):\n    return a + b if a > 0 else 0"
+            fn = data.get("target_function") or "add"
+            from .mutation import run_ast_mutation_arena
+            res = run_ast_mutation_arena(code, fn)
+            return self._send(200, res)
+        if self.path == "/api/byzantine/arbitrate":
+            code = data.get("code") or ""
+            goal = data.get("goal") or "核心支付状态机发布评审"
+            from .byzantine import run_byzantine_consensus
+            res = run_byzantine_consensus(code, goal)
+            return self._send(200, res)
         if self.path == "/run":
             return self._handle_run(data)
         if self.path == "/run/stream":

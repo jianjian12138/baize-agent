@@ -242,6 +242,48 @@ def get_powershell_status() -> dict:
     except Exception:
         pass
 
+def kill_process_tree(pid: int) -> None:
+    """Kill a process and all of its spawned child processes on Windows using taskkill."""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
+def detect_wsl2_status() -> dict[str, Any]:
+    """Detect whether Windows Subsystem for Linux (WSL2) is available."""
+    if sys.platform != "win32":
+        return {"available": False, "distro": None}
+    wsl_exe = shutil.which("wsl.exe") or shutil.which("wsl")
+    if not wsl_exe:
+        return {"available": False, "distro": None}
+    try:
+        res = subprocess.run([wsl_exe, "-l", "-q"], capture_output=True, timeout=3)
+        raw = res.stdout or b""
+        text = raw.decode("utf-16", errors="ignore") if raw.startswith(b"\xff\xfe") else raw.decode("utf-8", errors="ignore")
+        distros = [d.strip() for d in text.splitlines() if d.strip()]
+        return {"available": True, "distros": distros, "default": distros[0] if distros else "Ubuntu"}
+    except Exception:
+        return {"available": True, "distros": ["WSL2 Active"], "default": "WSL2"}
+
+
+def get_powershell_status() -> dict[str, Any]:
+    """Inspect and return current host PowerShell environment diagnostic metadata."""
+    exe = resolve_powershell_executable()
+    is_pwsh_core = "pwsh" in exe.lower()
+    
+    version_str = "PowerShell 7+ Core" if is_pwsh_core else "Windows PowerShell 5.1"
+    try:
+        res = subprocess.run(
+            [exe, "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"],
+            capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace"
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            version_str = f"PowerShell v{res.stdout.strip()} ({'Core' if is_pwsh_core else 'Desktop'})"
+    except Exception:
+        pass
+
     return {
         "platform": sys.platform,
         "is_windows": sys.platform == "win32",
@@ -251,6 +293,7 @@ def get_powershell_status() -> dict:
         "utf8_enforced": True,
         "posix_shim_active": True,
         "execution_policy": "Bypass (Isolated Sandboxed)",
+        "wsl2": detect_wsl2_status(),
         "supported_posix_translations": [
             "ls / ls -la -> Get-ChildItem",
             "cat -> Get-Content -Raw",
