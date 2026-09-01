@@ -869,7 +869,61 @@ def build_parser() -> argparse.ArgumentParser:
     dt.add_argument("--host", default="127.0.0.1")
     dt.add_argument("--port", type=int, default=8787)
 
+    # V37.1 Ralph Autonomous PRD Engine
+    rl = sub.add_parser("ralph", help="autonomous Ralph pattern PRD loop and long-horizon delivery")
+    rl.add_argument("goal", nargs="?", default="", help="High-level project goal to decompose into prd.json")
+    rl.add_argument("--resume", action="store_true", help="Resume from existing prd.json")
+    rl.add_argument("--status", action="store_true", help="Show current PRD completion status board")
+    rl.add_argument("--prd", default="prd.json", help="Path to prd.json file")
+    rl.add_argument("--progress", default="progress.txt", help="Path to progress.txt file")
+    rl.add_argument("--max-iterations", type=int, default=15, help="Max iterations to run")
+    rl.add_argument("--no-commit", action="store_true", help="Disable automatic git commits per story")
+
     return p
+
+
+def cmd_ralph(args) -> int:
+    from .ralph import RalphLoopEngine, PRDDocument
+    from pathlib import Path
+
+    prd_file = args.prd
+    engine = RalphLoopEngine(prd_path=prd_file, progress_path=args.progress)
+
+    if args.status:
+        if not Path(prd_file).exists():
+            print(f"❌ 未找到 PRD 状态机文件 '{prd_file}'。请先执行 'baize ralph <goal>' 初始化。")
+            return 1
+        prd = PRDDocument.load_from_file(prd_file)
+        print(prd.get_progress_summary())
+        return 0
+
+    if args.resume:
+        if not Path(prd_file).exists():
+            print(f"❌ 无法断点续跑：未找到 '{prd_file}' 文件。")
+            return 1
+        print(f"🔄 正在从现有状态机 '{prd_file}' 断点续跑...")
+    else:
+        if not args.goal:
+            if Path(prd_file).exists():
+                print(f"ℹ️ 检测到现有 '{prd_file}'，自动以断点续跑模式启动。")
+            else:
+                print("❌ 错误：请提供项目目标，例如：baize ralph '重构模块并补全单测'")
+                return 1
+        else:
+            print(f"🔱 正在根据目标初始化 Ralph PRD 状态机: '{args.goal}'...")
+            prd = engine.generate_initial_prd(args.goal)
+            prd.save_to_file(prd_file)
+            print(f"✅ 已生成标准任务书: {prd_file} (包含 {len(prd.stories)} 个原子用户故事)")
+            print(f"📝 踩坑记忆日志已就绪: {args.progress}")
+
+    res = engine.run_loop(max_iterations=args.max_iterations, auto_commit=not args.no_commit)
+    print("\n" + res["status_board"])
+    if res["all_done"]:
+        print("🎉 [Ralph 封闭循环完成] 恭喜！所有原子用户故事已全部高质量通过验收并交付！")
+        return 0
+    else:
+        print(f"⚠️ [Ralph 循环暂停] 已执行 {res['total_iterations']} 轮迭代。如需继续请执行: baize ralph --resume")
+        return 0
 
 
 def cmd_speculative(args) -> int:
@@ -930,6 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         "team-memory": cmd_team_memory,
         "automations": cmd_automations,
         "mcp": cmd_mcp,
+        "ralph": cmd_ralph,
     }
     return handlers[args.command](args)
 
