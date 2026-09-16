@@ -1,4 +1,4 @@
-# Baize Agent (白泽引擎) — 零依赖工业级自主研发操作系统 · V36.0.0 Titan
+# Baize Agent (白泽引擎) — 零依赖工业级自主研发操作系统 · V37.0.0 Prometheus
 
 <div align="center">
 
@@ -6,8 +6,8 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-V36.0.0--Titan-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-53%2F53%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-644%2F650%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -50,7 +50,7 @@
 
 ## 📊 与业界主流框架全方位对比
 
-| 对比维度 | **白泽智能体 (Baize V36 Titan)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
+| 对比维度 | **白泽智能体 (Baize V37 Prometheus)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
 | :--- | :---: | :---: | :---: | :---: |
 | **运行时第三方依赖** | **0（纯 Python 标准库）** | 较重 (Node/C++) | 较重 (多层 Python 库) | 100+ Pip 依赖包 |
 | **Windows 原生 PowerShell 池 (<5ms)** | **✅ 原生第一等公民支持** | ⚠️ 基础支持 / POSIX | ⚠️ 仅限 WSL/Docker | ❌ 无 |
@@ -108,6 +108,28 @@ python -m baize serve --port 8787
                   │ (<5ms 延迟 + 复合管道垫片)│  (JSON-RPC 2.0 开放工具生态) │
                   └──────────────────────────┴─────────────────────────────┘
 ```
+
+---
+
+## 🌿 分支说明
+
+本仓库有两条**互不合并**的历史线。当前默认分支与活跃开发主线是 **`v30-dev`**：
+
+| 分支 | 内容 | 状态 |
+| :--- | :--- | :--- |
+| **`v30-dev`** | V30 → V37.0.0 Prometheus 线：Ralph 自主 PRD 状态机、全球智能雷达、Swarm 影子推演、拜占庭仲裁、桌面 Studio | **默认分支 · 活跃开发** |
+| `main` | V26.0.0「闭环事实内核」架构重构线 | 冻结存档 |
+| `test` | V33.0.0 升级线 | 冻结存档 |
+
+`main`(V26) 与 `test`(V33) 是对同一份 V25 架构的两条**平行重构**，互不包含，**不做合并**。
+两条线各自保留了对方没有的产物，需要时按分支取用：
+
+```bash
+# V26 线的公开基准对比（仅存在于 main）
+git show main:benchmarks/COMPARISON.md
+```
+
+V25 架构设计与专家评审文档已归档到本分支的 `docs/archive/`，与 `baize/__init__.py` 中的引用路径一致。
 
 ---
 

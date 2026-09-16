@@ -1,4 +1,4 @@
-# Baize Agent (白泽引擎) — Zero-Dependency Autonomous AI Software Engineer · V36.0.0 Titan
+# Baize Agent (白泽引擎) — Zero-Dependency Autonomous AI Software Engineer · V37.0.0 Prometheus
 
 <div align="center">
 
@@ -6,8 +6,8 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-V36.0.0--Titan-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-53%2F53%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-644%2F650%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -50,7 +50,7 @@
 
 ## 📊 Comparison with Leading Agent Frameworks
 
-| Dimension | **Baize Agent (V36 Titan)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
+| Dimension | **Baize Agent (V37 Prometheus)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
 | :--- | :---: | :---: | :---: | :---: |
 | **Runtime 3rd-Party Dependencies** | **0 (Pure Stdlib)** | Heavy Node/C++ | Heavy Python | 100+ Pip packages |
 | **Windows Native PowerShell Pool (<5ms)** | **✅ Yes (First-Class)** | ⚠️ Limited / POSIX | ⚠️ WSL/Docker only | ❌ No |
@@ -108,6 +108,31 @@ Open **`http://127.0.0.1:8787`** to experience the full Obsidian-styled dark des
                   │ (Sub-5ms REPL + Shims)   │  (JSON-RPC 2.0 Ecosystem)   │
                   └──────────────────────────┴─────────────────────────────┘
 ```
+
+---
+
+## 🌿 Branches
+
+This repository carries two **deliberately unmerged** history lines. The default branch and the
+active development line is **`v30-dev`**:
+
+| Branch | Contents | Status |
+| :--- | :--- | :--- |
+| **`v30-dev`** | The V30 -> V37.0.0 Prometheus line: Ralph autonomous PRD state machine, global intelligence radar, Swarm speculative forking, Byzantine arbitration, desktop Studio | **Default - active** |
+| `main` | The V26.0.0 "closed-loop fact kernel" architecture rewrite | Frozen archive |
+| `test` | The V33.0.0 upgrade line | Frozen archive |
+
+`main` (V26) and `test` (V33) are two **parallel rewrites** of the same V25 architecture. Neither
+contains the other, and they are **not merged** - keeping both preserves artifacts that exist on
+only one of them:
+
+```bash
+# The V26 public benchmark comparison (exists on main only)
+git show main:benchmarks/COMPARISON.md
+```
+
+The V25 architecture design and expert review documents are archived on this branch under
+`docs/archive/`, matching the paths referenced from `baize/__init__.py`.
 
 ---
 
