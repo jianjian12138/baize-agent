@@ -9,10 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project definition and source code
+# Copy project definition and source code.
+# docs/ is deliberately NOT copied: .dockerignore excludes it to keep the image
+# lean, and nothing at runtime reads it. The previous `COPY docs/ ./docs/` could
+# never succeed - Docker resolves it against the filtered build context, so the
+# build died with `failed to compute cache key: "/docs": not found`.
 COPY pyproject.toml .
 COPY baize/ ./baize/
-COPY docs/ ./docs/
 
 # Install python package
 RUN pip install --no-cache-dir -e .
