@@ -1,4 +1,4 @@
-# 白泽引擎 (Baize Agent) V33.0.0 对标与基准测试规范
+# 白泽引擎 (Baize Agent) V37.0.0 对标与基准测试规范
 
 > **定位**：对标 **Hermes-Agent**、**Pi-Agent**、**Codex** 与 **DeepSeek-Harness** 的核心能力与架构设计，在**纯 Python 标准库零外部依赖**的基石上，实现超越业界主流 Agent 的确定性工程门禁、高并发编排与极致交互体验。
 

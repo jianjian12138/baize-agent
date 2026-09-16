@@ -161,6 +161,10 @@ TESTS_BADGE = Surface("tests badge", re.compile(r'badge/tests-[^?\s"]*'),
                       lambda l, p, t: l.tests_badge(p, t))
 PROTOCOL_TITLE = Surface("protocol title", re.compile(r"操作协议 V\d+\.\d+\.\d+"),
                          lambda l, p, t: f"操作协议 V{l.version}")
+# A bare "V33.0.0" with no codename, as the older doc titles use. Only safe on a
+# file where *every* V-label is the release - verify before adding a new file.
+VERSION_ONLY = Surface("version only", re.compile(r"V\d+\.\d+\.\d+"),
+                       lambda l, p, t: f"V{l.version}")
 
 # file -> (surface, min_hits)
 SURFACES: dict[str, list[tuple[Surface, int]]] = {
@@ -170,6 +174,11 @@ SURFACES: dict[str, list[tuple[Surface, int]]] = {
     "docs/QUICKSTART_CN.md": [(FULL_LABEL, 1)],
     "docs/QUICKSTART_EN.md": [(FULL_LABEL, 1)],
     "docs/USAGE_GUIDE.md": [(FULL_LABEL, 2)],  # doc title + Studio banner
+    # Doc titles that name the release without the codename. Both were still
+    # claiming V33.0.0 five releases after the fact - found by
+    # skills/repo-truth-and-hygiene/scripts/audit_repo_truth.py [2].
+    "START-HERE.md": [(VERSION_ONLY, 1)],
+    "docs/benchmarks.md": [(VERSION_ONLY, 1)],
 }
 
 # Historical version references that must survive every sync untouched. These

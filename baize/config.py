@@ -30,15 +30,17 @@ _DEFAULTS = {
     # Coverage floor enforced by scripts/coverage_gate.py - and read by CI, which
     # used to hardcode its own 80 while this file said 85 (the exact "two sources
     # of truth" drift the gate exists to prevent). One number now, here.
+    # tests/test_config.py:39 pins this value; a test that disagrees with an edit
+    # to this line is telling you the edit changed the contract, not that the test
+    # is stale. Fix the coverage, do not edit the test.
     #
-    # History, so the next reader does not have to re-measure: the declared
-    # promise was 85, CI enforced 80, and the measured total on v30-dev at
-    # 2026-09-16 was 77.2% (644/650 tests green, 8599 statements). Neither
-    # documented number was reachable, so this floor is set to what the suite
-    # actually delivers, and 85 stays the TARGET to ratchet back up to - raise
-    # coverage first, then raise this number in the same commit.
-    "TEST_COVERAGE_THRESHOLD": "75",
-    "TEST_COVERAGE_TARGET": "85",
+    # KNOWN GAP (measured 2026-09-16 on v30-dev): actual coverage is 77.0%
+    # (8599 statements, .coverage). The gate is therefore RED. That is the honest
+    # state - the repo does not meet its own floor. Lowering this number would
+    # make the gate green by moving the goalposts, which is the failure mode this
+    # whole single-source exercise exists to stop. Raise coverage by ~8 points,
+    # then this floor is satisfied with no edit needed.
+    "TEST_COVERAGE_THRESHOLD": "85",
     # --- Agent runtime (V19) ---
     "BAIZE_MODEL_BASE_URL": "",          # OpenAI-compatible endpoint base
     "BAIZE_MODEL_API_KEY": "",
