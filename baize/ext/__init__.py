@@ -10,7 +10,8 @@ Submodules added progressively in V25 (F3 MCP / F5 providers / F6 bus) must
 lazy-import their stdlib pieces inside functions, so importing
 ``baize.ext`` itself stays cheap and safe. Consumers reach ext via
 ``plugin.discover`` / ``CompositionKernel.add_component`` — never via a
-core-side import. See docs/V25-arch-design/系统设计.md and 升级计划 §3.3–§3.6.
+core-side import. See docs/archive/V25-arch-design/系统设计.md and
+docs/archive/baize-agent-V25升级计划.md §3.3-§3.6.
 
 收口契约 (F6): an ext module participates in the bus by exposing a
 ``Component``-shaped class (``KIND`` + ``build``) and being wired through
