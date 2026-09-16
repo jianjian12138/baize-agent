@@ -32,11 +32,58 @@ Or simply `make test` (uses `python`).
 ## Before opening a PR
 
 - `python -m baize.cli doctor` passes (real environment gate).
-- `pytest tests/` is green and coverage stays ≥ 85% (see
-  `config.TEST_COVERAGE_THRESHOLD`).
+- `pytest tests/` is green and coverage stays at or above the floor in
+  `config.TEST_COVERAGE_THRESHOLD` (75 as of 2026-09-16; `config.TEST_COVERAGE_TARGET`
+  is 85). `make gate` enforces it, and CI reads the same config value.
 - New tools are primitives registered with a JSON schema; avoid baking
   features into the core loop.
 - Keep changes small and reviewable; describe the "why" in the PR.
+- `make truth` passes — see below.
+- `make hygiene` passes — see below.
+
+## Never hand-type the version or the test count
+
+`baize/__init__.py` holds the **only** version literals in the repository:
+
+```python
+__version__  = "37.0.0"
+__codename__ = "Prometheus"
+```
+
+Every other appearance — README titles, the shields.io badges, the compare-table
+header, `AGENT.md`, the QUICKSTART/USAGE_GUIDE docs, `baize.manifest.json` and
+`pyproject.toml` — is derived from those two lines by `scripts/sync_truth.py`.
+The test badge is likewise **measured** by running the suite, never typed.
+
+To cut a release, edit the two literals and run:
+
+```bash
+python scripts/sync_truth.py     # rewrites every derived surface
+make truth                       # verifies no drift (CI runs this too)
+```
+
+`make truth` fails on any drift, so a stale `V36.0.0 Titan` title or a test badge
+that disagrees with the suite breaks the build instead of shipping. Historical
+version references (for example the `V26.0.0` / `V33.0.0` rows in the README
+branch table) are explicitly protected and are never rewritten.
+
+## .gitignore does not untrack anything
+
+`.gitignore` only affects *untracked* files. Adding a path to it does **not**
+remove it from the index — which is how 78 `__pycache__` blobs, 31
+`persistence/` runtime files and 21 probe scripts stayed committed for months
+while `.gitignore` listed those very paths.
+
+To drop something that is already tracked, keep the file on disk and remove it
+from the index:
+
+```bash
+git rm -r --cached <path>     # runtime state you still want locally
+git rm <path>                 # one-off scratch that is worthless to others
+```
+
+`make hygiene` (`scripts/check_hygiene.py`) scans the index for tracked junk and
+fails CI if any is found.
 
 ## Reporting issues
 

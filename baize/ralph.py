@@ -1,4 +1,4 @@
-"""Ralph Pattern Autonomous PRD State Machine & Long-Horizon Delivery Loop (V37.1.0).
+"""Ralph Pattern Autonomous PRD State Machine & Long-Horizon Delivery Loop (V37.0.0).
 
 Pure Python standard library — zero third-party dependencies.
 Implements the legendary Ralph Pattern (by Geoffrey Huntley & Ryan Carson):

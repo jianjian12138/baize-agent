@@ -1,4 +1,4 @@
-# AGENT.md — Baize Agent 操作协议 V33.0.0
+# AGENT.md — Baize Agent 操作协议 V37.0.0
 
 本协议适用于两类使用者：
 - **外部 AI 客户端**（Claude Code / Codex / WorkBuddy 等）接入本仓库时；
@@ -91,7 +91,8 @@ sandbox / loop / scheduler / ui / storage）描述成可配置的组件，由 `C
 
 - **组件（Component）**：一份 `KIND` + `build(cfg)` 工厂契约，实例需满足对应 `Protocol`。
   写自定义组件三步：声明 `KIND` → 方法签名符合协议 → 提供 `build` 工厂。
-  完整最小可运行示例与注册方式见 **[教程 08 · 写一个 baize 组件](../docs/tutorials/08-写一个baize组件.md)**。
+  完整最小可运行示例见 **`examples/logged_sandbox.py`**，注册方式见 **`baize/plugin.py`**。
+  （V22 时代的 `docs/tutorials/08-写一个baize组件.md` 已在 V24 瘦身中移除。）
 - **两套隔离语义（关键）**：
   - 经 `BAIZE_COMPONENTS` 的**显式覆盖**构建/类型失败 → **整体 fail-closed，启动阻断**（绝不静默降级到内置）；
   - `baize/plugins/` + `BAIZE_PLUGINS_DIR` 的**自动发现**组件失败 → **记录 + 跳过**，host 不崩（**绝不默认可信**）。

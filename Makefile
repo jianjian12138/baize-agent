@@ -2,7 +2,7 @@
 # Works on Unix/macOS and Windows (via Git Bash / WSL).
 PY ?= python
 
-.PHONY: install doctor test index clean cov gate chat serve repl
+.PHONY: install doctor test index clean cov gate chat serve repl truth hygiene
 
 install:
 	$(PY) install/bootstrap.py
@@ -29,7 +29,20 @@ cov:
 	$(PY) scripts/coverage_gate.py
 
 # Alias so CI can simply call `make gate`.
-gate: cov
+gate: cov truth hygiene
+
+# Version + test count single source of truth. baize/__init__.py holds the only
+# version literals; scripts/sync_truth.py owns every derived surface (README
+# titles and badges, manifest, docs) and this target fails on any drift.
+# Run `python scripts/sync_truth.py` (no --check) to regenerate them.
+truth:
+	$(PY) scripts/sync_truth.py --check
+
+# .gitignore does not apply retroactively: a path that is already tracked stays
+# tracked forever. This target inspects the index for junk the ignore rules were
+# meant to exclude (pycache, persistence/, probe scripts, ...).
+hygiene:
+	$(PY) scripts/check_hygiene.py
 
 index:
 	$(PY) -m baize.cli index build

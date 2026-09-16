@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "baize-agent"
-version = "37.0.0"
+# Version is NOT written here on purpose: `baize/__init__.py` owns the only
+# version literal in the repo, and scripts/sync_truth.py keeps every derived
+# surface (README badges, manifest, docs) in step with it. CI fails on drift.
+dynamic = ["version"]
 description = "Baize Agent — autonomous agent runtime (pure Python standard library, zero third-party dependencies)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +38,11 @@ baize = "baize.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["baize*"]
+
+# Reads __version__ straight out of baize/__init__.py (a plain literal, so
+# setuptools resolves it without importing the package).
+[tool.setuptools.dynamic]
+version = {attr = "baize.__version__"}
 
 [tool.setuptools.package-data]
 baize = ["py.typed"]

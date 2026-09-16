@@ -869,7 +869,7 @@ def build_parser() -> argparse.ArgumentParser:
     dt.add_argument("--host", default="127.0.0.1")
     dt.add_argument("--port", type=int, default=8787)
 
-    # V37.1 Ralph Autonomous PRD Engine
+    # V37.0.0 Ralph Autonomous PRD Engine
     rl = sub.add_parser("ralph", help="autonomous Ralph pattern PRD loop and long-horizon delivery")
     rl.add_argument("goal", nargs="?", default="", help="High-level project goal to decompose into prd.json")
     rl.add_argument("--resume", action="store_true", help="Resume from existing prd.json")

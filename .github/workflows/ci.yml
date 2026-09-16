@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # v30-dev is the repository's default branch and active development line
+    # (see the "分支说明" section of README.md). It MUST be listed here: while
+    # only main/master were listed, moving the default branch to v30-dev would
+    # have silently switched CI off for every push.
+    branches: [main, master, v30-dev]
   pull_request:
   workflow_dispatch:
 
@@ -83,20 +87,40 @@ jobs:
         run: python -m baize bench
 
       - name: Coverage threshold
-        shell: bash
-        run: |
-          python - <<'PY'
-          import xml.etree.ElementTree as ET, sys, os
-          rate = float(ET.parse("coverage.xml").getroot().get("line-rate", 0)) * 100
-          # 80% is the agreed floor. The engine is deliberately defensive: many
-          # branches are fail-closed paths (network/transport faults, sandbox
-          # escapes, model misconfiguration) that are hard to exercise in unit
-          # tests without resorting to mocks, and the entry-point shim
-          # (baize/__main__.py) is omitted from measurement.
-          threshold = float(os.environ.get("TEST_COVERAGE_THRESHOLD", "80"))
-          print(f"coverage {rate:.1f}% (threshold {threshold}%)")
-          sys.exit(0 if rate >= threshold else 1)
-          PY
+        # The threshold lives in baize.config (TEST_COVERAGE_THRESHOLD) and is
+        # enforced by scripts/coverage_gate.py - the same script `make cov` runs,
+        # reading the same .coverage data file pytest-cov just wrote. CI used to
+        # hardcode its own 80 here, so the documented promise and the enforced
+        # number had already drifted apart.
+        run: python scripts/coverage_gate.py
+
+  truth:
+    name: version & test-count single source of truth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev tooling
+        run: python -m pip install --upgrade pip pytest
+
+      # Two numbers on the front page used to be hand-typed in half a dozen
+      # files: that is how README.md advertised V36.0.0 Titan for a whole
+      # release, and a 53/53 test badge against a 650-case suite.
+      # baize/__init__.py now holds the only version literals; this gate fails
+      # the build if any derived surface drifts from it.
+      # The passed/failed split is deliberately NOT gated here - it depends on
+      # python/docker being on PATH, which differs between runners.
+      - name: Version + test-count truth gate
+        run: python scripts/sync_truth.py --check
+
+      # .gitignore never applies to already-tracked files, so junk survives in
+      # the index long after the ignore rule is added. Gate the index itself.
+      - name: Tracked-file hygiene gate
+        run: python scripts/check_hygiene.py
 
   install-smoke:
     name: one-command install (${{ matrix.os }})

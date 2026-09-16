@@ -1,6 +1,6 @@
 # ⚡ Baize Agent — 60-Second Quickstart Guide
 
-Welcome to **Baize Agent (V36.0.0 Titan)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
+Welcome to **Baize Agent (V37.0.0 Prometheus)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
 
 ---
 
