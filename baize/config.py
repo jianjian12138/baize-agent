@@ -34,8 +34,8 @@ _DEFAULTS = {
     # to this line is telling you the edit changed the contract, not that the test
     # is stale. Fix the coverage, do not edit the test.
     #
-    # KNOWN GAP (measured 2026-09-16 on v30-dev): actual coverage is 77.0%
-    # (8599 statements, .coverage). The gate is therefore RED. That is the honest
+    # KNOWN GAP (measured 2026-09-17 on v30-dev): actual coverage is 77.4%
+    # (8610 statements, .coverage). The gate is therefore RED. That is the honest
     # state - the repo does not meet its own floor. Lowering this number would
     # make the gate green by moving the goalposts, which is the failure mode this
     # whole single-source exercise exists to stop. Raise coverage by ~8 points,

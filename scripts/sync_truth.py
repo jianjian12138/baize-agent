@@ -179,6 +179,13 @@ SURFACES: dict[str, list[tuple[Surface, int]]] = {
     # skills/repo-truth-and-hygiene/scripts/audit_repo_truth.py [2].
     "START-HERE.md": [(VERSION_ONLY, 1)],
     "docs/benchmarks.md": [(VERSION_ONLY, 1)],
+    # Found by an audit sweep for V-literals outside the gate: these three had
+    # drifted to V25.0.0 / V33.0.0 while the release was V37.0.0, i.e. two of
+    # them were four releases stale. Each file has exactly ONE V-label and it is
+    # the release, which is the precondition VERSION_ONLY documents.
+    ".env.example": [(VERSION_ONLY, 1)],
+    "install/baize-desktop.bat": [(VERSION_ONLY, 1)],
+    "install/baize-desktop.ps1": [(VERSION_ONLY, 1)],
 }
 
 # Historical version references that must survive every sync untouched. These
@@ -234,14 +241,21 @@ def _run_pytest(args: list[str]) -> str:
     return proc.stdout + proc.stderr
 
 
-def measure_tests(run: bool) -> tuple[int, int]:
-    """Return (passed, total). Exits when it cannot measure.
+def measure_tests(run: bool) -> tuple[int, int, int, int]:
+    """Return ``(passed, total, skipped, failed)``. Exits when it cannot measure.
 
-    The passed count comes from pytest's JUnit XML rather than from scraping
-    stdout: one test prints a multi-kilobyte safe-delete JSON payload after the
+    The counts come from pytest's JUnit XML rather than from scraping stdout:
+    one test prints a multi-kilobyte safe-delete JSON payload after the
     progress dots, and an earlier stdout-scraping version of this script lost
     the summary line behind it and reported "suite crashed" for a suite that had
     run fine. XML is structured output - it cannot be drowned out.
+
+    Failures and skips are separated because they mean different things to the
+    reader: a failure is ours to fix, a skip is an environment guard firing
+    (e.g. PowerShell cannot launch absolute-path executables in a sandbox).
+    Lumping them together produced a warning that told the reader to "fix" two
+    tests that are not broken. Both still reduce the passed count, so the badge
+    never claims more green than was actually observed.
 
     A guessed number is worse than no number (NO FAKE DONE), so an
     unmeasurable suite is a hard error rather than a silent fallback.
@@ -259,7 +273,7 @@ def measure_tests(run: bool) -> tuple[int, int]:
     total = int(m.group(1))
 
     if not run:
-        return total, total
+        return total, total, 0, 0
 
     import tempfile
     import xml.etree.ElementTree as ET
@@ -275,13 +289,12 @@ def measure_tests(run: bool) -> tuple[int, int]:
             raise SystemExit("TRUTH ERROR: JUnit XML has no <testsuite> element")
         attrs = suite.attrib
         n_tests = int(attrs.get("tests", 0))
-        not_passed = sum(
-            int(attrs.get(k, 0)) for k in ("failures", "errors", "skipped")
-        )
-    passed = n_tests - not_passed
+        skipped = int(attrs.get("skipped", 0))
+        failed = int(attrs.get("failures", 0)) + int(attrs.get("errors", 0))
+    passed = n_tests - skipped - failed
     if n_tests == 0:
         raise SystemExit("TRUTH ERROR: JUnit XML reported 0 tests")
-    return passed, total
+    return passed, total, skipped, failed
 
 
 # -------------------------------------------------------------- json surfaces
@@ -325,7 +338,8 @@ def check_pyproject() -> list[str]:
 # ------------------------------------------------------------------- pipeline
 
 
-def do_sync(lab: Labels, passed: int, total: int) -> int:
+def do_sync(lab: Labels, passed: int, total: int,
+            skipped: int = 0, failed: int = 0) -> int:
     changes: list[str] = []
     problems: list[str] = []
 
@@ -355,11 +369,20 @@ def do_sync(lab: Labels, passed: int, total: int) -> int:
             print("  sync  " + c)
     else:
         print("  sync  nothing to do - every derived surface already matched")
-    if passed != total:
+    if failed or skipped:
+        bits = []
+        if failed:
+            bits.append(f"{failed} FAILED")
+        if skipped:
+            bits.append(f"{skipped} skipped by an environment guard")
         print(
-            f"WARN  {total - passed} test(s) did not pass on this machine; the badge records "
-            f"that honestly. Re-run after fixing to go green."
+            f"WARN  {', '.join(bits)}; the badge records only the {passed} that ran and "
+            f"passed, so it stays honest."
         )
+        if failed:
+            print("      Fix the failures to raise the badge.")
+        if skipped:
+            print("      Skipped tests need the capability they guard, not a code change.")
     return 0
 
 
@@ -442,13 +465,13 @@ def main(argv: list[str]) -> int:
 
     if args.check:
         if args.with_tests:
-            passed, total = measure_tests(run=True)
+            passed, total, skipped, failed = measure_tests(run=True)
         else:
-            passed, total = 0, measure_tests(run=False)[1]
+            passed, total, skipped, failed = 0, measure_tests(run=False)[1], 0, 0
         return do_check(lab, passed, total, strict_tests=args.with_tests)
 
-    passed, total = measure_tests(run=True)
-    return do_sync(lab, passed, total)
+    passed, total, skipped, failed = measure_tests(run=True)
+    return do_sync(lab, passed, total, skipped=skipped, failed=failed)
 
 
 if __name__ == "__main__":

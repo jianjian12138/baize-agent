@@ -57,6 +57,18 @@ JUNK_PATTERNS = [
     ".DS_Store",
 ]
 
+# Tracked paths that match a JUNK_PATTERN but are deliberately committed anyway.
+# fnmatch cannot express gitignore's negation (``!projects/.gitkeep``), so the
+# exception has to be listed here. Keep this list tiny and justified - every
+# entry is a claim that the file earns its place in the repository.
+ALLOWED_TRACKED = {
+    # Makes BAIZE_PROJECTS_DIR physically exist in a fresh clone.
+    # baize/doctor.py requires that directory (required=True) and nothing in the
+    # codebase creates it, so ignoring the whole directory made every fresh
+    # clone end in "RESULT: FAILED" - the documented quickstart could not pass.
+    "projects/.gitkeep",
+}
+
 # These patterns must also be present in .gitignore, otherwise the gate and the
 # ignore file have silently diverged and the gate is guarding the wrong thing.
 GITIGNORE_MUST_CONTAIN = [
@@ -96,6 +108,8 @@ def main(argv: list[str]) -> int:
 
     offenders: list[tuple[str, str]] = []
     for path in tracked_files():
+        if path in ALLOWED_TRACKED:
+            continue
         for pat in JUNK_PATTERNS:
             # Match the full path and every suffix, so "baize/core/__pycache__/x.pyc"
             # is caught by both "__pycache__/*" and "*.pyc".

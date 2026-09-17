@@ -22,7 +22,7 @@ python -m baize doctor
 python -m baize run "为用户认证模块编写严格的单元测试并跑通"
 
 # 进入持续交互式 REPL 终端（支持 @file 上下文注入与多行粘贴）
-python -m baize repl
+python -m baize chat
 ```
 
 ---

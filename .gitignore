@@ -2,6 +2,10 @@
 persistence/
 legacy/
 .env
+# Skills distilled by the learning loop (BAIZE_USER_SKILLS_DIR). Written at
+# runtime by every successful `baize run`, so without this line each run left an
+# untracked directory in `git status`.
+user_skills/
 __pycache__/
 .pytest_cache/
 *.pyc
@@ -20,8 +24,12 @@ dist/
 *.egg-info/
 
 # Example business projects (Agent-generated demos, not part of the engine).
-# Kept on local disk for reference; excluded from the delivered repo to stay lean.
-projects/
+# Kept on local disk for reference; the *content* is excluded to stay lean.
+# The directory itself must exist: baize/doctor.py requires it (required=True)
+# and nothing creates it, so ignoring the whole dir made every fresh clone end
+# in "RESULT: FAILED" - the documented 1-minute quickstart could not pass.
+projects/*
+!projects/.gitkeep
 
 # WorkBuddy project data (tool internals, not part of the deliverable)
 .workbuddy/

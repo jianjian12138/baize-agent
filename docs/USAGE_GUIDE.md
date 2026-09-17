@@ -83,14 +83,14 @@ baize [SUBCOMMAND] [OPTIONS]
 | :--- | :--- | :--- |
 | `baize doctor` | 运行系统健康体检，验证 Python、PowerShell 执行策略与编码 | `baize doctor` |
 | `baize run "<goal>"` | 启动单任务全自主执行（自动思考 ➔ 编码 ➔ 测试 ➔ 自愈） | `baize run "为用户认证模块编写严格单元测试"` |
-| `baize repl` | 启动持续交互式终端（支持多行粘贴、时空回溯与模型热切） | `baize repl` |
+| `baize chat` | 启动持续交互式终端（支持多行粘贴、时空回溯与模型热切） | `baize chat` |
 | `baize serve` | 启动本地 RESTful API 服务与沉浸式桌面 Studio Web 界面 | `baize serve --port 8787` |
 | `baize sessions` | 列出或审查历史执行会话轨迹与耗时谱系 | `baize sessions` 或 `baize sessions <id>` |
-| `baize index` | 构建并搜索工作区代码符号图谱与 260+ 技能库 | `baize index search "tdd"` |
+| `baize index` | 构建并搜索工作区代码符号图谱与技能库（本仓库内置 23 个技能；外部技能库通过 `SKILL_LIBRARY_PATHS` 追加） | `baize index search "tdd"` |
 | `baize gate` | 运行物理防伪门禁核验（NO FAKE DONE 真实凭据检查） | `baize gate` |
 
 ### 3.2 交互式 REPL 专属快捷指令 (Slash Commands)
-在运行 `baize repl` 时，支持以下高频斜杠指令：
+在运行 `baize chat` 时，支持以下高频斜杠指令：
 - **`@file <path>`**：向上下文直接注入指定代码文件内容；
 - **`/model <name>`**：会话过程中无缝热切换底层推理大模型；
 - **`/fork`**：从当前状态分叉出新的时间线分支，进行假设性探索；
@@ -112,7 +112,7 @@ baize [SUBCOMMAND] [OPTIONS]
 │ 3. 🗺️ 多任务协同 DAG 控制台      │ 9. 🧬 达尔文元工具自繁衍企业市场        │
 │ 4. 🌲 跨会话 Git-Graph 谱系树    │ 10. 🧪 系统体检与混沌抗脆弱演练台       │
 │ 5. 🔍 5大语言代码符号依赖图谱     │ 11. 🛡️ 安全权限与自主度滑块 (L1~L3)     │
-│ 6. 📚 技能中心 (260+ Matt Pocock)│                                         │
+│ 6. 📚 技能中心 (23 in this repo) │                                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

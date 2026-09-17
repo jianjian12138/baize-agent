@@ -22,7 +22,7 @@ Dispatch an autonomous coding or refactoring task:
 python -m baize run "write robust unit tests for authentication logic and ensure 100% pass"
 
 # Continuous interactive REPL session (supports @file injection, /fork, /rewind)
-python -m baize repl
+python -m baize chat
 ```
 
 ---

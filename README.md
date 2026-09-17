@@ -7,7 +7,7 @@
 <br/>
 
 [![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-644%2F650%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-681%2F683%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -76,7 +76,7 @@ python -m baize doctor
 python -m baize run "为数据持久化层编写严格的单元测试并跑通"
 
 # 进入持续交互式 REPL 终端（支持 @file 上下文注入与多行粘贴）
-python -m baize repl
+python -m baize chat
 ```
 
 ### 3. 唤起暗黑工业级桌面 Studio 工作台

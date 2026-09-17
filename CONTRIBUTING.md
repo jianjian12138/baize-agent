@@ -34,7 +34,7 @@ Or simply `make test` (uses `python`).
 - `python -m baize.cli doctor` passes (real environment gate).
 - `pytest tests/` is green and coverage stays at or above the floor in
   `config.TEST_COVERAGE_THRESHOLD` (85). `make gate` enforces it, and CI reads the
-  same config value. **This gate is currently RED** - measured coverage is 77.0%,
+  same config value. **This gate is currently RED** - measured coverage is 77.4%,
   so the repo does not yet meet its own floor. Closing that ~8 point gap is the
   work; editing the number down is not.
 - New tools are primitives registered with a JSON schema; avoid baking
