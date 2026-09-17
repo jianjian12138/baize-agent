@@ -11,20 +11,42 @@ Core endpoints:
   GET  /sessions/<id> -> single session transcript
   POST /run        -> {"goal": "..."}  single autonomous agent
   POST /team       -> {"goal": "..."}  Director->Executor->Verifier team
-  POST /v30/speculative -> speculative time-travel exploration
-  POST /v30/synthesize  -> meta-tool synthesis
-  POST /v30/adversarial -> red-blue adversarial round
+  POST /v30/swarm/speculate -> real multi-candidate exploration in git worktrees
+  POST /v30/synthesize  -> meta-tool synthesis  (requires token + explicit opt-in)
+  POST /v30/adversarial -> red-blue adversarial round (requires token + opt-in)
   POST /sessions/fork   -> fork a session at a message index
   POST /sessions/compress -> compress a session
 
-Defensive: request-size cap, JSON validation, CORS header, fail-closed when the
-model endpoint is unconfigured (HTTP 422).
+  POST /v30/speculative -> 501, see STUB_ROUTES. This one is worth calling out
+    because it looks like the /v30/swarm/speculate above and is not: it returned
+    a winner chosen among three timelines the handler constructed inline. Use
+    /v30/swarm/speculate for the real thing.
+
+Auth model (fail-closed):
+
+  * Every write (POST/PUT/DELETE) requires a configured BAIZE_AUTH_TOKEN, sent as
+    `Authorization: Bearer <token>` (or `?token=<token>`, which leaks into logs).
+  * With no token configured, writes are rejected with 401. Read-only routes
+    (/health, /metrics, /) stay open so the dashboard and probes still work.
+  * BAIZE_ALLOW_NO_AUTH=1 is an explicit escape hatch for a single user on
+    localhost. It does NOT unlock the code-executing endpoints below.
+  * /v30/synthesize and /v30/adversarial execute the code in the request body.
+    They require a real token *and* BAIZE_ENABLE_SYNTHESIS_API=1, and the
+    execution namespace is a builtins allowlist rather than full __builtins__.
+
+Other defensive measures: 1 MiB request-size cap, JSON validation, opt-in CORS
+allowlist (BAIZE_CORS_ORIGINS; empty means no CORS header at all), and
+fail-closed when the model endpoint is unconfigured (HTTP 422).
 """
 from __future__ import annotations
 
+import hmac
 import json
+import shutil
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 SERVER_START_TIME = time.time()
 
@@ -38,6 +60,7 @@ from .logging_setup import get_logger, setup_logging
 from .observability import obs
 from .orchestrator import Orchestrator
 from .plugin import registry
+from . import proc as proc_mod
 from . import sessions as sessions_mod
 from . import bench as bench_mod
 from . import bench_public as bench_public_mod
@@ -46,6 +69,97 @@ from . import gate as gate_mod
 log = get_logger("serve")
 
 MAX_BODY = 1 << 20  # 1 MiB
+
+#: Routes that answer 501 instead of a fabricated 200.
+#:
+#: Every one of these used to return HTTP 200 with a hardcoded success payload -
+#: "PR #43 opened", "4/4 checks green", "hunk merged", "webhook dispatched" - while
+#: performing no work at all. The strings were literals in this file. A caller had
+#: no way to tell a stub from a result, and the Studio UI rendered the literals as
+#: real outcomes. Returning 501 is the honest answer: it is what the endpoint
+#: actually does. Implementing any of them for real is tracked in the upgrade plan
+#: (P4-1 / P4-2); delete the entry here when that lands.
+#:
+#: The first seven were found by the audit. The last four were found *after* the
+#: first fix, while writing the route tests that were supposed to raise serve.py
+#: coverage - which is the argument for writing them: the audit's endpoint list
+#: was a sample, not a census, and nothing in the code made the difference
+#: visible. `scripts/check_endpoint_honesty.py` now pins all eleven by behaviour.
+STUB_ROUTES: dict[str, str] = {
+    "/api/webhook/dispatch":
+        "no outbound webhook is sent - no HTTP client is constructed or invoked",
+    "/api/vision/analyze":
+        "no multimodal model is called - the component list and colour palette "
+        "were hardcoded literals",
+    "/api/git/apply_hunk":
+        "no patch is applied - no file is read, patched or written",
+    "/api/ci/autofix":
+        "no CI run is inspected and no pull request is opened - the PR number "
+        "was a literal",
+    "/team/dag":
+        "no DAG is executed - the per-node verdicts and timings were literals",
+    "/v30/speculative/merge":
+        "no timeline is merged and no regression test is run",
+    "/v30/causal/heal":
+        "no mutation test is run - the 4/4 counts were literals",
+    # --- second pass (found while testing the routes above) -----------------
+    "/api/tools/import":
+        "no tool is registered or hot-loaded - the handler echoed the request's "
+        "own name back and returned status 'imported'",
+    "/api/security/rbac":
+        "no permission rule is applied and no signature is produced - the "
+        "watermark was a hash of the current time",
+    "/api/chaos/simulate":
+        "no fault is injected and no recovery is observed - faults_injected, "
+        "auto_healed and the 100% recovery rate were literals",
+    "/v30/speculative":
+        "no branch is explored - the three candidate timelines were constructed "
+        "in the handler with literal churn_lines and status 'verified', and the "
+        "engine then picked a winner among them",
+}
+
+
+def _stub_body(path: str) -> dict:
+    """Response body for a route in :data:`STUB_ROUTES`."""
+    reason = STUB_ROUTES[path]
+    return {
+        "error": "not_implemented",
+        "status": "not_implemented",
+        "path": path,
+        "reason": reason,
+        # `message` is included so a caller that only reads `message` still sees
+        # something truthful rather than `undefined`.
+        "message": f"该端点尚未实现：{reason}。此前它返回的是硬编码的假成功响应，"
+                   f"现改为 501，以免把桩当作结果。",
+    }
+
+
+#: Explanation attached to settings that the API accepts and echoes back but that
+#: nothing in the runtime consults.
+#:
+#: `grep -rn BAIZE_AUTONOMY_LEVEL baize/` finds exactly two hits - the GET that
+#: reports it and the POST that stores it. No agent, tool or orchestrator path
+#: reads it, so moving the Studio autonomy slider changes nothing. These keys are
+#: kept because the desktop control panel binds to them; they are reported with
+#: `"effective": False` so a caller cannot mistake the slider for a live control.
+INERT_SETTINGS_NOTE = (
+    "autonomy_level and yolo_mode are stored in the server process environment "
+    "and reported back, but no code path reads them: changing them does not "
+    "alter agent behaviour, and they are not persisted across restarts."
+)
+
+
+def _resolve_git() -> str | None:
+    """Path to a usable git, or None. Never a machine-specific literal.
+
+    This used to be a hardcoded absolute path into one developer's PortableGit
+    installation, committed into the repo. It could only ever work on that one
+    machine - not in CI, not in the Docker image, not on a fresh clone.
+    """
+    override = (load_config().get("BAIZE_GIT_EXE") or "").strip()
+    if override:
+        return override if Path(override).exists() else None
+    return shutil.which("git")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -59,12 +173,37 @@ class Handler(BaseHTTPRequestHandler):
         self._send_text(code, json.dumps(obj, ensure_ascii=False),
                         "application/json; charset=utf-8")
 
+    def _emit_cors(self) -> bool:
+        """Emit CORS headers, but only for explicitly allowlisted origins.
+
+        Opt-in via BAIZE_CORS_ORIGINS (comma-separated); empty means no CORS
+        header is ever emitted. This used to be `Access-Control-Allow-Origin: *`
+        on every response, which turned a loopback-only server into one drivable
+        from any page the user happened to visit.
+
+        Returns True when the headers were emitted, so callers that need to add
+        further CORS headers (do_OPTIONS) do not have to re-derive the allowlist.
+
+        Single source of truth on purpose: this logic was previously copied into
+        _send_text, do_OPTIONS and _handle_run_stream, and exactly one copy was
+        missed when the wildcard was removed, leaving the SSE endpoint open.
+        """
+        origin = self.headers.get("Origin", "")
+        allowed = [o.strip() for o in
+                   load_config().get("BAIZE_CORS_ORIGINS", "").split(",")
+                   if o.strip()]
+        if not origin or origin not in allowed:
+            return False
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
+        return True
+
     def _send_text(self, code: int, text: str, ctype: str) -> None:
         """Send a raw (non-JSON) body - required for HTML and Prometheus."""
         body = text.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._emit_cors()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -76,15 +215,30 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b"{}"
         return json.loads(raw or b"{}")
 
-    def _is_authorized(self) -> bool:
+    def _is_authorized(self, *, require_token: bool = False) -> bool:
+        """Decide whether this request may proceed. FAIL-CLOSED.
+
+        Historically this returned True whenever BAIZE_AUTH_TOKEN was unset, so a
+        default install authenticated everyone - and the two code-executing
+        endpoints under /v30 were reachable from any web page the user visited.
+        Now an unconfigured token denies writes unless the operator has explicitly
+        opted out with BAIZE_ALLOW_NO_AUTH=1, and endpoints that execute
+        caller-supplied code require a real token even then.
+        """
         cfg = load_config()
-        token = cfg.get("BAIZE_AUTH_TOKEN")
+        token = (cfg.get("BAIZE_AUTH_TOKEN") or "").strip()
         if not token:
-            return True
+            if require_token:
+                return False
+            return cfg.get("BAIZE_ALLOW_NO_AUTH", "0") == "1"
         auth = self.headers.get("Authorization", "")
-        if auth.startswith("Bearer ") and auth[7:].strip() == token:
+        if auth.startswith("Bearer ") and hmac.compare_digest(
+                auth[7:].strip(), token):
             return True
-        if f"token={token}" in self.path:
+        # Query-string form kept for backwards compatibility. It leaks the token
+        # into access logs, so prefer the Authorization header.
+        supplied = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        if supplied and hmac.compare_digest(supplied, token):
             return True
         return False
 
@@ -93,7 +247,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_text(200, dashboard.render(),
                                    "text/html; charset=utf-8")
         if self.path == "/health":
-            return self._send(200, {"status": "ok", "version": __version__})
+            # The boundary disclosure travels with the health probe on purpose:
+            # an operator reading "status: ok" should also be able to read what
+            # the agent's bash tool actually constrains. Lazy import - tools.py
+            # is heavy and /health is polled.
+            from .tools import EXECUTION_BOUNDARY
+            return self._send(200, {
+                "status": "ok",
+                "version": __version__,
+                "execution_boundary": EXECUTION_BOUNDARY,
+            })
         if self.path == "/metrics":
             # Prometheus exposition format - plain text, NOT JSON-encoded
             return self._send_text(200, obs.prometheus(),
@@ -168,7 +331,6 @@ class Handler(BaseHTTPRequestHandler):
                 "fork_at_index": lineage.get("at_index") if lineage else None,
             })
         if self.path == "/api/workspace/files":
-            from pathlib import Path
             root = Path(load_config().get("BAIZE_WORKSPACE_DIR", "."))
             files = []
             try:
@@ -278,28 +440,8 @@ class Handler(BaseHTTPRequestHandler):
             content = get_skill_content(sname)
             return self._send(200, {"name": sname, "content": content})
 
-        if self.path == "/api/git/status":
-            import subprocess
-            git_exe = r"C:\Users\Admin（无密码）\.workbuddy\binaries\PortableGit\versions\1.2.0\cmd\git.exe"
-            try:
-                res = subprocess.run([git_exe, "status", "-s"], capture_output=True, text=True, cwd=load_config()["BAIZE_WORKSPACE_DIR"])
-                branch_res = subprocess.run([git_exe, "branch", "--show-current"], capture_output=True, text=True, cwd=load_config()["BAIZE_WORKSPACE_DIR"])
-                return self._send(200, {
-                    "branch": branch_res.stdout.strip() or "v30-dev",
-                    "status_output": res.stdout,
-                    "clean": len(res.stdout.strip()) == 0
-                })
-            except Exception as e:
-                return self._send(200, {"branch": "v30-dev", "status_output": "", "clean": True, "error": str(e)})
-
-        if self.path == "/api/git/diff":
-            import subprocess
-            git_exe = r"C:\Users\Admin（无密码）\.workbuddy\binaries\PortableGit\versions\1.2.0\cmd\git.exe"
-            try:
-                res = subprocess.run([git_exe, "diff"], capture_output=True, text=True, cwd=load_config()["BAIZE_WORKSPACE_DIR"])
-                return self._send(200, {"diff": res.stdout})
-            except Exception as e:
-                return self._send(200, {"diff": "", "error": str(e)})
+        if self.path in ("/api/git/status", "/api/git/diff"):
+            return self._handle_git_status_or_diff()
 
         if self.path == "/api/config":
             cfg = load_config()
@@ -307,9 +449,68 @@ class Handler(BaseHTTPRequestHandler):
                 "autonomy_level": int(cfg.get("BAIZE_AUTONOMY_LEVEL", 2)),
                 "yolo_mode": bool(int(cfg.get("BAIZE_YOLO_MODE", 0))),
                 "workspace": cfg.get("BAIZE_WORKSPACE_DIR", "."),
+                # These two are inert. See INERT_SETTINGS_NOTE.
+                "effective": {"autonomy_level": False, "yolo_mode": False},
+                "note": INERT_SETTINGS_NOTE,
             })
 
         return self._send(404, {"error": "not found"})
+
+    def _handle_git_status_or_diff(self) -> None:
+        """Serve /api/git/status and /api/git/diff, honestly.
+
+        Three defects fixed here, all in the same shape - reporting success that
+        did not happen:
+
+          * the git executable was a hardcoded absolute path into one machine's
+            PortableGit install, so this could not work anywhere else;
+          * on any failure the response was still HTTP 200, and /api/git/status
+            reported ``"clean": True`` - i.e. "your tree is clean" when git had
+            not run at all;
+          * the branch name fell back to the literal ``"v30-dev"``.
+
+        Failures now answer 503 with ``git_available: false`` and no fabricated
+        fields. A client can no longer mistake "could not check" for "all clear".
+        """
+        git_exe = _resolve_git()
+        if not git_exe:
+            return self._send(503, {
+                "error": "git_unavailable",
+                "git_available": False,
+                "message": "no usable git executable found (looked on PATH and at "
+                           "BAIZE_GIT_EXE); cannot report repository state",
+            })
+        cwd = load_config().get("BAIZE_WORKSPACE_DIR", ".")
+        # errors="replace": git output is not guaranteed to be valid UTF-8 (CJK
+        # filenames on a GBK console are the normal case), and a decode failure
+        # would surface as a 500 for a request that should have succeeded.
+        try:
+            if self.path == "/api/git/status":
+                res = proc_mod.run([git_exe, "status", "-s"], timeout=30, cwd=cwd)
+                branch_res = proc_mod.run([git_exe, "branch", "--show-current"],
+                                          timeout=30, cwd=cwd)
+                if res.timed_out or branch_res.timed_out:
+                    return self._send(503, {"error": "git_timeout",
+                                            "git_available": True,
+                                            "message": "git did not respond in 30s"})
+                return self._send(200, {
+                    "git_available": True,
+                    "branch": branch_res.stdout.strip(),
+                    "status_output": res.stdout,
+                    "clean": len(res.stdout.strip()) == 0,
+                })
+            res = proc_mod.run([git_exe, "diff"], timeout=60, cwd=cwd)
+            if res.timed_out:
+                return self._send(503, {"error": "git_timeout",
+                                        "git_available": True,
+                                        "message": "git diff did not respond in 60s"})
+            return self._send(200, {"git_available": True, "diff": res.stdout})
+        except Exception as e:  # noqa: BLE001 - report, never fabricate
+            return self._send(503, {
+                "error": "git_failed",
+                "git_available": False,
+                "message": f"git could not be run: {e}",
+            })
 
     def do_HEAD(self):
         """Health checkers and scrapers often probe with HEAD."""
@@ -331,16 +532,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "invalid JSON"})
         if data is None:
             return self._send(413, {"error": "payload too large"})
-        if self.path == "/api/webhook/dispatch":
-            target = data.get("target") or "feishu"
-            event = data.get("event") or "agent_task_finished"
-            return self._send(200, {
-                "status": "dispatched",
-                "target": target,
-                "event": event,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "message": f"Webhook 事件 [{event}] 已成功推送到 {target.upper()} 机器人通道！"
-            })
+        # Stub routes answer 501 before any handler runs. See STUB_ROUTES.
+        if self.path in STUB_ROUTES:
+            return self._send(501, _stub_body(self.path))
         if self.path == "/api/mcp/call":
             server = data.get("server") or "sqlite"
             tool = data.get("tool") or "sqlite_query"
@@ -348,23 +542,6 @@ class Handler(BaseHTTPRequestHandler):
             from .mcp import call_mcp_tool
             res = call_mcp_tool(server, tool, args, load_config().get("BAIZE_WORKSPACE_DIR", "."))
             return self._send(200, res)
-        if self.path == "/api/vision/analyze":
-            img_b64 = data.get("image") or ""
-            prompt = data.get("prompt") or "分析 UI 布局并生成前端代码"
-            return self._send(200, {
-                "status": "analyzed",
-                "components_detected": ["HeaderBar", "ActivityRail", "ChatViewport", "PromptShelf", "DockInput"],
-                "color_palette": ["#0b0d13", "#00f2fe", "#10141f", "#e2e8f0"],
-                "generated_code": "<div class=\"app-container\">\n  <header class=\"header\">...</header>\n</div>",
-                "message": "已成功通过多模态 Vision 模型识别 UI 视觉层级，并反向合成像素级前端组件代码！"
-            })
-        if self.path == "/api/git/apply_hunk":
-            hunk_id = data.get("hunk_id", 1)
-            return self._send(200, {
-                "status": "applied",
-                "hunk_id": hunk_id,
-                "message": f"代码块 Hunk #{hunk_id} 已成功单行精准合并至本地工作区！"
-            })
         if self.path == "/v30/swarm/speculate":
             goal = data.get("goal") or "优化系统并发安全性"
             from .swarm import run_parallel_swarm_speculation
@@ -376,15 +553,6 @@ class Handler(BaseHTTPRequestHandler):
             from .context_slicer import slice_code_context
             res = slice_code_context(code, symbol)
             return self._send(200, res)
-        if self.path == "/api/ci/autofix":
-            repo = data.get("repo") or "jianjian12138/baize-agent"
-            return self._send(200, {
-                "status": "pr_opened",
-                "repo": repo,
-                "branch": "baize-autofix-patch-1",
-                "pr_number": 43,
-                "message": f"CI 故障已被白泽 AST 因果自愈引擎捕获，已自动创建修复分支并在 {repo} 开启 Pull Request #43！"
-            })
         if self.path == "/api/market/publish":
             from .tool_market import publish_market_tool
             res = publish_market_tool(data)
@@ -398,8 +566,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/byzantine/arbitrate":
             code = data.get("code") or ""
             goal = data.get("goal") or "核心支付状态机发布评审"
-            from .byzantine import run_byzantine_consensus
-            res = run_byzantine_consensus(code, goal)
+            # Verdicts come from the caller. This route does not generate them:
+            # it used to return two literal APPROVEs, so every request - including
+            # an empty one - reached consensus. With no verdicts the response now
+            # says "awaiting_verdicts" instead.
+            from .byzantine import DEFAULT_QUORUM, run_byzantine_consensus
+            verdicts = data.get("verdicts") or None
+            quorum = int(data.get("quorum") or DEFAULT_QUORUM)
+            res = run_byzantine_consensus(code, goal, verdicts=verdicts, quorum=quorum)
             return self._send(200, res)
         if self.path == "/api/invariants/anchor":
             goal = data.get("goal") or "长期重构任务"
@@ -436,142 +610,144 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_run_stream(data)
         if self.path == "/team":
             return self._handle_team(data)
-        if self.path == "/team/dag":
-            nodes = data.get("nodes") or []
-            goal = data.get("goal") or "DAG Multi-Agent Goal"
-            return self._send(200, {
-                "status": "success",
-                "goal": goal,
-                "executed_nodes": [
-                    {"id": n.get("id", "n1"), "role": n.get("role", "executor"), "verdict": "pass", "time_ms": 230}
-                    for n in nodes
-                ] if nodes else [
-                    {"id": "director", "role": "director", "verdict": "pass", "time_ms": 120},
-                    {"id": "executor", "role": "executor", "verdict": "pass", "time_ms": 350},
-                    {"id": "critic", "role": "critic", "verdict": "pass", "time_ms": 180},
-                    {"id": "verifier", "role": "verifier", "verdict": "pass", "time_ms": 90},
-                ],
-                "message": "DAG 拓扑执行全部通过物理门禁核验！"
-            })
-        if self.path == "/v30/speculative":
-            return self._handle_speculative(data)
-        if self.path == "/v30/speculative/merge":
-            winner = data.get("winner") or "minimal_patch"
-            return self._send(200, {
-                "status": "merged",
-                "winner": winner,
-                "churn_lines": 4,
-                "message": f"已成功将胜出时间线 [{winner}] 合并至当前工作区，并通过物理门禁回归测试！"
-            })
+        # `/v30/speculative` used to call `_handle_speculative`, which built three
+        # candidate timelines in the handler with literal churn_lines and
+        # status="verified", then asked the engine to pick a winner among them -
+        # the same defect as `cmd_speculative`, in the API instead of the CLI.
+        # The route is declared in STUB_ROUTES and answers 501.
+        # `/v30/swarm/speculate` is the real one: it calls
+        # run_parallel_swarm_speculation, which creates real git worktrees.
         if self.path == "/v30/synthesize":
+            gate = self._code_exec_gate()
+            if gate is not None:
+                return gate
             return self._handle_synthesize(data)
         if self.path == "/v30/adversarial":
+            gate = self._code_exec_gate()
+            if gate is not None:
+                return gate
             return self._handle_adversarial(data)
         if self.path == "/v30/causal":
             return self._handle_causal(data)
-        if self.path == "/v30/causal/heal":
-            fn = data.get("target_function") or "divide"
-            return self._send(200, {
-                "status": "healed",
-                "target_function": fn,
-                "tests_passed": 4,
-                "total_tests": 4,
-                "anti_fragile": True,
-                "message": f"函数 [{fn}] 已应用 AST 变异防护自愈补丁，4 项对抗性边界测试全绿通过！"
-            })
         if self.path == "/v30/causal/persist_test":
-            fn = data.get("target_function") or "divide"
-            from pathlib import Path
+            fn = (data.get("target_function") or "divide").strip()
+            code = data.get("code") or ""
+            # `fn` used to be interpolated straight into the output filename and
+            # into the body of a Python file written to disk, with no validation:
+            # a value containing a newline or a path separator could inject code
+            # into a file that pytest then collects and executes.
+            if not fn.isidentifier():
+                return self._send(400, {
+                    "error": f"target_function {fn!r} is not a valid Python identifier",
+                    "reason": "the name is used both as a filename component and as the "
+                              "function name inside the written source",
+                })
+            if not code.strip():
+                return self._send(400, {
+                    "error": "code is required",
+                    "reason": "the test is generated from the submitted source; the old "
+                              "handler ignored the request and wrote a fixed divide() "
+                              "template, so the file had nothing to do with the input",
+                })
+            from .mutation import run_ast_mutation_arena
+            arena = run_ast_mutation_arena(code, fn)
+            if arena.get("status") != "success":
+                return self._send(422, {
+                    "error": "no guardrail test could be generated from that source",
+                    "arena_status": arena.get("status"),
+                    "arena_message": arena.get("message"),
+                })
             gen_dir = Path("tests/generated")
             gen_dir.mkdir(parents=True, exist_ok=True)
-            test_file = gen_dir / f"test_causal_{fn}.py"
-            test_content = f'''"""Auto-generated anti-fragile counterfactual regression tests for {fn}."""
-import pytest
-
-def {fn}(a, b):
-    if b == 0:
-        raise ZeroDivisionError("division by zero prevented")
-    return a / b
-
-def test_{fn}_normal():
-    assert {fn}(10, 2) == 5.0
-
-def test_{fn}_zero_division_guard():
-    with pytest.raises(ZeroDivisionError):
-        {fn}(10, 0)
-
-def test_{fn}_negative():
-    assert {fn}(-8, 2) == -4.0
-'''
-            test_file.write_text(test_content, encoding="utf-8")
+            test_file = (gen_dir / f"test_causal_{fn}.py").resolve()
+            if gen_dir.resolve() not in test_file.parents:
+                return self._send(400, {
+                    "error": "refusing to write outside tests/generated",
+                    "resolved": str(test_file).replace("\\", "/"),
+                })
+            # Explicit utf-8 and "\n": the default text mode translates newlines
+            # to os.linesep, so on Windows the file would be 1 byte per line
+            # longer than the text the response quotes, and bytes_written would
+            # not match what a reader computes.
+            test_file.write_text(
+                arena["synthesized_guardrail_test"], encoding="utf-8", newline="\n"
+            )
             return self._send(200, {
                 "status": "persisted",
                 "path": str(test_file).replace("\\", "/"),
-                "tests_count": 3,
-                "message": f"函数 [{fn}] 的 AST 反事实变异防护测试已成功写入 {test_file.name}，可立即纳入 pytest 回归测试网！"
+                "bytes_written": test_file.stat().st_size,
+                "mutation_score": arena["mutation_score"],
+                "guardrail_verification": arena["guardrail_verification"],
+                "tracked_by_git": False,
+                "message": (
+                    f"已将 {fn} 的护栏测试写入 {test_file.name}"
+                    f"（{test_file.stat().st_size} 字节，击杀率 "
+                    f"{arena['mutation_score'] or '无'}）。"
+                    "该文件由提交的源码与实测探针生成，内容与源码逐行对应；"
+                    "tests/generated/ 未纳入版本控制。"
+                ),
             })
-        if self.path == "/api/tools/import":
-            tool_name = data.get("name") or "imported_tool"
-            return self._send(200, {
-                "status": "imported",
-                "name": tool_name,
-                "message": f"元工具 [{tool_name}] 已成功动态热加载至当前智能体 ToolRegistry 沙箱！"
-            })
+        # `/api/tools/import`, `/api/security/rbac` and `/api/chaos/simulate`
+        # used to live here. Each returned HTTP 200 with a completion message
+        # ("tool hot-loaded into the ToolRegistry sandbox", "RBAC rules applied,
+        # signature watermark issued", "5 faults injected, 5 auto-healed, 100%
+        # recovery") while doing nothing of the kind: no registry was touched, no
+        # rule was applied and no fault was injected. The bodies were deleted
+        # rather than left unreachable, because dead code that looks live is how
+        # the next reader re-enables it. They are declared in STUB_ROUTES above
+        # and answer 501.
         if self.path == "/api/memory/search":
-            query = (data.get("query") or "").strip().lower()
-            from pathlib import Path
+            # Real substring search over the session transcripts, with the score
+            # reported as what it is. The previous version attached a fixed
+            # "relevance": 0.92 to every hit and, when nothing matched, invented a
+            # "knowledge_base" result at 0.75 claiming a semantic match had
+            # occurred. Nothing was semantic and nothing was matched.
+            query = (data.get("query") or "").strip()
             results = []
-            sess_dir = Path("persistence/sessions")
-            if sess_dir.exists():
-                for p in sess_dir.glob("*.jsonl"):
+            sess_dir = Path(load_config().get("BAIZE_SESSIONS_DIR",
+                                             "persistence/sessions"))
+            if query and sess_dir.exists():
+                needle = query.lower()
+                for p in sorted(sess_dir.glob("*.jsonl")):
                     try:
-                        content = p.read_text(encoding="utf-8")
-                        if query and query in content.lower():
-                            results.append({
-                                "source": f"session:{p.stem}",
-                                "snippet": f"匹配会话历史: {p.stem} 中包含目标关键词 '{query}'",
-                                "relevance": 0.92
-                            })
-                    except Exception:
-                        pass
-            if not results:
-                results.append({
-                    "source": "knowledge_base",
-                    "snippet": f"未在历史会话中发现完全相同的故障记录，已根据语义匹配到工程规范规约。",
-                    "relevance": 0.75
-                })
-            return self._send(200, {"query": query, "results": results[:5]})
+                        content = p.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    hits = content.lower().count(needle)
+                    if hits:
+                        results.append({
+                            "source": f"session:{p.stem}",
+                            "match": "substring",
+                            "occurrences": hits,
+                            "snippet": content[:200],
+                        })
+            results.sort(key=lambda r: r["occurrences"], reverse=True)
+            return self._send(200, {
+                "query": query,
+                "match": "substring",
+                "results": results[:5],
+                "searched_dir": str(sess_dir),
+                "note": ("substring matches only - no embedding model is loaded, "
+                         "so there is no semantic ranking here"),
+            })
         if self.path == "/api/models/route":
+            # This classifies a prompt; it does not route anything. The previous
+            # response said `routed_model` and quoted a `saved_cost_ratio` that
+            # came from nowhere. Both are now stated for what they are.
             prompt = (data.get("prompt") or "").strip().lower()
-            is_complex = any(k in prompt for k in ["重构", "refactor", "ast", "causal", "架构", "dag", "推演", "speculative"])
-            routed_model = "deepseek-reasoner" if is_complex else "deepseek-chat"
+            keywords = ["重构", "refactor", "ast", "causal", "架构", "dag",
+                        "推演", "speculative"]
+            matched = [k for k in keywords if k in prompt]
+            is_complex = bool(matched)
             return self._send(200, {
                 "complexity": "HIGH" if is_complex else "FAST",
-                "routed_model": routed_model,
-                "reason": "检测到多步因果推演或架构任务，路由至深度推理大模型" if is_complex else "轻量快速任务，路由至超快低成本大模型",
-                "saved_cost_ratio": "0%" if is_complex else "65%"
-            })
-        if self.path == "/api/security/rbac":
-            rules = data.get("rules") or [{"path": "src/**", "perm": "rw"}, {"path": "deploy/**", "perm": "ro"}]
-            import hashlib
-            sig = hashlib.sha256(f"Baize-Gate-{time.time()}".encode()).hexdigest()[:16].upper()
-            return self._send(200, {
-                "status": "applied",
-                "rules": rules,
-                "commit_watermark": f"Baize-Gate-Verified: BG-{sig}",
-                "message": "细粒度路径 RBAC 权限与物理门禁加密签名水印已生效！"
-            })
-        if self.path == "/api/chaos/simulate":
-            fault_type = data.get("fault_type") or "malformed_json"
-            return self._send(200, {
-                "status": "resilient",
-                "fault_type": fault_type,
-                "faults_injected": 5,
-                "auto_healed": 5,
-                "recovery_rate": "100%",
-                "resilience_score": "99.4/100",
-                "verdict": "PASS (Anti-Fragile Verified)",
-                "message": f"在模拟 [{fault_type}] 极端恶劣环境下，Agent 触发了 5 次自愈重试机制，抗脆弱物理门禁 100% 满分通过！"
+                "suggested_model": ("deepseek-reasoner" if is_complex
+                                    else "deepseek-chat"),
+                "routed": False,
+                "basis": ("matched keyword(s): " + ", ".join(matched)
+                          if matched else "no complexity keyword matched"),
+                "note": ("advisory only - the caller decides whether to act on it; "
+                         "no model selection was performed"),
             })
         if self.path == "/sessions/fork":
             return self._handle_fork(data)
@@ -584,7 +760,18 @@ def test_{fn}_negative():
             if model_id:
                 import os
                 os.environ["BAIZE_MODEL_NAME"] = model_id
-                return self._send(200, {"active_model": model_id, "status": "updated"})
+                # Same treatment as /api/config: say exactly what happened. The
+                # value is in this process's environment and is read by
+                # load_config, but nothing writes it to .env, so it does not
+                # survive a restart. "updated" read as "persisted".
+                return self._send(200, {
+                    "active_model": model_id,
+                    "status": "stored_in_process_env",
+                    "persisted": False,
+                    "note": ("BAIZE_MODEL_NAME is set in the server process "
+                             "environment; it is not written to .env and does "
+                             "not survive a restart"),
+                })
             return self._send(400, {"error": "missing model id"})
         if self.path == "/api/config":
             level = data.get("autonomy_level")
@@ -592,27 +779,51 @@ def test_{fn}_negative():
                 import os
                 os.environ["BAIZE_AUTONOMY_LEVEL"] = str(level)
                 os.environ["BAIZE_YOLO_MODE"] = "1" if int(level) == 3 else "0"
-                return self._send(200, {"autonomy_level": level, "status": "updated"})
+                # `status` says exactly what happened: the value is now in this
+                # process's environment. It is NOT persisted and NOT consulted,
+                # so it must not read as "the agent's autonomy changed".
+                return self._send(200, {
+                    "autonomy_level": level,
+                    "status": "stored_in_process_env",
+                    "persisted": False,
+                    "effective": False,
+                    "note": INERT_SETTINGS_NOTE,
+                })
             return self._send(400, {"error": "missing config field"})
         return self._send(404, {"error": "not found"})
 
     def _handle_causal(self, data: dict) -> None:
         code = data.get("code") or "def divide(a, b):\n    return a / b"
         fn_name = data.get("target_function") or "divide"
-        from .knowledge.causal import CausalDebugger
-        dbg = CausalDebugger()
-        cslice = dbg.slice_culprit_ast(code, fn_name)
-        mutations = dbg.generate_counterfactual_mutations(cslice)
+        error_context = data.get("error_context") or ""
+        # This used to import CausalDebugger and call slice_culprit_ast /
+        # generate_counterfactual_mutations. None of those three names exists in
+        # baize/knowledge/causal.py, so every request to /v30/causal raised
+        # ImportError. The real API is ASTCausalTracker.extract_slice +
+        # MutationFuzzer.generate_mutations.
+        from .knowledge.causal import ASTCausalTracker, MutationFuzzer
+        cslice = ASTCausalTracker().extract_slice(code, fn_name, error_context)
+        mutations = MutationFuzzer().generate_mutations(fn_name, cslice.culprit_variables)
         self._send(200, {
             "target_function": cslice.target_function,
             "line_range": cslice.line_range,
             "culprit_variables": cslice.culprit_variables,
             "ast_node_type": cslice.ast_node_type,
             "snippet": cslice.source_snippet,
+            # The fuzzer returns case *descriptors*: a name, a payload and a
+            # rationale. Nothing runs them, so the response must not read as
+            # "these passed". CausalProof.passed_mutation_tests is only ever
+            # constructed by a test, never by this route.
+            "mutations_executed": False,
+            "mutations_note": (
+                "these are generated case descriptors - no payload was applied to "
+                "the target function and no result was observed"
+            ),
             "mutations": [
-                {"name": m.name, "type": m.mutation_type, "desc": m.description, "payload": m.payload}
+                {"name": m.name, "type": m.mutation_type, "desc": m.description,
+                 "payload": {k: repr(v) for k, v in m.payload.items()}}
                 for m in mutations
-            ]
+            ],
         })
 
     def _handle_save_skill(self, data: dict) -> None:
@@ -628,13 +839,23 @@ def test_{fn}_negative():
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        if self._emit_cors():
+            self.send_header("Access-Control-Allow-Methods",
+                             "GET, POST, DELETE, HEAD, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers",
+                             "Content-Type, Authorization")
         self.end_headers()
 
     def do_DELETE(self):
-        from pathlib import Path
+        # Auth was missing here. The module docstring has always claimed
+        # "every write (POST/PUT/DELETE) requires a configured BAIZE_AUTH_TOKEN",
+        # and do_POST enforces it, but do_DELETE went straight to the filesystem:
+        # anyone who could reach the port could destroy every session transcript
+        # with a single unauthenticated request. Found by the route tests, which
+        # were written to raise coverage - the check was simply never exercised.
+        if not self._is_authorized():
+            return self._send(401, {"error": "unauthorized: invalid or missing "
+                                             "bearer token"})
         cfg = load_config()
         sessions_dir = Path(cfg.get("BAIZE_SESSIONS_DIR", "persistence/sessions"))
         if self.path in ("/sessions", "/sessions/all", "/sessions/clear"):
@@ -655,6 +876,32 @@ def test_{fn}_negative():
                 return self._send(200, {"deleted": sid})
             return self._send(404, {"error": "session not found"})
         return self._send(404, {"error": "not found"})
+
+    def _code_exec_gate(self):
+        """Guard for endpoints that exec caller-supplied code.
+
+        Returns None when execution is permitted; otherwise sends the refusal and
+        returns a sentinel. Two independent conditions must both hold:
+
+          1. a real BAIZE_AUTH_TOKEN is configured (BAIZE_ALLOW_NO_AUTH=1, the
+             localhost convenience flag, is deliberately NOT sufficient here), and
+          2. BAIZE_ENABLE_SYNTHESIS_API=1.
+
+        These endpoints previously ran `exec(code, {"__builtins__": __builtins__})`
+        on the request body with no gate beyond the (fail-open) global check.
+        """
+        if not self._is_authorized(require_token=True):
+            self._send(403, {
+                "error": "this endpoint executes caller-supplied code and requires "
+                         "a configured BAIZE_AUTH_TOKEN; BAIZE_ALLOW_NO_AUTH does "
+                         "not apply here"})
+            return True
+        if load_config().get("BAIZE_ENABLE_SYNTHESIS_API", "0") != "1":
+            self._send(501, {
+                "error": "code-execution endpoints are disabled by default; "
+                         "set BAIZE_ENABLE_SYNTHESIS_API=1 to enable"})
+            return True
+        return None
 
     def _handle_synthesize(self, data: dict) -> None:
         name = (data.get("name") or "").strip()
@@ -677,30 +924,12 @@ def test_{fn}_negative():
         round_res = judge.arbitrate(1, blue_code, red_input)
         self._send(200, {"verdict": round_res.verdict, "attack_succeeded": round_res.attack_succeeded})
 
-    def _handle_speculative(self, data: dict) -> None:
-        goal = (data.get("goal") or "").strip()
-        if not goal:
-            return self._send(400, {"error": "missing goal"})
-        from .orchestration.forking import SpeculativeTimeline, SpeculativeEngine
-        engine = SpeculativeEngine()
-        timelines = [
-            SpeculativeTimeline(timeline_id="t1", strategy="minimal_patch", status="verified", checks_passed=3, total_checks=3, churn_lines=4),
-            SpeculativeTimeline(timeline_id="t2", strategy="modular_refactor", status="verified", checks_passed=3, total_checks=3, churn_lines=20),
-            SpeculativeTimeline(timeline_id="t3", strategy="contract_driven", status="verified", checks_passed=3, total_checks=3, churn_lines=12),
-        ]
-        winner = engine.select_and_merge(timelines)
-        self._send(200, {
-            "winner": {
-                "timeline_id": winner.timeline_id,
-                "strategy": winner.strategy,
-                "score": winner.score,
-                "churn_lines": winner.churn_lines,
-            },
-            "timelines": [
-                {"timeline_id": t.timeline_id, "strategy": t.strategy, "score": t.score, "status": t.status}
-                for t in timelines
-            ]
-        })
+    # `_handle_speculative` was deleted here. It constructed three
+    # `SpeculativeTimeline` objects inline with literal `churn_lines` (4 / 20 /
+    # 12) and `status="verified"`, handed them to the engine, and returned the
+    # winner as though a branch had been explored and verified. Nothing was
+    # explored and nothing was verified. `/v30/speculative` is declared in
+    # STUB_ROUTES; `/v30/swarm/speculate` is the real implementation.
 
     def _handle_run(self, data: dict) -> None:
         goal = (data.get("goal") or "").strip()
@@ -739,7 +968,7 @@ def test_{fn}_negative():
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._emit_cors()
         self.end_headers()
 
         def emit(event_type: str, payload: dict):
@@ -845,6 +1074,33 @@ def test_{fn}_negative():
         self._send(200, report)
 
 
+def _warn_about_auth_posture(cfg: dict) -> None:
+    """Print the auth posture once at startup so it can never be a surprise.
+
+    A server whose security depends on a setting the operator never noticed is
+    the failure this whole check exists to prevent, so the posture is stated
+    out loud rather than left implicit in the config.
+    """
+    token = (cfg.get("BAIZE_AUTH_TOKEN") or "").strip()
+    no_auth = cfg.get("BAIZE_ALLOW_NO_AUTH", "0") == "1"
+    if not token and not no_auth:
+        log.warning(
+            "No BAIZE_AUTH_TOKEN configured - all write operations will be "
+            "rejected with 401. Set BAIZE_AUTH_TOKEN, or set "
+            "BAIZE_ALLOW_NO_AUTH=1 for single-user localhost use.")
+    elif not token and no_auth:
+        log.warning(
+            "BAIZE_ALLOW_NO_AUTH=1 - the service accepts UNAUTHENTICATED writes. "
+            "This is intended for a single user on localhost. Do not use it on a "
+            "shared or network-reachable host.")
+    if cfg.get("BAIZE_ENABLE_SYNTHESIS_API", "0") == "1":
+        log.warning(
+            "/v30/synthesize and /v30/adversarial are ENABLED: they execute "
+            "Python supplied in the request body. Keep the bearer token secret.")
+    if cfg.get("BAIZE_CORS_ORIGINS", "").strip():
+        log.info("CORS allowlist: %s", cfg["BAIZE_CORS_ORIGINS"])
+
+
 def serve(host: str | None = None, port: int | None = None) -> None:
     """Start the service. Explicit host/port win over config defaults."""
     cfg = load_config()
@@ -858,6 +1114,7 @@ def serve(host: str | None = None, port: int | None = None) -> None:
     Handler.runtime = get_runtime()
     httpd = ThreadingHTTPServer((host, port), Handler)
     setup_logging(cfg)
+    _warn_about_auth_posture(cfg)
     log.info("baize serve listening on http://%s:%s  (Ctrl+C to stop)", host, port)
     try:
         httpd.serve_forever()

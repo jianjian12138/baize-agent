@@ -36,7 +36,6 @@ from . import __version__
 from . import doctor as doctor_mod
 from . import manifest as manifest_mod
 from . import memory as memory_mod
-from . import serve as serve_mod
 from . import skill_index
 from .agent import Agent, Session
 from .llm import LLMClient
@@ -587,8 +586,43 @@ def cmd_status(args) -> int:
 
 
 def cmd_serve(args) -> int:
+    # Imported here, not at module level. baize.serve pulls in http.server plus
+    # the dashboard stack, which measured **+94ms** on every `baize <anything>`
+    # invocation - including `baize doctor` and `baize index`, which never touch
+    # the server. (An earlier note in the audit said 331ms; that figure summed
+    # nested importtime entries and double-counted dependencies baize.cli
+    # already imports. 94ms is the measured marginal cost.)
+    from . import serve as serve_mod
     serve_mod.serve(host=args.host, port=args.port)
     return 0
+
+
+def _tar_extract_kwargs() -> dict:
+    """tarfile's ``data`` filter where the interpreter has one (3.12+).
+
+    Absent on older interpreters, which is precisely why the caller also
+    performs its own containment check instead of trusting this: relying on a
+    filter that may not exist would silently downgrade the protection on the
+    interpreters that need it most.
+    """
+    import tarfile
+    return {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+
+
+def _safe_member_path(dest_dir: Path, member_name: str) -> Path | None:
+    """Resolve ``member_name`` under ``dest_dir``; ``None`` if it escapes.
+
+    A downloaded archive is untrusted input. ``tarfile.extract`` joins the
+    member name onto the destination, so a member called ``../../x`` (or an
+    absolute path) writes outside the plugin library. Comparing *resolved*
+    paths - not strings - is the only check that survives ``..``, symlinked
+    parents and Windows drive-relative paths.
+    """
+    root = dest_dir.resolve()
+    target = (root / member_name).resolve()
+    if target == root or root in target.parents:
+        return target
+    return None
 
 
 def cmd_plugins(args) -> int:
@@ -648,17 +682,38 @@ def cmd_plugins(args) -> int:
                 members = tar.getmembers()
                 prefix = members[0].name.split("/")[0] if members else ""
                 dest_dir.mkdir(parents=True, exist_ok=True)
+                refused = 0
                 for member in members:
-                    if member.name.startswith(prefix + "/"):
-                        member.name = member.name[len(prefix) + 1:]
-                        if member.name:
-                            tar.extract(member, dest_dir)
+                    if not member.name.startswith(prefix + "/"):
+                        continue
+                    member.name = member.name[len(prefix) + 1:]
+                    if not member.name:
+                        continue
+                    # A remote archive is untrusted input: `../` in a member
+                    # name would write outside the plugin library, and a symlink
+                    # member could point anywhere on disk. Resolve first and
+                    # refuse anything that escapes; the `data` filter is applied
+                    # on top where the interpreter supports it.
+                    if _safe_member_path(dest_dir, member.name) is None \
+                            or member.issym() or member.islnk():
+                        refused += 1
+                        continue
+                    tar.extract(member, dest_dir, **_tar_extract_kwargs())
+                if refused:
+                    print(f"warning: refused {refused} archive member(s) that "
+                          f"would have written outside {dest_dir}")
         finally:
             if tmp_path and tmp_path.exists():
                 tmp_path.unlink()
 
         from . import skill_index
-        count = skill_index.build(cfg)
+        # `skill_index.build` does not exist - the function is `build_index`, and
+        # it returns the index dict, not a count. Both install and remove called
+        # the wrong name, so `plugin install` crashed after downloading and
+        # `plugin remove` crashed after deleting: the user saw a traceback
+        # instead of the success line, on top of a change that had already
+        # happened. Found by the CLI tests.
+        count = skill_index.build_index(cfg)["count"]
         print(f"✓ Installed '{repo}' into {dest_dir}")
         print(f"✓ Rebuilt skill index: {count} total skill(s) indexed.")
         return 0
@@ -672,13 +727,23 @@ def cmd_plugins(args) -> int:
         from .config import load_config
         cfg = load_config()
         user_skills = Path(cfg.get("BAIZE_USER_SKILLS_DIR", "user_skills")).resolve()
-        target_dir = user_skills / target
+        # Containment check. `user_skills / target` was joined and then passed
+        # straight to shutil.rmtree, so `plugin remove ../../anything` deleted a
+        # directory outside the plugin library - recursively, and with
+        # ignore_errors=True so even the failures were silent. `skill create`
+        # was already safe because skill_index.safe_name() sanitises the name;
+        # this path had no equivalent. Compare resolved paths, not strings.
+        target_dir = (user_skills / target).resolve()
+        if target_dir == user_skills or user_skills not in target_dir.parents:
+            print(f"error: '{target}' resolves to {target_dir}, which is outside "
+                  f"the plugin library {user_skills}")
+            return 1
         if not target_dir.exists():
             print(f"error: plugin '{target}' not found in {user_skills}")
             return 1
         shutil.rmtree(target_dir, ignore_errors=True)
         from . import skill_index
-        count = skill_index.build(cfg)
+        count = skill_index.build_index(cfg)["count"]   # see the note above
         print(f"✓ Removed plugin '{target}'")
         print(f"✓ Rebuilt skill index: {count} total skill(s) indexed.")
         return 0
@@ -932,8 +997,19 @@ def cmd_ralph(args) -> int:
 
 
 def cmd_speculative(args) -> int:
+    """Print a speculative-timeline comparison.
+
+    HONESTY: the three timelines below are a HARDCODED FIXTURE. No code is
+    generated, no check is executed and no file is inspected - `checks_passed`,
+    `churn_lines` and `duration_ms` are literals typed into this function, and
+    `status="verified"` is a label, not a result. The output always looks the
+    same regardless of `args.goal`. Replacing this fixture with a real
+    exploration is tracked as P4-1; until then the printed banner says so.
+    """
     from .orchestration.forking import SpeculativeTimeline, SpeculativeEngine
     print(f"Running V30 speculative exploration for: '{args.goal}'...")
+    print("[!] NOTE: this is a hardcoded demo fixture - nothing is generated,")
+    print("    executed or verified. 'checks' and 'churn' are preset literals.")
     engine = SpeculativeEngine()
     timelines = [
         SpeculativeTimeline(timeline_id="tl_patch", strategy="minimal_patch", status="verified", checks_passed=3, total_checks=3, churn_lines=5, duration_ms=150),
@@ -941,11 +1017,12 @@ def cmd_speculative(args) -> int:
         SpeculativeTimeline(timeline_id="tl_contract", strategy="contract_driven", status="verified", checks_passed=3, total_checks=3, churn_lines=14, duration_ms=310),
     ]
     winner = engine.select_and_merge(timelines)
-    print("\n--- Speculative Time-Travel Results ---")
+    print("\n--- Speculative Time-Travel Results (preset fixture) ---")
     for t in timelines:
         mark = "WINNER" if t.timeline_id == winner.timeline_id else "DISCARDED"
         print(f"  [{mark}] {t.timeline_id} ({t.strategy}): score={t.score:.3f}, churn={t.churn_lines} lines, checks={t.checks_passed}/{t.total_checks}")
     print(f"\nWinning branch '{winner.timeline_id}' selected with score {winner.score:.3f}")
+    print("Note: the winner is determined entirely by the preset literals above.")
     return 0
 
 

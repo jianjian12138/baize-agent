@@ -1,62 +1,148 @@
-"""Byzantine Multi-Agent Red/Blue Adversarial Consensus Protocol (V35.0.0 Industrial).
+"""Quorum arbitration over caller-supplied review verdicts.
 
 Pure Python standard library — zero third-party dependencies.
-Coordinates 3 independent agent nodes (Red Team Attacker, Blue Team Defender, Arbiter Judge)
-to reach cryptographic Byzantine Fault Tolerant consensus before physical gate deployment.
+
+WHAT THIS IS
+------------
+A vote counter with a configurable quorum, plus a reproducible content digest of
+the inputs. Feed it verdicts, it tells you whether the approvals clear the quorum
+and hands back a digest you can compare against a later run.
+
+WHAT THIS IS NOT
+----------------
+It is not a Byzantine Fault Tolerant protocol and it does not run any agent. The
+name and the field names in the response are kept for API compatibility, but the
+module docstring used to describe things that were not happening:
+
+  * "Coordinates 3 independent agent nodes (Red Team Attacker, Blue Team Defender,
+    Arbiter Judge)" - there were **two** verdict dictionaries, both literals
+    defined in this file. The third "node" was the vote-counting code.
+  * ``vulnerabilities_found: 0``, ``fuzzing_rounds: 50``,
+    ``confinement_check: "PASS"`` and ``invariants_satisfied: 6`` were typed into
+    the file. No fuzzer ran, no sandbox was inspected, no invariant was counted.
+  * ``target_code`` was accepted and then never read - the function took the code
+    under review and ignored it.
+  * ``bft_signature`` was ``sha256(goal + votes + time.time())``: a hash of the
+    current time. It changed on every call, so it was not even a content digest,
+    let alone a signature - there is no key and nothing verifies it.
+
+Now: no verdict in, no verdict out. Call without ``verdicts`` and the response
+says ``awaiting_verdicts`` instead of inventing an approval. Call with verdicts
+and the quorum, the counts and the digest are all computed from what you passed.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from typing import Any
 
 __all__ = [
+    "DEFAULT_QUORUM",
     "run_byzantine_consensus",
 ]
 
+#: Approvals required for the quorum to be met, out of the verdicts supplied.
+DEFAULT_QUORUM = 2
 
-def run_byzantine_consensus(target_code: str = "", goal: str = "核心支付/状态机发布评审") -> dict[str, Any]:
-    """Execute 3-party Byzantine consensus arbitration game."""
-    start_t = time.perf_counter()
+#: Stated in every response so a caller cannot read the digest as a signature.
+DIGEST_KIND = (
+    "sha256 over goal + target digest + votes; reproducible and unkeyed, so it is "
+    "a content digest, not a signature"
+)
 
-    # Node 1: Red Team Attacker (Adversarial Security Fuzzing)
-    red_verdict = {
-        "node_id": "agent-red-attacker",
-        "role": "红队注入攻防 (Red Team)",
-        "vulnerabilities_found": 0,
-        "fuzzing_rounds": 50,
-        "vote": "APPROVE",
-        "rationale": "未发现内存溢出、越权穿越或未受控环境变量注入风险",
+
+def _code_facts(target_code: str) -> dict[str, Any]:
+    """Facts about the submitted code that were actually measured.
+
+    Deliberately limited to what can be observed without parsing or executing it:
+    this module has no analyser. ``analysed: False`` is the honest answer to "did
+    you look at it", and it is stated rather than left to inference.
+    """
+    return {
+        "chars": len(target_code),
+        "lines": target_code.count("\n") + (1 if target_code else 0),
+        "sha256_prefix": hashlib.sha256(target_code.encode("utf-8")).hexdigest()[:16],
+        "analysed": False,
     }
 
-    # Node 2: Blue Team Defender (Sandbox Boundary & Invariant Guard)
-    blue_verdict = {
-        "node_id": "agent-blue-defender",
-        "role": "蓝队沙箱防御 (Blue Team)",
-        "confinement_check": "PASS",
-        "invariants_satisfied": 6,
-        "vote": "APPROVE",
-        "rationale": "所有文件读写均严格限定在工作区物理边界内，符合 RBAC 签名规范",
-    }
 
-    # Node 3: Arbiter Judge (Consensus Calculation & Signature)
-    votes = [red_verdict["vote"], blue_verdict["vote"]]
+def run_byzantine_consensus(
+    target_code: str = "",
+    goal: str = "核心支付/状态机发布评审",
+    verdicts: list[dict[str, Any]] | None = None,
+    quorum: int = DEFAULT_QUORUM,
+) -> dict[str, Any]:
+    """Count approvals over ``verdicts`` and apply ``quorum``.
+
+    Returns ``status="awaiting_verdicts"`` and no verdict when ``verdicts`` is
+    empty or missing. It never fabricates a vote: the previous revision returned
+    two literal ``APPROVE``s, which made ``consensus_reached`` true for every
+    input including the empty string.
+    """
+    start = time.perf_counter()
+    code_facts = _code_facts(target_code or "")
+
+    if not verdicts:
+        return {
+            "status": "awaiting_verdicts",
+            "goal": goal,
+            "target_code_facts": code_facts,
+            "verdicts_supplied": 0,
+            "quorum_required": quorum,
+            "approvals": None,
+            "consensus_reached": None,
+            "consensus_type": (
+                f"rule-based quorum (approvals >= {quorum} of the verdicts supplied)"
+            ),
+            "digest": None,
+            "digest_kind": DIGEST_KIND,
+            "signed": False,
+            "nodes": [],
+            "arbiter_decision": None,
+            "arbitration_time_ms": round((time.perf_counter() - start) * 1000, 2),
+            "message": (
+                "没有收到任何评审意见，因此没有可仲裁的共识。本函数只做票数统计，"
+                "不启动任何 Agent、不分析代码、不做任何签名。"
+                "（旧版本会在此处返回两条硬编码 APPROVE 与一个时间戳哈希，"
+                "并把它标成 BFT-SIG-。）"
+            ),
+        }
+
+    votes = [str(item.get("vote", "")).strip().upper() for item in verdicts]
     approvals = votes.count("APPROVE")
-    consensus_reached = approvals >= 2
+    reached = approvals >= quorum
 
-    sig_src = f"BYZANTINE:{goal}:{red_verdict['vote']}:{blue_verdict['vote']}:{time.time()}"
-    bft_sig = f"BFT-SIG-{hashlib.sha256(sig_src.encode('utf-8')).hexdigest()[:12].upper()}"
-
-    elapsed_ms = round((time.perf_counter() - start_t) * 1000, 2)
+    payload = json.dumps(
+        {"goal": goal, "target": code_facts["sha256_prefix"], "votes": votes},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    digest = "BFT-DIGEST-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16].upper()
 
     return {
         "status": "success",
         "goal": goal,
-        "consensus_reached": consensus_reached,
-        "consensus_type": "2/3 Byzantine Fault Tolerant Quorum (Unanimous)",
-        "bft_signature": bft_sig,
-        "arbitration_time_ms": elapsed_ms,
-        "nodes": [red_verdict, blue_verdict],
-        "arbiter_decision": "PASS - 允许物理提交至生产分支" if consensus_reached else "VETO - 拦截提交",
-        "message": f"拜占庭多智能体博弈仲裁完成：全票达成共识 [{bft_sig}]，物理门禁核验通过！",
+        "target_code_facts": code_facts,
+        "verdicts_supplied": len(verdicts),
+        "quorum_required": quorum,
+        "approvals": approvals,
+        "consensus_reached": reached,
+        "consensus_type": (
+            f"rule-based quorum: {approvals} approval(s) >= {quorum} required, "
+            f"over {len(verdicts)} supplied verdict(s)"
+        ),
+        "digest": digest,
+        "digest_kind": DIGEST_KIND,
+        "signed": False,
+        "nodes": verdicts,
+        "arbiter_decision": (
+            f"quorum met ({approvals}/{len(verdicts)})" if reached
+            else f"quorum not met ({approvals}/{len(verdicts)})"
+        ),
+        "arbitration_time_ms": round((time.perf_counter() - start) * 1000, 2),
+        "message": (
+            f"对 {len(verdicts)} 条评审意见完成票数统计：赞成 {approvals} 条，"
+            f"门槛 {quorum} 条，{'达到' if reached else '未达到'}。"
+            f"内容摘要 {digest}（可复现，非签名）。"
+        ),
     }

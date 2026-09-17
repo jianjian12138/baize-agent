@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from baize import proc as proc_mod
+from baize import tools as tools_mod
 from baize.tools import (
     ToolRegistry,
     _tool_patch_file,
@@ -14,6 +18,7 @@ from baize.tools import (
     _ast_check_python,
     _tool_fetch_url,
     default_registry,
+    _child_env,
     _PYTHON_BLOCKED_MODULES,
 )
 
@@ -179,9 +184,95 @@ class TestRunPython(unittest.TestCase):
         self.assertIn("ERROR", result)
         self.assertIn("timed out", result)
 
+    def test_timeout_is_a_wall_clock_bound(self):
+        """The old path killed only the direct child and drained without a
+        bound, so a survivor holding the pipe made `timeout=1` run for 11s+.
+        Assert the promise is kept, not just that the message says so.
+        """
+        start = time.monotonic()
+        result = _tool_run_python("import time\ntime.sleep(30)", timeout=1)
+        elapsed = time.monotonic() - start
+        self.assertIn("timed out", result)
+        self.assertLess(elapsed, 8.0,
+                        f"timeout=1 took {elapsed:.2f}s - the bound is not real")
+
     def test_no_output(self):
         result = _tool_run_python("x = 1")
         self.assertEqual(result, "(no output)")
+
+
+class TestRunPythonEnvironmentIsScrubbed(unittest.TestCase):
+    """P4-2: the child must not inherit the agent's credentials.
+
+    The previous version passed ``dict(os.environ)`` straight through, so code
+    executed through this tool could read every API key the agent held. The AST
+    guard does not help here - it is a name filter over syntax, and this leak was
+    independent of it.
+    """
+
+    def test_child_env_keeps_only_the_allowlist(self):
+        with patch.dict(os.environ, {
+            "BAIZE_PROBE_SECRET": "LEAKED-VALUE-123",
+            "OPENAI_API_KEY": "sk-not-a-real-key",
+            "AWS_SECRET_ACCESS_KEY": "also-fake",
+        }, clear=False):
+            env = _child_env()
+        self.assertNotIn("BAIZE_PROBE_SECRET", env)
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+
+    def test_child_env_is_far_smaller_than_the_parent(self):
+        env = _child_env()
+        self.assertLess(len(env), 40)
+        self.assertGreater(len(os.environ), len(env))
+        # ...and it still has what an interpreter needs to start.
+        self.assertIn("PATH", env)
+        self.assertEqual(env["PYTHONNOUSERSITE"], "1")
+        self.assertEqual(env["PYTHONIOENCODING"], "utf-8")
+
+    def test_run_python_passes_the_scrubbed_env_and_the_isolated_flag(self):
+        captured: dict = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env")
+            captured["cwd"] = kwargs.get("cwd")
+            return proc_mod.Completed(0, "", "")
+
+        with patch.object(tools_mod.proc_mod, "run", fake_run):
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-not-real"}):
+                _tool_run_python("print(1)")
+
+        self.assertEqual(captured["cmd"][1], "-I",
+                         "-I must be passed so PYTHONPATH/user-site cannot inject")
+        self.assertNotIn("OPENAI_API_KEY", captured["env"])
+        self.assertTrue(captured["cwd"], "cwd must be pinned, not inherited")
+
+    def test_child_really_runs_isolated(self):
+        """End-to-end proof of -I, observed from inside the child.
+
+        `import sys` is AST-blocked, but `getpass` imports sys for its own use,
+        so `getpass.sys.flags.isolated` is readable without tripping the guard.
+        """
+        result = _tool_run_python("import getpass\nprint(getpass.sys.flags.isolated)")
+        self.assertEqual(result.strip(), "1",
+                         f"child is not isolated: {result!r}")
+
+    def test_allowed_environment_still_reaches_the_child(self):
+        """Positive control: the child's env really is the dict we passed, not
+        a stripped-to-nothing environment that would break tooling.
+
+        ``tempfile.gettempdir()`` consults TMPDIR/TEMP/TMP in that order and
+        returns the first that exists and is writable, so pointing TMPDIR at a
+        real directory makes it an observable for "this variable crossed the
+        boundary".
+        """
+        with tempfile.TemporaryDirectory() as marker:
+            with patch.dict(os.environ, {"TMPDIR": marker}, clear=False):
+                result = _tool_run_python(
+                    "import tempfile\nprint(tempfile.gettempdir())")
+            self.assertIn(Path(marker).name, result,
+                          f"TMPDIR should pass through; got {result!r}")
 
 
 # ---------------------------------------------------------------------------

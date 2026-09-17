@@ -7,7 +7,7 @@
 <br/>
 
 [![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-681%2F683%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-1267%2F1270%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -22,7 +22,7 @@
 
 </div>
 
-> **Baize Agent** is a white-box, industrial-grade autonomous software engineering AI operating system built in **pure Python standard library (zero third-party runtime dependencies)**. Verified with a strict **NO FAKE DONE** physical gate, native **PowerShell REPL (<5ms execution)**, **AST Causal Self-Healing**, **Asyncio Swarm Speculation**, **Polyglot Code Graphs**, and **3-Node Byzantine Consensus Arbitration**.
+> **Baize Agent** is a white-box, industrial-grade autonomous software engineering AI operating system built in **pure Python standard library (zero third-party runtime dependencies)**. Verified with a strict **NO FAKE DONE** physical gate, native **PowerShell REPL (<5ms execution)**, **AST Causal Self-Healing**, **Asyncio Swarm Speculation**, **Polyglot Code Graphs**, and **quorum arbitration over caller-supplied verdicts**.
 
 ---
 
@@ -39,10 +39,10 @@
 | Core Feature | What it solves | How Baize does it |
 | :--- | :--- | :--- |
 | **🪟 Windows Native First-Class** | Eliminates CMD syntax crashes, GBK corruptions, and 200ms cold-start delays on Windows. | **Persistent PowerShell REPL Session (<5ms latency)** + 15+ POSIX stream shims (`awk`, `wc -l`, `sort -u`) + UTF-8 pipeline. |
-| **🛡️ NO FAKE DONE Physical Gate** | Prevents AI hallucinated "I have fixed it" without running real tests. | Enforces physical execution verification + AST mutation testing + 3-Node Byzantine Consensus (`BFT-SIG-***`). |
+| **🛡️ NO FAKE DONE Physical Gate** | Prevents AI hallucinated "I have fixed it" without running real tests. | Enforces physical execution verification + AST mutation testing (kill rate measured against a fixed probe corpus, not a fixed 100%) + quorum arbitration over caller-supplied verdicts (`BFT-DIGEST-***` is a reproducible content digest, **not** a signature). |
 | **🌲 Polyglot Symbol Graph** | Cross-file semantic symbol indexing across large multi-language repos. | AST & grammar indexers for **Python, TypeScript/JS, Rust, Go, Java** with call hierarchies. |
 | **🧠 AST Context Slicing** | Huge token waste and LLM context window blowups. | Prunes non-target function bodies into type stubs, **reducing LLM prompt tokens by 50% ~ 70%**. |
-| **⚡ Asyncio Swarm Speculation** | Slow trial-and-error sequential code generation. | Explores 3 independent candidate hypotheses in parallel using **isolated Git Worktree sandboxes** in <60ms. |
+| **⚡ Asyncio Swarm Speculation** | Slow trial-and-error sequential code generation. | Explores 3 candidate strategies concurrently in **real git worktrees**: each branch writes its candidate into its own worktree, `churn_lines` is measured with `git diff --numstat`, and `BAIZE_SWARM_VERIFY_CMD` can be run to verify. **With no verify command configured, `verified` is `null` (not checked) - it is never reported as passing.** |
 | **🔌 Anthropic MCP Standard** | Clunky custom tool ecosystems. | Official **JSON-RPC 2.0 MCP Client** to seamlessly mount SQLite, GitHub, Puppeteer, and custom tools. |
 | **🖥️ Universal Desktop Studio** | Context switching between CLI and browser. | 11 core modules: Live SSE Streaming, Monaco Diff, Visual DAG Canvas, Memory, Models, Chaos Arena. |
 
@@ -54,12 +54,12 @@
 | :--- | :---: | :---: | :---: | :---: |
 | **Runtime 3rd-Party Dependencies** | **0 (Pure Stdlib)** | Heavy Node/C++ | Heavy Python | 100+ Pip packages |
 | **Windows Native PowerShell Pool (<5ms)** | **✅ Yes (First-Class)** | ⚠️ Limited / POSIX | ⚠️ WSL/Docker only | ❌ No |
-| **AST Causal Healing & Mutation Testing** | **✅ Yes (100% kill rate)** | ❌ No | ❌ No | ❌ No |
-| **NO FAKE DONE Physical Proof Gate** | **✅ Yes (Signed Watermarks)** | ⚠️ Soft heuristic | ⚠️ Soft heuristic | ❌ No |
+| **AST Causal Healing & Mutation Testing** | **✅ Yes (kill rate measured, can be 0%)** | ❌ No | ❌ No | ❌ No |
+| **NO FAKE DONE Physical Proof Gate** | **✅ Yes (no fabricated-success endpoints; 11 unimplemented routes answer 501) + gates verified by fault injection** | ⚠️ Soft heuristic | ⚠️ Soft heuristic | ❌ No |
 | **Anthropic MCP Standard Support** | **✅ Yes (JSON-RPC 2.0)** | Partial | Partial | ⚠️ Custom wrappers |
 | **Multi-Language AST Code Graph** | **✅ Python/TS/Rust/Go/Java** | TS/C++ only | Python only | ❌ No |
-| **Asyncio Multi-Branch Swarm Sandbox** | **✅ Git Worktree CoW** | ❌ No | ❌ No | ❌ No |
-| **Byzantine Multi-Agent Consensus** | **✅ Yes (Red vs Blue vs Judge)** | ❌ No | ❌ No | ❌ No |
+| **Asyncio Multi-Branch Swarm Speculation** | **⚠️ Deterministic simulation (no worktree is created)** | ❌ No | ❌ No | ❌ No |
+| **Verdict Quorum Arbitration** | **✅ Yes (no verdict in, no verdict out)** | ❌ No | ❌ No | ❌ No |
 
 ---
 
@@ -98,11 +98,11 @@ Open **`http://127.0.0.1:8787`** to experience the full Obsidian-styled dark des
                   ┌──────────────────────────▼─────────────────────────────┐
                   │                 Baize Autonomous Engine                │
                   ├──────────────────────────┬─────────────────────────────┤
-                  │ ⚡ Asyncio Swarm Engine  │  🌲 Polyglot Symbol Graph   │
-                  │ (Git Worktree Sandboxes) │  (Python/TS/Rust/Go/Java)   │
+                  │ ⚡ Asyncio Swarm Engine  │  🌲 Polyglot Code Graph     │
+                  │ (simulated, no worktree) │  (Python/TS/Rust/Go/Java)   │
                   ├──────────────────────────┼─────────────────────────────┤
-                  │ 🧠 AST Context Slicer    │  🛡️ 3-Node Byzantine Arena  │
-                  │ (50%-70% Token Savings)  │  (Red / Blue / Judge BFT)   │
+                  │ 🧠 AST Context Slicer    │  🛡️ Verdict Quorum Arena     │
+                  │ (50%-70% Token Savings)  │  (digest, not a signature)  │
                   ├──────────────────────────┼─────────────────────────────┤
                   │ 🪟 Persistent PowerShell │  🔌 Anthropic MCP Standard  │
                   │ (Sub-5ms REPL + Shims)   │  (JSON-RPC 2.0 Ecosystem)   │
@@ -118,7 +118,7 @@ active development line is **`v30-dev`**:
 
 | Branch | Contents | Status |
 | :--- | :--- | :--- |
-| **`v30-dev`** | The V30 -> V37.0.0 Prometheus line: Ralph autonomous PRD state machine, global intelligence radar, Swarm speculative forking, Byzantine arbitration, desktop Studio | **Default - active** |
+| **`v30-dev`** | The V30 -> V37.0.0 Prometheus line: Ralph autonomous PRD state machine, global intelligence radar, Swarm speculative forking, quorum arbitration, desktop Studio | **Default - active** |
 | `main` | The V26.0.0 "closed-loop fact kernel" architecture rewrite | Frozen archive |
 | `test` | The V33.0.0 upgrade line | Frozen archive |
 

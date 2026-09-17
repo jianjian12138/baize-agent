@@ -151,8 +151,16 @@ def test_cli_automations_dispatch(capsys, monkeypatch):
 # serve.py : extra GET/POST routes over a real localhost server
 # ---------------------------------------------------------------------------
 
+#: The service is fail-closed since V37.1: every route below the auth gate
+#: returns 401 without a configured token. This fixture configures one and _req
+#: sends it, so these tests exercise the authorised path instead of the old
+#: fail-open default.
+TEST_TOKEN = "f5-gap-token-not-a-secret"
+
+
 @pytest.fixture
-def http_server():
+def http_server(monkeypatch):
+    monkeypatch.setenv("BAIZE_AUTH_TOKEN", TEST_TOKEN)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), serve_mod.Handler)
     port = srv.server_address[1]
     t = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -163,10 +171,12 @@ def http_server():
     srv.server_close()
 
 
-def _req(base, method, path, body=None):
+def _req(base, method, path, body=None, token=TEST_TOKEN):
     url = base + path
     data = None
     headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if body is not None:
         data = (body if isinstance(body, (bytes, bytearray))
                 else json.dumps(body).encode("utf-8"))

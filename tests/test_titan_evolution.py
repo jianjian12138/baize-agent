@@ -15,7 +15,7 @@ from baize.powershell import (
 from baize.interactive_detector import detect_interactive_prompt, get_safe_auto_answer
 from baize.symbol_graph import SymbolGraph
 from baize.invariants_anchor import create_invariants_anchor
-from baize.swarm import GitWorktreeSandbox
+from baize.swarm import GitWorktreeSandbox, WorktreeSandbox
 
 
 def _powershell_can_launch_absolute_paths() -> bool:
@@ -144,8 +144,34 @@ class TestTitanEvolution(unittest.TestCase):
         self.assertIn("请修改 database.py", wrapped)
         self.assertEqual(anchor.total_turns_anchored, 1)
 
-    def test_git_worktree_physical_sandbox(self):
-        sb = GitWorktreeSandbox(branch_id="test_exp_1")
+    def test_worktree_sandbox_creates_and_removes_a_real_worktree(self):
+        """Was test_git_worktree_physical_sandbox, which asserted a guarantee the
+        old code never provided - it was a plain tempfile.mkdtemp() with no git
+        involvement. The sandbox now really runs `git worktree add`/`remove`, so
+        the name is finally earned. This test pins both halves: a directory
+        appears and disappears, and the repository is left with no dangling
+        worktree registration.
+        """
+        import subprocess
+
+        sb = WorktreeSandbox(base_repo=".", branch_id="test_exp_1")
+        p = sb.create()
+        self.assertTrue(p.exists())
+        if not sb.degraded:
+            # A real worktree, not a bare temp dir: it contains a .git file
+            # pointing back at the parent repository.
+            self.assertTrue((p / ".git").exists())
+        sb.cleanup()
+        self.assertFalse(p.exists())
+        listed = subprocess.run(["git", "worktree", "list"], capture_output=True,
+                                text=True, encoding="utf-8", errors="replace").stdout
+        self.assertNotIn("test_exp_1", listed)
+
+    def test_git_worktree_sandbox_is_now_the_same_real_thing(self):
+        """The legacy name must not be a stub again: it is an alias for the real
+        implementation, so constructing it cannot raise."""
+        sb = GitWorktreeSandbox(base_repo=".", branch_id="test_exp_2")
+        self.assertIsInstance(sb, WorktreeSandbox)
         p = sb.create()
         self.assertTrue(p.exists())
         sb.cleanup()

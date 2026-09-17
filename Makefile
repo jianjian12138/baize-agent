@@ -2,7 +2,7 @@
 # Works on Unix/macOS and Windows (via Git Bash / WSL).
 PY ?= python
 
-.PHONY: install doctor test index clean cov gate chat serve repl truth hygiene deps
+.PHONY: install doctor test index clean cov gate chat serve repl truth hygiene honesty deps
 
 install:
 	$(PY) install/bootstrap.py
@@ -30,7 +30,7 @@ cov:
 
 # Alias so CI can simply call `make gate`. Cheap checks first so a broken
 # promise fails in seconds instead of after a full coverage run.
-gate: deps truth hygiene cov
+gate: deps truth hygiene honesty cov
 
 # The engine's headline promise: `pip install baize-agent` pulls no third-party
 # packages, so `import baize` works on a bare interpreter.
@@ -53,6 +53,15 @@ truth:
 # meant to exclude (pycache, persistence/, probe scripts, ...).
 hygiene:
 	$(PY) scripts/check_hygiene.py
+	$(PY) scripts/check_arch_tree.py
+	$(PY) scripts/check_module_attrs.py
+
+# NO FAKE DONE at the API layer. Seven routes used to answer HTTP 200 with a
+# hardcoded success payload ("PR #43 opened", "4/4 checks green") while doing no
+# work. This target starts the real server and probes every declared stub route,
+# so it fails on behaviour rather than on source-code shape.
+honesty:
+	$(PY) scripts/check_endpoint_honesty.py
 
 index:
 	$(PY) -m baize.cli index build

@@ -3,9 +3,15 @@
 Pure Python standard library — zero third-party dependencies.
 Provides:
 1. Persistent long-lived PowerShell REPL sessions (sub-5ms execution & environment variable inheritance).
-2. Advanced POSIX stream translation shims (awk, sed, xargs, wc -l, sort, uniq, find).
+2. POSIX translation shims for the forms actually implemented in
+   :func:`_translate_single_command` — ls, cat, rm, cp, mv, mkdir, touch,
+   head -n, tail -n, wc -l, awk '{print $N}', sort/uniq, which, pwd,
+   export/unset, clear. Anything else (grep, sed, xargs, find, diff, ...) is
+   passed to PowerShell verbatim and will only work if the real binary is on
+   PATH; see :data:`NOT_TRANSLATED` for the explicit list.
 3. Process tree termination (taskkill /F /T) to eliminate orphan processes.
-4. Full UTF-8 pipeline encoding isolation.
+4. Full UTF-8 pipeline encoding isolation for commands routed through
+   :func:`build_powershell_invocation`.
 """
 from __future__ import annotations
 
@@ -20,6 +26,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from . import proc as proc_mod
+
 __all__ = [
     "resolve_powershell_executable",
     "translate_posix_to_powershell",
@@ -29,7 +37,46 @@ __all__ = [
     "detect_wsl2_status",
     "PersistentPowerShellSession",
     "get_persistent_session",
+    "SUPPORTED_TRANSLATIONS",
+    "NOT_TRANSLATED",
 ]
+
+#: POSIX forms the shim really rewrites. Each entry is ``(input, fragment)`` and
+#: ``tests/test_powershell_windows.py`` asserts that translating ``input``
+#: actually produces ``fragment`` - so this list cannot drift away from the code
+#: the way the old hardcoded prose did (it advertised ``grep -> Select-String``
+#: and ``sed``/``xargs``/``find`` support that was never written).
+SUPPORTED_TRANSLATIONS: tuple[tuple[str, str], ...] = (
+    ("ls -la", "Get-ChildItem"),
+    ("cat README.md", "Get-Content"),
+    ("rm -rf build", "Remove-Item"),
+    ("rm build", "Remove-Item"),
+    ("mkdir -p out", "New-Item"),
+    ("touch x.txt", "New-Item"),
+    ("cp -r a b", "Copy-Item"),
+    ("mv a b", "Move-Item"),
+    ("head -n 5 f", "Get-Content"),
+    ("tail -n 5 f", "Get-Content"),
+    ("wc -l f", "Measure-Object"),
+    ("awk '{print $2}'", "ForEach-Object"),
+    ("sort -u", "Sort-Object"),
+    ("which git", "Get-Command"),
+    ("pwd", "Get-Location"),
+    ('export FOO="bar"', "$env:FOO"),
+    ("unset FOO", "Remove-Item"),
+    ("clear", "Clear-Host"),
+)
+
+#: POSIX commands that are deliberately NOT translated. They are handed to
+#: PowerShell verbatim, which means they only work when a real binary of that
+#: name is on PATH - and they fail with a PowerShell parse/command-not-found
+#: error when it is not. Documented because the previous capability list
+#: claimed grep/sed/xargs/find support that does not exist.
+NOT_TRANSLATED: tuple[str, ...] = (
+    "grep", "egrep", "fgrep", "sed", "xargs", "find", "diff",
+    "tail -f", "awk (any form other than '{print $N}')",
+    "sort (any form other than -u / -r / -nr)",
+)
 
 
 def resolve_powershell_executable() -> str:
@@ -291,8 +338,18 @@ class PersistentPowerShellSession:
             # Fallback to standard execution
             args = build_powershell_invocation(command)
             try:
-                res = subprocess.run(args, capture_output=True, text=True, cwd=self.workspace, timeout=timeout, encoding="utf-8", errors="replace")
-                return res.returncode, (res.stdout or "") + (f"\n[stderr]\n{res.stderr}" if res.stderr else "")
+                # proc_mod.run, not subprocess.run: build_powershell_invocation
+                # inserts a `-Command` wrapper, so a plain subprocess timeout
+                # kills only the outer powershell.exe and leaves the wrapped
+                # command running while it holds the pipes open. This was the
+                # last direct `subprocess.run(..., timeout=...)` on an execution
+                # path (the remaining ones are probes and taskkill itself).
+                res = proc_mod.run(args, timeout=timeout, cwd=self.workspace,
+                                   encoding="utf-8")
+                out = res.stdout or ""
+                if res.stderr:
+                    out += f"\n[stderr]\n{res.stderr}"
+                return res.returncode, out
             except Exception as e:
                 return 1, str(e)
 
@@ -347,28 +404,49 @@ def kill_process_tree(pid: int) -> None:
 
 
 def detect_wsl2_status() -> dict[str, Any]:
-    """Detect whether Windows Subsystem for Linux (WSL2) is available."""
+    """Detect whether Windows Subsystem for Linux (WSL2) is available.
+
+    ``available`` is three-valued, matching the convention used elsewhere in the
+    package: ``True`` (probe succeeded and listed distros), ``False`` (not
+    Windows, or no ``wsl`` on PATH), ``None`` (Windows and ``wsl`` exists, but
+    the probe did not give a usable answer). ``None`` must never be read as
+    ``True``.
+
+    The previous version returned ``{"available": True, "distros": ["WSL2
+    Active"]}`` from its ``except`` branch - i.e. a *failed* probe was reported
+    as positive availability with an invented distro name. That is the exact
+    failure mode this package is supposed to be free of.
+    """
     if sys.platform != "win32":
-        return {"available": False, "distro": None}
+        return {"available": False, "distros": [], "default": None}
     wsl_exe = shutil.which("wsl.exe") or shutil.which("wsl")
     if not wsl_exe:
-        return {"available": False, "distro": None}
+        return {"available": False, "distros": [], "default": None}
     try:
         res = subprocess.run([wsl_exe, "-l", "-q"], capture_output=True, timeout=3)
         raw = res.stdout or b""
         text = raw.decode("utf-16", errors="ignore") if raw.startswith(b"\xff\xfe") else raw.decode("utf-8", errors="ignore")
         distros = [d.strip() for d in text.splitlines() if d.strip()]
-        return {"available": True, "distros": distros, "default": distros[0] if distros else "Ubuntu"}
-    except Exception:
-        return {"available": True, "distros": ["WSL2 Active"], "default": "WSL2"}
+        if res.returncode != 0 or not distros:
+            return {"available": None, "distros": [], "default": None,
+                    "error": f"probe returned rc={res.returncode} "
+                             f"with {len(distros)} distro line(s)"}
+        return {"available": True, "distros": distros, "default": distros[0]}
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        return {"available": None, "distros": [], "default": None,
+                "error": f"{type(exc).__name__}: {exc}"}
 
 
 def get_powershell_status() -> dict[str, Any]:
     """Inspect and return current host PowerShell environment diagnostic metadata."""
     exe = resolve_powershell_executable()
     is_pwsh_core = "pwsh" in exe.lower()
-    
-    version_str = "PowerShell 7+ Core" if is_pwsh_core else "Windows PowerShell 5.1"
+
+    # Do not assert a version we did not read. The old version defaulted to
+    # "Windows PowerShell 5.1" and then overwrote it only on a successful probe,
+    # so a failed probe produced a confident wrong answer.
+    version_str: str | None = None
+    version_probe_error: str | None = None
     try:
         res = subprocess.run(
             [exe, "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"],
@@ -376,33 +454,37 @@ def get_powershell_status() -> dict[str, Any]:
         )
         if res.returncode == 0 and res.stdout.strip():
             version_str = f"PowerShell v{res.stdout.strip()} ({'Core' if is_pwsh_core else 'Desktop'})"
-    except Exception:
-        pass
+        else:
+            version_probe_error = f"probe returned rc={res.returncode}"
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        version_probe_error = f"{type(exc).__name__}: {exc}"
+
+    session = _GLOBAL_PS_SESSION
+    pool_active = bool(session is not None and session.proc is not None
+                       and session.proc.poll() is None)
 
     return {
         "platform": sys.platform,
         "is_windows": sys.platform == "win32",
         "shell_executable": exe,
         "shell_version": version_str,
+        "shell_version_error": version_probe_error,
         "is_core": is_pwsh_core,
         "utf8_enforced": True,
         "posix_shim_active": True,
-        "persistent_pool_active": True,
-        "execution_policy": "Bypass (Isolated Sandboxed)",
+        # Reflects whether a persistent session is actually alive right now,
+        # instead of the previous unconditional True.
+        "persistent_pool_active": pool_active,
+        # `-ExecutionPolicy Bypass` is what we pass, and it is real. The old
+        # value read "Bypass (Isolated Sandboxed)" - the isolation half was
+        # fabricated; there is no OS isolation on Windows (see baize/sandbox.py).
+        "execution_policy": "Bypass",
+        "os_isolation": False,
         "wsl2": detect_wsl2_status(),
+        # Falsifiable capability list: tests translate each `posix` string and
+        # assert the `powershell` fragment appears in the result.
         "supported_posix_translations": [
-            "ls / ls -la -> Get-ChildItem",
-            "cat -> Get-Content -Raw",
-            "rm -rf / rm -> Remove-Item",
-            "mkdir -p -> New-Item -Directory",
-            "touch -> New-Item -File",
-            "export / unset -> $env:KEY / Remove-Item Env:",
-            "which -> (Get-Command).Source",
-            "grep -> Select-String",
-            "awk '{print $1}' -> ForEach-Object split",
-            "wc -l -> Measure-Object -Line",
-            "sort -u -> Sort-Object -Unique",
-            "pwd -> (Get-Location).Path",
-            "python -c '...' -> Windows Safe Escaping",
-        ]
+            {"posix": src, "powershell": dst} for src, dst in SUPPORTED_TRANSLATIONS
+        ],
+        "not_translated": list(NOT_TRANSLATED),
     }

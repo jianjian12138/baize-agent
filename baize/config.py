@@ -104,6 +104,37 @@ _DEFAULTS = {
     "BAIZE_CLARIFY": "0",                    # "1" triggers prior-art clarification
     # --- V23.6 multi-dimensional quality gate ---
     "BAIZE_QUALITY_THRESHOLD": "0.8",        # V25 release quality score floor
+    # --- V37.1 security: service auth (fail-closed) ---
+    # These three exist so the auth control is DISCOVERABLE. Previously
+    # BAIZE_AUTH_TOKEN was read by serve.py but declared nowhere - not here, not
+    # in .env.example, not in config_schema - so no user ever set it and
+    # _is_authorized() fell through to its "no token -> allow everyone" branch.
+    "BAIZE_AUTH_TOKEN": "",                  # empty = writes denied (see ALLOW_NO_AUTH)
+    "BAIZE_ALLOW_NO_AUTH": "0",              # "1" = explicit local single-user opt-out
+    "BAIZE_CORS_ORIGINS": "",                # comma-separated allowlist; empty = no CORS header
+    "BAIZE_ENABLE_SYNTHESIS_API": "0",       # "1" = enable the exec-backed /v30 endpoints
+    "BAIZE_GIT_EXE": "",                     # serve.py: explicit git path; empty = search PATH
+    # --- V37.1 swarm: real git-worktree speculation ---
+    "BAIZE_SWARM_VERIFY_CMD": "",            # shell command run inside each worktree; empty = no verification
+    "BAIZE_SWARM_ARTIFACT": "baize_swarm_candidate.py",   # filename each branch writes into its worktree
+    "BAIZE_SWARM_GIT_REF": "HEAD",           # commit the worktrees are checked out at
+    # --- V37.1: keys that were referenced by code but never declared ---
+    # Defaults below are copied from each call site's own fallback, NOT invented,
+    # so declaring them is behaviour-preserving. BAIZE_AUTO_HARVEST_SKILLS is the
+    # one to watch: its call site defaults to "1" (enabled), so declaring "0"
+    # here would have silently disabled skill harvesting.
+    "BAIZE_ALLOW_FETCH_URL": "0",            # tools.py: opt-in HTTP retrieval
+    "BAIZE_AUTONOMY_LEVEL": "2",             # serve.py: numeric slider (1-3)
+    "BAIZE_AUTO_HARVEST_SKILLS": "1",        # agent.py: call site defaults to ON
+    "BAIZE_COVERAGE_DATA": ".coverage",      # gate.py: coverage data file
+    "BAIZE_FORCE_COLOR": "0",                # ui.py: ANSI colour even when not a tty
+    "BAIZE_MANIFEST": "baize.manifest.json", # gate.py: manifest path
+    "BAIZE_MAX_TOKENS": "",                  # llm.py: empty = provider/model default
+    "BAIZE_MCP_SPEC": "",                    # ext/mcp: empty = no external MCP spec
+    "BAIZE_MODEL_PROVIDER": "",              # llm.py: empty = infer from base_url
+    "BAIZE_ORCHESTRATOR_WORKERS": "4",       # orchestrator.py: parallel worker count
+    "BAIZE_TOOL_RETRY_MAX": "2",             # agent.py: tool retry budget
+    "BAIZE_YOLO_MODE": "0",                  # serve.py: reported by /api/status
 }
 
 

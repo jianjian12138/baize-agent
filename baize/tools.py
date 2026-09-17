@@ -16,16 +16,10 @@ V33 additions:
 from __future__ import annotations
 
 import ast
-import difflib
 import json
 import os
 import re
-import subprocess
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -33,6 +27,7 @@ from typing import Callable
 from .config import ROOT, load_config
 from .logging_setup import redact
 from . import memory as memory_mod
+from . import proc as proc_mod
 from . import skill_index
 
 # ---------------------------------------------------------------------------
@@ -133,6 +128,47 @@ class ToolRegistry:
 # Sandbox helpers
 # ---------------------------------------------------------------------------
 
+#: Blacklist of destructive-command *shapes*, matched as regexes against the
+#: command string before it reaches a shell.
+#:
+#: WHAT THIS IS
+#:   A guardrail against accidental catastrophe. It stops the one-line disasters
+#:   people actually type - `rm -rf /`, a fork bomb, `curl ... | sh` - and it
+#:   costs nothing. That is worth having.
+#:
+#: WHAT THIS IS NOT
+#:   It is not a security boundary and it is not a sandbox. The audit for this
+#:   release proved it end-to-end: a regex over a shell string cannot constrain a
+#:   shell, because the shell is a rewriter and the blacklist only sees the text
+#:   before rewriting. Every one of the following is destructive and none of them
+#:   is caught - quoting (`r""m -rf /`), brace/quoted expansion (`rm -rf ${HOME}`,
+#:   `rm -rf "$HOME"`), long options (`rm --recursive --force /`), indirection
+#:   (`X=rm; $X -rf /`, `$(echo rm) -rf /`), encoding (`echo cm0g... | base64 -d
+#:   | bash`), a different tool for the same job (`find / -delete`, `shred`,
+#:   `truncate`, `diskpart`, `Remove-Item -Recurse -Force C:\`), or simply a
+#:   device the patterns never mention (`/dev/nvme0n1`).
+#:
+#: MEASURED COVERAGE
+#:   Against a 35-payload corpus of destructive variants, 18 are blocked (51%).
+#:   That number is measured, not estimated, and it is pinned by
+#:   ``tests/test_sandbox.py::test_guardrail_does_not_claim_completeness`` - if
+#:   the patterns or this sentence drift apart, the test fails. Do not "fix" a
+#:   miss by adding a 17th regex and leaving this comment alone; the misses are
+#:   not an oversight to be patched one by one, they are the shape of the
+#:   problem.
+#:
+#: WHAT ACTUALLY CONSTRAINS EXECUTION
+#:   1. ``BAIZE_SANDBOX_ENABLED=1`` routes through ``baize/sandbox.py``: Landlock
+#:      on Linux, Seatbelt on macOS. This is the only real OS-level boundary the
+#:      project has, and it is OFF by default.
+#:   2. On Windows that sandbox honestly degrades to ``logical-only`` and reports
+#:      ``degraded=True`` - there is no OS boundary there at all.
+#:   3. ``cwd`` is pinned to ``BAIZE_WORKSPACE_DIR``, which limits relative-path
+#:      damage but not absolute-path damage.
+#:   4. ``proc.run`` kills the whole process tree on timeout, which bounds
+#:      duration, not reach.
+#:   Treat ``bash`` as "the agent can run anything the user can run". Size the
+#:   trust decision accordingly.
 DENY_PATTERNS = [
     # --- original patterns ---
     r"\brm\s+-rf\s+/", r"\brm\s+-rf\s+[A-Za-z]:", r"\bformat\b",
@@ -147,6 +183,30 @@ DENY_PATTERNS = [
     r":\(\)\s*\{.*\|:",                    # fork bomb  :(){ :|:& };:
     r"\b(?:curl|wget)\b[^\n|]*\|[^\n]*(?:sh|bash)\b",  # curl|sh / wget|bash
 ]
+
+#: Machine-readable version of the disclosure above, so ``/health`` and the
+#: doctor can state the boundary instead of leaving it in a comment.
+EXECUTION_BOUNDARY: dict[str, object] = {
+    "tool": "bash",
+    "control": "DENY_PATTERNS",
+    "kind": "deny-list guardrail",
+    "security_boundary": False,
+    "mechanism": "regex blacklist applied to the command string",
+    "pattern_count": len(DENY_PATTERNS),
+    "measured_coverage": "18/35 destructive variants blocked (51%)",
+    "enforced_by": [
+        "BAIZE_SANDBOX_ENABLED=1 (Landlock/Seatbelt; OFF by default, "
+        "degrades to logical-only on Windows)",
+        "cwd pinned to BAIZE_WORKSPACE_DIR",
+        "process-tree kill on timeout",
+    ],
+    "note": (
+        "bash executes anything the host user can execute. The deny-list raises "
+        "the cost of an accidental catastrophe; it does not constrain a "
+        "determined or merely creative command string. See "
+        "baize/tools.py::DENY_PATTERNS for the measured misses."
+    ),
+}
 
 
 def _workspace_root(cfg: dict | None = None) -> Path:
@@ -170,6 +230,15 @@ def _resolve_in_workspace(path_str: str, cfg: dict | None = None) -> Path:
 
 
 def command_allowed(command: str) -> tuple[bool, str]:
+    """Return ``(allowed, reason)`` for a shell command.
+
+    Honest scope: a ``True`` result means "no known-bad shape was matched", not
+    "this command is safe". Measured against a 35-payload corpus of destructive
+    variants, 18 are blocked and 17 reach the shell - a 51% catch rate. The
+    docstring on :data:`DENY_PATTERNS` lists the bypass classes; the same figure
+    is asserted by ``tests/test_sandbox.py``. This function is a guardrail
+    against accidents, not a security boundary - see :data:`EXECUTION_BOUNDARY`.
+    """
     for pat in DENY_PATTERNS:
         if re.search(pat, command, re.IGNORECASE):
             return False, f"blocked by deny pattern: {pat}"
@@ -220,7 +289,16 @@ def _tool_list_dir(path: str = ".") -> str:
 
 
 def _tool_bash(command: str, timeout: int = 60) -> str:
-    """Run a shell command (V33-D2: interruptible via Popen + proc.kill)."""
+    """Run a shell command.
+
+    Containment, stated plainly: this runs the command with the privileges of the
+    host process. The deny-list in :func:`command_allowed` catches the common
+    catastrophic shapes and nothing else; see :data:`DENY_PATTERNS` for the
+    measured misses. OS-level isolation exists only when
+    ``BAIZE_SANDBOX_ENABLED=1`` (Landlock/Seatbelt, logical-only on Windows).
+    The timeout is a real wall-clock bound - the whole process tree is killed
+    via ``baize/proc.py``, not just the direct child.
+    """
     ok, reason = command_allowed(command)
     if not ok:
         return f"ERROR: command rejected - {reason}"
@@ -237,37 +315,41 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
         out = redact(out)
         prefix = "[sandbox: degraded to logical-only] " if result.degraded else ""
         return prefix + f"exit={result.returncode}\n{out[:8000]}"
-    # V35 Windows Native First-Class & V33-D2: Popen-based execution so the process can be killed on timeout
-    # rather than leaving a zombie behind. On Windows, routes through PowerShell with POSIX shim & UTF-8.
+    # V35 Windows Native First-Class & V33-D2: Popen-based execution so the whole
+    # process tree can be killed on timeout rather than leaving a zombie behind.
+    # On Windows, routes through PowerShell with POSIX shim & UTF-8.
+    #
+    # Routed through baize/proc.py rather than open-coding Popen here: the
+    # previous version killed only the direct child (proc.kill() on POSIX killed
+    # the shell, not its grandchild) and then called communicate() with no
+    # timeout, so a survivor holding the pipe made the drain unbounded.
+    #
+    # The environment is deliberately NOT scrubbed here, unlike run_python.
+    # Scrubbing bash would buy nothing: this tool already runs arbitrary
+    # commands as the host user, so anything in the environment is reachable via
+    # `cat .env` regardless, while a minimal env breaks legitimate commands and
+    # the PowerShell shim on Windows. run_python gets the scrubbing because its
+    # AST guard *implies* a containment promise that the env leak silently
+    # undermined; bash makes no such promise. See DENY_PATTERNS.
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
-    
+
+    if sys.platform == "win32":
+        from .powershell import build_powershell_invocation
+        cmd, use_shell = build_powershell_invocation(command), False
+    else:
+        cmd, use_shell = command, True
+
     try:
-        if sys.platform == "win32":
-            from .powershell import build_powershell_invocation
-            ps_args = build_powershell_invocation(command)
-            proc = subprocess.Popen(
-                ps_args, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=workspace, encoding="utf-8", errors="replace", env=env)
-        else:
-            proc = subprocess.Popen(
-                command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=workspace, encoding="utf-8", errors="replace", env=env)
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            if sys.platform == "win32":
-                from .powershell import kill_process_tree
-                kill_process_tree(proc.pid)
-            else:
-                proc.kill()
-            proc.communicate()  # drain to avoid deadlock
-            return f"ERROR: command timed out after {timeout}s (process killed)"
+        res = proc_mod.run(cmd, shell=use_shell, timeout=timeout,
+                           cwd=workspace, env=env)
     except Exception as exc:
         return f"ERROR: failed to launch command: {exc}"
-    out = (stdout or "") + (("\n[stderr]\n" + stderr) if stderr else "")
+    if res.timed_out:
+        return f"ERROR: command timed out after {timeout}s (process tree killed)"
+    out = (res.stdout or "") + (("\n[stderr]\n" + res.stderr) if res.stderr else "")
     out = redact(out)
-    return f"exit={proc.returncode}\n{out[:8000]}"
+    return f"exit={res.returncode}\n{out[:8000]}"
 
 
 # Safe-subset git primitive (V21 P0-1). Executed with shell=False so there is
@@ -295,19 +377,25 @@ def _tool_git(args: str, timeout: int = 60) -> str:
     cfg = load_config()
     workspace = str(_workspace_root(cfg))
     try:
-        proc = subprocess.run(
-            ["git", *tokens], shell=False, capture_output=True, text=True,
-            timeout=timeout, cwd=workspace,
-            encoding="utf-8", errors="replace")
-    except subprocess.TimeoutExpired:
-        return f"ERROR: git timed out after {timeout}s"
+        # proc_mod.run, not subprocess.run: `git` is not a leaf process - it
+        # spawns hooks, credential helpers and pagers. A plain subprocess
+        # timeout kills the git client and leaves those running, and they
+        # inherit the stdout/stderr pipes, so the read can block past the
+        # deadline. This was on a live execution path (`_tool_git` is the
+        # registered "git" tool), not dead code.
+        res = proc_mod.run(["git", *tokens], timeout=timeout, cwd=workspace,
+                           encoding="utf-8")
     except FileNotFoundError:
         # git is not installed on this host; the tool must degrade honestly
         # instead of crashing the caller (tests already gate on this case).
         return "exit=127\ngit executable not found on PATH"
-    out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+    except Exception as exc:
+        return f"ERROR: failed to launch git: {exc}"
+    if res.timed_out:
+        return f"ERROR: git timed out after {timeout}s (process tree killed)"
+    out = (res.stdout or "") + (("\n[stderr]\n" + res.stderr) if res.stderr else "")
     out = redact(out)
-    return f"exit={proc.returncode}\n{out[:8000]}"
+    return f"exit={res.returncode}\n{out[:8000]}"
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +497,20 @@ def _tool_fetch_url(url: str, max_chars: int = 6000) -> str:
     Strips HTML tags, collapses whitespace, and truncates to max_chars.
     Only enabled when BAIZE_ALLOW_FETCH_URL=1 (set at registration time).
     Rejects non-HTTP(S) schemes to prevent SSRF via file:// etc.
+
+    urllib is imported here rather than at module level because this is the only
+    consumer in this file and the tool is off by default
+    (BAIZE_ALLOW_FETCH_URL=1). Measured effect is modest - about 14ms off
+    `import baize.cli` - because baize/llm.py imports urllib.request at module
+    level for the API client anyway, so the dependency subtree is paid for
+    regardless. The change is still right (an unused-by-default tool should not
+    contribute imports), but it is not the 111ms that urllib's cumulative
+    importtime suggests.
     """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return f"ERROR: fetch_url only supports http/https, got scheme={parsed.scheme!r}"
@@ -505,33 +606,77 @@ def _ast_check_python(code: str) -> str | None:
     return None
 
 
-def _tool_run_python(code: str, timeout: int = 10) -> str:
-    """Execute a Python code snippet in a subprocess with AST whitelist guard (V33-A3).
+def _child_env() -> dict[str, str]:
+    """Minimal environment for a run_python child.
 
-    The code is checked at the AST level before execution — dangerous imports
-    and builtins (os, subprocess, exec, eval, open, ...) are blocked.
-    Uses the same Python interpreter that is running baize so the stdlib
-    version always matches. Output is capped at 4000 chars.
+    The previous version inherited the full parent environment, which meant code
+    executed through this tool could read the agent's API keys, proxy
+    credentials and anything else exported into the process. That is a real
+    exposure regardless of how good the AST check is, and the child needs none
+    of it: only enough to start an interpreter and write to a console.
+
+    This is a mitigation, not a containment boundary - see _tool_run_python.
+    """
+    keep = ("PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR",
+            "COMSPEC", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL")
+    env = {k: v for k, v in os.environ.items() if k in keep}
+    env["PYTHONIOENCODING"] = "utf-8"
+    # -I makes the child ignore PYTHONPATH / PYTHONSTARTUP / user site-packages,
+    # so nothing can be injected into it from the parent environment.
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def _tool_run_python(code: str, timeout: int = 10) -> str:
+    """Execute a Python snippet in a separate, scrubbed interpreter process.
+
+    HONESTY - what actually protects you here, in order of strength:
+
+      1. A separate process. The snippet cannot corrupt this interpreter's state,
+         and `sys.exit` / a segfault in the snippet cannot take the agent down.
+      2. A scrubbed environment (see :func:`_child_env`) - no API keys are
+         visible to the child - plus `-I` so PYTHONPATH/user-site cannot inject.
+      3. cwd pinned to the workspace, so relative paths stay inside it.
+
+    The AST check in :func:`_ast_check_python` is a GUARDRAIL, not a boundary.
+    It rejects the obvious payloads (`import os`, `open(...)`, `eval`), but it is
+    a name-based filter over syntax: `getattr`, `__subclasses__` walking and
+    string-concatenated attribute access all defeat it, and the audit proved an
+    end-to-end bypass. Do not describe this tool as a sandbox. `open()` is still
+    reachable to a determined snippet - only the environment scrubbing and the
+    workspace cwd limit the damage.
+
+      4. ``BAIZE_SANDBOX_ENABLED=1`` adds the OS boundary here too, via
+         ``sandbox.plan_argv``: Landlock on Linux, Seatbelt on macOS. Until that
+         was wired up the switch confined ``bash`` and left this tool
+         unconfined, so the two exec tools disagreed about what the flag meant.
+         On Windows it still degrades to logical-only - there is no OS boundary
+         on that platform, and the module says so rather than implying one.
     """
     check_err = _ast_check_python(code)
     if check_err:
         return check_err
+    from . import sandbox as sandbox_mod
+    cfg = load_config()
+    workspace = str(_workspace_root(cfg))
+    # The snippet is arbitrary Python, so it is passed as an argv (no shell) and
+    # the OS restriction, when there is one, rides along as a preexec_fn.
+    plan = sandbox_mod.plan_argv([sys.executable, "-I", "-c", code],
+                                 workspace, cfg)
     try:
-        proc = subprocess.Popen(
-            [sys.executable, "-c", code],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            encoding="utf-8", errors="replace",
+        res = proc_mod.run(
+            plan.argv,
+            timeout=timeout,
+            cwd=workspace,
+            env=_child_env(),
+            preexec_fn=plan.preexec_fn,
         )
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            return f"ERROR: run_python timed out after {timeout}s"
     except Exception as exc:
         return f"ERROR: run_python launch failed: {exc}"
-    out = (stdout or "").strip()
-    err = (stderr or "").strip()
+    if res.timed_out:
+        return f"ERROR: run_python timed out after {timeout}s (process tree killed)"
+    out = (res.stdout or "").strip()
+    err = (res.stderr or "").strip()
     parts = []
     if out:
         parts.append(out[:3800])

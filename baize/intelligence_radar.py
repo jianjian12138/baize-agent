@@ -58,7 +58,7 @@ BENCHMARK_COMPETITORS = [
         "repo": "All-Hands-AI/OpenHands",
         "url": "https://github.com/All-Hands-AI/OpenHands",
         "focus": "Docker 容器级沙箱、Web 浏览器 VNC 交互与微代理事件流",
-        "baize_advantage": "白泽拥有原生 Windows PowerShell 极速引擎与 Git Worktree 物理隔离，无需强制启动庞大 Docker 镜像。",
+        "baize_advantage": "白泽拥有原生 Windows PowerShell 极速引擎与真实 git worktree 隔离（baize/swarm.py：每分支独立 worktree + 实测 churn），无需强制启动庞大 Docker 镜像。",
         "transcendence_strategy": "保持极简轻量的同时提供可选 Docker 沙箱插槽（baize/docker_sandbox.py），兼顾极速与合规。"
     },
     {

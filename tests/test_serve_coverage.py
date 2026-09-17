@@ -5,6 +5,10 @@ the /run and /team 200 paths are covered by injecting fake Agent / Orchestrator
 
 Honesty: the 422 "model not configured" branch is tested against the *real*
 LLMClient (no env set) so it is a genuine fail-closed check, not a mock.
+
+Since V37.1 the service is fail-closed, so the fixture configures a token and the
+request helper sends it. That means these tests go through the real authorised
+path; the unauthenticated refusals are pinned in test_serve.py::TestAuthPosture.
 """
 from __future__ import annotations
 
@@ -18,9 +22,12 @@ import pytest
 import baize.serve as serve_mod
 from baize.serve import MAX_BODY, ThreadingHTTPServer
 
+TEST_TOKEN = "test-token-not-a-secret"
+
 
 @pytest.fixture
-def http_server():
+def http_server(monkeypatch):
+    monkeypatch.setenv("BAIZE_AUTH_TOKEN", TEST_TOKEN)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), serve_mod.Handler)
     port = srv.server_address[1]
     t = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -31,7 +38,7 @@ def http_server():
     srv.server_close()
 
 
-def _req(base, method, path, body=None, extra_headers=None):
+def _req(base, method, path, body=None, extra_headers=None, token=TEST_TOKEN):
     url = base + path
     data = None
     headers = {}
@@ -41,6 +48,8 @@ def _req(base, method, path, body=None, extra_headers=None):
         else:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if extra_headers:
         headers.update(extra_headers)
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
@@ -139,6 +148,7 @@ def test_post_too_large_413(http_server):
     req = urllib.request.Request(
         url, data=b'{"goal":"x"}', method="POST",
         headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {TEST_TOKEN}",
                  "Content-Length": str(MAX_BODY + 16),
                  "Connection": "close"})
     try:

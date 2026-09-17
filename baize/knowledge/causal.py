@@ -1,13 +1,34 @@
-"""V30 AST-Level Causal Debugging & Mutation Fuzzing (Pure Python Standard Library).
+"""AST-level causal slicing and adversarial mutation *case generation*.
 
-Performs AST slicing of failing Python code and synthesizes adversarial mutation
-tests to guarantee robust, anti-fragile fixes without hallucinated passes.
+WHAT THIS DOES
+--------------
+``ASTCausalTracker.extract_slice`` parses source, finds the named function, and
+reports its line range, AST node type, snippet, and the parameters mentioned in an
+error string. ``MutationFuzzer.generate_mutations`` returns four ``MutationCase``
+descriptors - a name, a mutation type, a payload and a rationale - for a set of
+parameter names.
+
+WHAT THIS DOES NOT DO
+---------------------
+It does not run the mutations. ``generate_mutations`` produces payloads; nothing
+applies them to the target function, and nothing observes a result. The route
+``POST /v30/causal`` reports this as ``mutations_executed: false``.
+
+``CausalProof.is_valid`` is therefore a property over two integers the caller
+supplies - it is a consistency check on a claim, not evidence that a fix
+withstands anything. It is constructed by a test and by no production code path.
+
+The previous module docstring said this "synthesizes adversarial mutation tests
+to guarantee robust, anti-fragile fixes without hallucinated passes". It
+synthesizes case descriptions; the guarantee was not implemented, and the phrase
+"without hallucinated passes" was attached to a module that could not pass or
+fail anything.
 """
 from __future__ import annotations
 
 import ast
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

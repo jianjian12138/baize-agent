@@ -335,6 +335,163 @@ def check_pyproject() -> list[str]:
     return problems
 
 
+# ------------------------------------------------------- hand-typed counts
+
+# The counts below are the third class of drifting number: neither the version
+# (owned by baize/__init__.py) nor the test total (measured by pytest), but
+# counts of things that exist in the tree - config keys, CLI subcommands, tools,
+# skills. docs/tutorials/README.md claims all of its numbers are "measured on
+# this machine", so each one needs a measurement that can disagree with it.
+#
+# These are measured by parsing the source rather than importing the package,
+# for the same reason read_version() parses instead of importing: a plain
+# checkout with no install must still be able to run the gate, and importing
+# baize has side effects.
+#
+# History: the table claimed "54 BAIZE_* keys" and "28 CLI subcommands" while
+# the real values were 52 and 27. Both had been wrong for at least one release.
+# The 54/52 pair is why the check below counts the BAIZE_ prefix separately
+# from the total: `_DEFAULTS` also holds two unprefixed keys, and lumping them
+# together is what produced a number that matched nothing.
+
+
+def measure_config_keys() -> tuple[int, int]:
+    """``(BAIZE_* key count, total _DEFAULTS entry count)``."""
+    src = (ROOT / "baize" / "config.py").read_text(encoding="utf-8")
+    keys = re.findall(r'^\s{4}"([A-Z][A-Z0-9_]*)"\s*:', src, re.M)
+    if not keys:
+        raise SystemExit(
+            "TRUTH ERROR: found no config keys in baize/config.py. If _DEFAULTS was "
+            "reformatted, update measure_config_keys() in this script."
+        )
+    return sum(1 for k in keys if k.startswith("BAIZE_")), len(keys)
+
+
+def measure_subcommands() -> int:
+    """Distinct argparse subcommand names registered in baize/cli.py."""
+    src = (ROOT / "baize" / "cli.py").read_text(encoding="utf-8")
+    subs = set(re.findall(r'add_parser\(\s*"([^"]+)"', src))
+    if not subs:
+        raise SystemExit(
+            "TRUTH ERROR: found no add_parser() calls in baize/cli.py. If the CLI was "
+            "restructured, update measure_subcommands() in this script."
+        )
+    return len(subs)
+
+
+def measure_skills() -> int:
+    """SKILL.md files under assets/, i.e. the bundled skill library."""
+    return len(list((ROOT / "assets").rglob("SKILL.md")))
+
+
+#: Tools registered only when an opt-in flag is set, so they are not part of the
+#: default tool count. Listed explicitly rather than inferred: a new conditional
+#: registration should surface as a count mismatch, not be silently absorbed.
+OPT_IN_TOOLS = frozenset({"fetch_url"})
+
+
+def measure_tools() -> tuple[int, int]:
+    """``(enabled by default, total registered)``."""
+    src = (ROOT / "baize" / "tools.py").read_text(encoding="utf-8")
+    names = set(re.findall(r'reg\.register\(\s*"([^"]+)"', src))
+    if not names:
+        raise SystemExit(
+            "TRUTH ERROR: found no reg.register() calls in baize/tools.py. If the "
+            "registry was restructured, update measure_tools() in this script."
+        )
+    return len(names - OPT_IN_TOOLS), len(names)
+
+
+@dataclass(frozen=True)
+class CountClaim:
+    """One hand-typed count in a document, with the measurement backing it.
+
+    ``pattern`` must capture the advertised number in group 1, and is anchored on
+    the row's label so that reshaping the table fails loudly instead of matching
+    a number somewhere else in the file.
+    """
+
+    doc: str
+    what: str
+    pattern: re.Pattern[str]
+    measure: Callable[[], int]
+    detail: str
+
+
+def count_claims() -> list[CountClaim]:
+    return [
+        CountClaim(
+            "docs/tutorials/README.md",
+            "BAIZE_* config keys",
+            re.compile(r"配置项 \| \*\*(\d+) 个\*\* `BAIZE_\*` 键"),
+            lambda: measure_config_keys()[0],
+            "baize/config.py _DEFAULTS, keys starting with BAIZE_",
+        ),
+        CountClaim(
+            "docs/tutorials/README.md",
+            "total _DEFAULTS entries",
+            re.compile(r"共 (\d+) 项"),
+            lambda: measure_config_keys()[1],
+            "baize/config.py _DEFAULTS, all entries",
+        ),
+        CountClaim(
+            "docs/tutorials/README.md",
+            "CLI subcommands",
+            re.compile(r"CLI 子命令 \| \*\*(\d+) 个\*\*"),
+            measure_subcommands,
+            "distinct add_parser() names in baize/cli.py",
+        ),
+        CountClaim(
+            "docs/tutorials/README.md",
+            "bundled skills",
+            re.compile(r"内置技能 \| \*\*(\d+) 个\*\*"),
+            measure_skills,
+            "assets/**/SKILL.md",
+        ),
+        CountClaim(
+            "docs/tutorials/README.md",
+            "default tools",
+            re.compile(r"内置工具 \| \*\*(\d+) 个\*\*"),
+            lambda: measure_tools()[0],
+            "reg.register() calls in baize/tools.py minus OPT_IN_TOOLS",
+        ),
+        CountClaim(
+            "docs/tutorials/README.md",
+            "opt-in tools total",
+            re.compile(r"`BAIZE_ALLOW_FETCH_URL=1` 后 (\d+) 个"),
+            lambda: measure_tools()[1],
+            "all reg.register() calls in baize/tools.py",
+        ),
+    ]
+
+
+def check_count_claims() -> list[str]:
+    """Verify every CountClaim against its measurement."""
+    problems: list[str] = []
+    for claim in count_claims():
+        path = ROOT / claim.doc
+        if not path.exists():
+            problems.append(f"{claim.doc}: missing, cannot verify '{claim.what}'")
+            continue
+        text = path.read_text(encoding="utf-8")
+        m = claim.pattern.search(text)
+        if not m:
+            problems.append(
+                f"{claim.doc}: could not find the '{claim.what}' claim "
+                f"(pattern {claim.pattern.pattern!r}). If the table was reshaped, "
+                f"update count_claims() in this script."
+            )
+            continue
+        advertised = int(m.group(1))
+        actual = claim.measure()
+        if advertised != actual:
+            problems.append(
+                f"{claim.doc}: claims {advertised} {claim.what}, measured {actual} "
+                f"({claim.detail})"
+            )
+    return problems
+
+
 # ------------------------------------------------------------------- pipeline
 
 
@@ -417,6 +574,7 @@ def do_check(lab: Labels, passed: int, total: int, strict_tests: bool) -> int:
 
     problems += check_manifest(lab)
     problems += check_pyproject()
+    problems += check_count_claims()
 
     # Denominator check: the README must advertise the number of cases the
     # suite actually collects.
@@ -443,7 +601,8 @@ def do_check(lab: Labels, passed: int, total: int, strict_tests: bool) -> int:
         print("\nRun `python scripts/sync_truth.py` to regenerate them.")
         return 1
 
-    print(f"TRUTH CHECK PASSED: {lab.full}, {total} tests collected, no drift")
+    print(f"TRUTH CHECK PASSED: {lab.full}, {total} tests collected, "
+          f"{len(count_claims())} count claims verified, no drift")
     return 0
 
 

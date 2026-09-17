@@ -1410,6 +1410,20 @@ let attachedFiles = [];
 let activeModel = 'deepseek-chat';
 let availableModels = [];
 
+// --- Honest failure rendering ---
+// Several Studio panels call endpoints that are stubs: the server now answers
+// 501 instead of a hardcoded fake success. Without this, those panels would
+// render "✓ undefined". Every fetch handler for a stub route must go through
+// this check so the UI reports the stub instead of inventing an outcome.
+function isStubResponse(res, d) {
+  return res.status === 501 || (d && d.error === 'not_implemented');
+}
+
+function stubNoticeHtml(d) {
+  const reason = (d && d.reason) || '该功能尚未实现';
+  return `<span style="color:var(--danger)">✗ 未实现（HTTP 501）：${reason}</span>`;
+}
+
 function toggleSessionSidebar() {
   const bar = document.getElementById('session-sidebar-panel');
   if (bar) bar.classList.toggle('collapsed');
@@ -1665,9 +1679,12 @@ function toggleAuthPopup(e) {
 function setInlineAuth(level) {
   setAutonomyMode(level);
   const label = document.getElementById('dock-auth-label');
-  if (level === 1) label.innerText = '🔒 只读安全';
-  if (level === 2) label.innerText = '🛡️ 默认权限';
-  if (level === 3) label.innerText = '⚡ 全自主模式';
+  // The trailing "· 未生效" is not decoration: nothing in the runtime reads
+  // BAIZE_AUTONOMY_LEVEL, so this slider stores a value and changes no
+  // behaviour. The server reports the same thing via "effective": false.
+  if (level === 1) label.innerText = '🔒 只读安全 · 未生效';
+  if (level === 2) label.innerText = '🛡️ 默认权限 · 未生效';
+  if (level === 3) label.innerText = '⚡ 全自主模式 · 未生效';
   hidePopups();
   fetch('/api/config', {
     method: 'POST',
@@ -2232,19 +2249,16 @@ async function launchTeamGoal() {
       body: JSON.stringify({ goal: goal, nodes: dagNodes })
     });
     const d = await res.json();
-    canvas.innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        ${(d.executed_nodes || []).map((n, i) => `
-          <div class="dag-node" style="border-color:var(--success);margin-left:${i*20}px;">
-            <span>✓ [${n.role.toUpperCase()}] ${n.id} 执行完毕 (${n.time_ms}ms)</span>
-            <span style="color:var(--success)">Verdict: ${n.verdict}</span>
-          </div>
-        `).join('')}
-        <div class="stat-gauge" style="color:var(--success);font-weight:700;margin-top:8px;">
-          <span>🏁 ${d.message}</span>
-          <span>100% Passed</span>
-        </div>
-      </div>`;
+    if (isStubResponse(res, d)) {
+      canvas.innerHTML = `<div class="stat-gauge">${stubNoticeHtml(d)}</div>`;
+      return;
+    }
+    // The old success branch rendered d.executed_nodes with a hardcoded
+    // "100% Passed" badge. It was deleted with the fabricated response it
+    // depended on - there is nothing left for it to render. If /team/dag is
+    // ever implemented for real, render the real per-node results here, and do
+    // not reintroduce a percentage that the server did not measure.
+    canvas.innerHTML = `<div class="stat-gauge">${escapeHtml(d.message || '未返回结果')}</div>`;
   } catch (e) {
     canvas.innerHTML += `<div style="color:var(--danger);margin-top:8px;">编排异常: ${e.message}</div>`;
   }
@@ -2332,6 +2346,15 @@ async function runSpeculativeLab() {
       body: JSON.stringify({ goal: goal })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      // This panel used to render a winner chosen among three timelines the
+      // server built inline. The real implementation is /v30/swarm/speculate.
+      box.innerHTML = stubNoticeHtml(d)
+        + '<div style="color:var(--text-dim);font-size:11px;margin-top:6px;">'
+        + '请改用 <code>/v30/swarm/speculate</code>：它会在真实 git worktree 中'
+        + '并行建立候选分支并测量改动行数。</div>';
+      return;
+    }
     box.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;background:#0d111c;padding:10px 14px;border-radius:8px;border:1px solid var(--accent);">
@@ -2371,14 +2394,16 @@ async function mergeSpeculativeWinner(winner) {
   }
 }
 
+const CAUSAL_SAMPLE_CODE = "def divide(a, b):\n    return a / b if b != 0 else 0";
+
 async function runCausalLab() {
   const box = document.getElementById('causal-result-box');
-  box.innerHTML = '<span style="color:var(--accent)">正在执行 AST 根因切片分析与反事实变异推演...</span>';
+  box.innerHTML = '<span style="color:var(--accent)">正在执行 AST 根因切片分析...</span>';
   try {
     const res = await fetch('/v30/causal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: "def divide(a, b):\n    return a / b", target_function: "divide" })
+      body: JSON.stringify({ code: CAUSAL_SAMPLE_CODE, target_function: "divide" })
     });
     const d = await res.json();
     box.innerHTML = `
@@ -2392,7 +2417,8 @@ async function runCausalLab() {
             </div>
           </div>
           <div style="color:var(--warning);font-size:11px;margin-top:4px;">嫌疑变量: <strong>${d.culprit_variables.join(', ')}</strong></div>
-          <div style="color:var(--text-dim);font-size:11px;margin-top:4px;">合成对抗变异用例: ${d.mutations.map(m => m.name).join(', ')}</div>
+          <div style="color:var(--text-dim);font-size:11px;margin-top:4px;">合成对抗变异用例（未执行，仅描述符）: ${d.mutations.map(m => m.name).join(', ')}</div>
+          <div style="color:var(--text-dim);font-size:11px;margin-top:2px;">${escapeHtml(d.mutations_note || '')}</div>
         </div>
       </div>
     `;
@@ -2403,10 +2429,12 @@ async function runCausalLab() {
 
 async function persistCausalTest(fn) {
   try {
+    // The code has to be sent too: the written test is generated from it, not
+    // from a fixed template.
     const res = await fetch('/v30/causal/persist_test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_function: fn })
+      body: JSON.stringify({ target_function: fn, code: CAUSAL_SAMPLE_CODE })
     });
     const d = await res.json();
     alert('【测试用例持久化写入成功】\n\n' + d.message + '\n文件路径: ' + d.path);
@@ -2423,6 +2451,10 @@ async function applyCausalHeal(fn) {
       body: JSON.stringify({ target_function: fn })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      alert('【未实现 (HTTP 501)】\n\n' + ((d && d.reason) || '该功能尚未实现'));
+      return;
+    }
     alert('【AST 变异自愈补丁生效】\n\n' + d.message);
   } catch (e) {
     alert('自愈补丁应用失败: ' + e.message);
@@ -2467,6 +2499,11 @@ async function importMetaTool(name) {
       body: JSON.stringify({ name: name })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      alert('【未实现】\n\n' + d.reason
+        + '\n\n此前这里会弹出「已成功动态热加载」，但服务端并未注册任何工具。');
+      return;
+    }
     alert('【元工具导入成功】\n\n' + d.message);
   } catch (e) {
     alert('导入失败: ' + e.message);
@@ -2485,11 +2522,14 @@ async function testRagSearch() {
       body: JSON.stringify({ query: q })
     });
     const d = await res.json();
+    // The endpoint reports substring matches, not semantic relevance. The old
+    // renderer multiplied a hardcoded 0.92 by 100 and printed "相关度: 92%",
+    // which was a number the server had invented.
     resBox.innerHTML = (d.results || []).map(r => `
       <div class="stat-gauge" style="margin-bottom:6px;flex-direction:column;align-items:flex-start;gap:2px;">
         <div style="display:flex;justify-content:space-between;width:100%;">
           <strong style="color:var(--accent);font-size:11px;">[${r.source}]</strong>
-          <span style="color:var(--success);font-size:11px;">相关度: ${Math.round(r.relevance * 100)}%</span>
+          <span style="color:var(--text-dim);font-size:11px;">子串命中 ${r.occurrences} 次</span>
         </div>
         <span style="font-size:11px;color:var(--text-main);">${r.snippet}</span>
       </div>
@@ -2606,7 +2646,12 @@ async function runDoctorHealthCheck() {
     const winData = await winRes.json();
     const shellEl = document.getElementById('win-shell-name');
     if (shellEl) {
-      shellEl.innerText = `${winData.shell_version || 'PowerShell 5.1'}`;
+      // Do not substitute a version we did not read. `shell_version` is null
+      // when the probe failed; the old code hardcoded a version string here and
+      // turned an unknown into a confident wrong answer.
+      shellEl.innerText = winData.shell_version
+        ? `${winData.shell_version}`
+        : `未知 (${winData.shell_version_error || '探测未返回结果'})`;
     }
   } catch (err) {
     list.innerHTML = `<div style="color:var(--danger)">检查失败: ${err.message}</div>`;
@@ -2639,6 +2684,10 @@ async function testWebhookDispatch() {
       body: JSON.stringify({ target: target, event: 'task_verification_passed' })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      resEl.innerHTML = stubNoticeHtml(d);
+      return;
+    }
     resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message}</span>`;
   } catch (e) {
     resEl.innerHTML = `<span style="color:var(--danger)">推送失败: ${e.message}</span>`;
@@ -2656,6 +2705,10 @@ async function runChaosSimulation() {
       body: JSON.stringify({ fault_type: fault })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      resEl.innerHTML = stubNoticeHtml(d);
+      return;
+    }
     resEl.innerHTML = `
       <div style="background:#090b12;padding:10px;border-radius:6px;border:1px solid var(--success);margin-top:6px;">
         <div style="display:flex;justify-content:space-between;color:var(--success);font-weight:700;">
@@ -2686,6 +2739,12 @@ async function applyRbacRules() {
       })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      // The watermark used to be a hash of the current time, rendered as if it
+      // certified something. Nothing was applied and nothing was signed.
+      resEl.innerHTML = stubNoticeHtml(d);
+      return;
+    }
     document.getElementById('security-watermark').innerText = d.commit_watermark;
     resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message} [水印: ${d.commit_watermark}]</span>`;
   } catch (e) {
@@ -2754,6 +2813,10 @@ async function applyGitHunk(hunkId) {
       body: JSON.stringify({ hunk_id: hunkId })
     });
     const d = await res.json();
+    if (isStubResponse(res, d)) {
+      alert('【未实现 (HTTP 501)】\n\n' + ((d && d.reason) || '该功能尚未实现'));
+      return;
+    }
     alert('【代码块精准采纳完成】\n\n' + d.message);
     loadGitDiff();
   } catch (e) {
@@ -2863,21 +2926,29 @@ async function runMutationArena() {
 // --- Phase 3: Byzantine Consensus ---
 async function runByzantineConsensus() {
   const box = document.getElementById('adv-result-box');
-  box.innerHTML = '<span style="color:var(--accent)">正在协调 3 节点拜占庭共识博弈仲裁 (Red/Blue/Judge)...</span>';
+  box.innerHTML = '<span style="color:var(--accent)">正在统计评审意见票数...</span>';
   try {
+    // No verdicts are sent, so this returns "awaiting_verdicts". That is the
+    // honest answer: the endpoint counts votes, it does not run agents or review
+    // code. It used to answer with two literal APPROVEs and a timestamp hash
+    // labelled BFT-SIG-, which looked like a signed verdict and was neither.
     const res = await fetch('/api/byzantine/arbitrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ goal: "核心发布防伪物理门禁核验" })
     });
     const d = await res.json();
+    const awaiting = d.status === 'awaiting_verdicts';
+    const accent = awaiting ? 'var(--warning,#d9a441)' : 'var(--success)';
     box.innerHTML = `
-      <div style="background:#090b12;border:1px solid var(--success);border-radius:6px;padding:8px;margin-top:6px;">
-        <div style="display:flex;justify-content:space-between;color:var(--success);font-weight:700;">
-          <span>✓ ${d.message}</span>
-          <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">${d.bft_signature}</span>
+      <div style="background:#090b12;border:1px solid ${accent};border-radius:6px;padding:8px;margin-top:6px;">
+        <div style="display:flex;justify-content:space-between;color:${accent};font-weight:700;">
+          <span>${awaiting ? '…' : '✓'} ${escapeHtml(d.message)}</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">${escapeHtml(d.digest || '无摘要')}</span>
         </div>
-        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">共识协议: ${d.consensus_type} · 仲裁裁决: ${d.arbiter_decision}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${escapeHtml(d.consensus_type)} · 签名: ${d.signed ? '有' : '无（未做任何签名）'}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${escapeHtml(d.digest_kind || '')}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">代码事实（未被分析）: ${escapeHtml(JSON.stringify(d.target_code_facts))}</div>
       </div>
     `;
   } catch (e) {

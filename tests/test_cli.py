@@ -402,7 +402,11 @@ def test_cli_serve(tmp_path, capsys, monkeypatch):
         called["host"] = host
         called["port"] = port
 
-    monkeypatch.setattr("baize.cli.serve_mod.serve", fake_serve)
+    # Patched on the module itself, not via baize.cli: cli.py imports baize.serve
+    # lazily inside cmd_serve, so there is no baize.cli.serve_mod attribute to
+    # patch. The lazy import returns the same module object, so patching the
+    # function on baize.serve is equivalent.
+    monkeypatch.setattr("baize.serve.serve", fake_serve)
     rc = main(["serve", "--host", "127.0.0.1", "--port", "9999"])
     assert rc == 0
     assert called["host"] == "127.0.0.1"

@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import datetime
 import json
-import subprocess
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
 from .agent import Agent
 from .tools import ToolRegistry, default_registry
+from . import proc as proc_mod
 
 __all__ = [
     "UserStory",
@@ -26,6 +26,12 @@ __all__ = [
     "ProgressJournal",
     "RalphLoopEngine",
 ]
+
+#: Wall-clock bound for each git call in :meth:`RalphLoopEngine.commit_git`.
+#: These calls previously had no timeout at all, so a git process that hung
+#: (lock file, credential prompt, index.lock from a crashed run) blocked the
+#: delivery loop forever.
+GIT_TIMEOUT = 120.0
 
 
 @dataclass
@@ -150,6 +156,9 @@ class RalphLoopEngine:
         self.progress_journal = ProgressJournal(progress_path)
         self.workspace_dir = workspace_dir
         self.registry = default_registry()
+        #: Why the last :meth:`commit_git` returned ``None``. Empty when the last
+        #: call succeeded. Callers report this instead of assuming a commit.
+        self.last_commit_error = ""
 
     @staticmethod
     def generate_initial_prd(goal: str) -> PRDDocument:
@@ -210,29 +219,56 @@ class RalphLoopEngine:
         except Exception as exc:
             return False, f"执行异常: {exc}"
 
-    def commit_git(self, story: UserStory) -> str:
-        """Create an atomic git commit for the passed user story."""
+    def commit_git(self, story: UserStory) -> str | None:
+        """Create an atomic git commit for the passed user story.
+
+        Returns the commit hash, or ``None`` when **no commit happened**. The
+        reason is left in ``self.last_commit_error`` for the caller to report.
+
+        This method used to end with ``except Exception: return
+        "simulated_commit"``. The caller stored that string in
+        ``story.commit_hash`` and then printed "已记录状态并提交 Git" - so a
+        failed commit was recorded and announced as a successful one, which is
+        the exact fabricated-success pattern this package claims to have
+        removed. Returning ``None`` forces the caller to say what happened.
+        """
+        self.last_commit_error = ""
         try:
-            subprocess.run(["git", "add", "-A"], cwd=self.workspace_dir, check=True, capture_output=True)
+            add = proc_mod.run(["git", "add", "-A"], cwd=self.workspace_dir,
+                               timeout=GIT_TIMEOUT)
+            if add.timed_out or add.returncode != 0:
+                self.last_commit_error = (
+                    f"git add rc={add.returncode}"
+                    + (" (timed out)" if add.timed_out else "")
+                    + f": {(add.stderr or '').strip()[:200] or 'no output'}")
+                return None
+
             msg = f"feat({story.id}): {story.title}"
-            res = subprocess.run(
-                ["git", "commit", "-m", msg],
-                cwd=self.workspace_dir,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace"
-            )
+            res = proc_mod.run(["git", "commit", "-m", msg], cwd=self.workspace_dir,
+                               timeout=GIT_TIMEOUT)
+            if res.timed_out or res.returncode != 0:
+                self.last_commit_error = (
+                    f"git commit rc={res.returncode}"
+                    + (" (timed out)" if res.timed_out else "")
+                    + f": {(res.stderr or res.stdout or '').strip()[:200] or 'no output'}")
+                return None
+
             # Retrieve latest commit hash
-            rev = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=self.workspace_dir,
-                capture_output=True,
-                text=True
-            )
-            return rev.stdout.strip() if rev.returncode == 0 else "committed"
-        except Exception:
-            return "simulated_commit"
+            rev = proc_mod.run(["git", "rev-parse", "HEAD"], cwd=self.workspace_dir,
+                               timeout=GIT_TIMEOUT)
+            if rev.timed_out or rev.returncode != 0:
+                self.last_commit_error = (
+                    f"git rev-parse HEAD rc={rev.returncode} after a commit that "
+                    f"reported rc=0; hash unavailable")
+                return None
+            sha = rev.stdout.strip()
+            if not sha:
+                self.last_commit_error = "git rev-parse HEAD returned an empty hash"
+                return None
+            return sha
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            self.last_commit_error = f"{type(exc).__name__}: {exc}"
+            return None
 
     def run_loop(self, max_iterations: int = 10, auto_commit: bool = True) -> dict[str, Any]:
         """Run the full Ralph loop until all stories in prd.json pass or max_iterations reached."""
@@ -252,9 +288,16 @@ class RalphLoopEngine:
             if ok:
                 story.passes = True
                 story.updated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                commit_note = ""
                 if auto_commit:
                     sha = self.commit_git(story)
-                    story.commit_hash = sha
+                    if sha:
+                        story.commit_hash = sha
+                        commit_note = f"并提交 Git（{sha[:12]}）"
+                    else:
+                        # Do not record a hash we did not get, and do not let the
+                        # success line below claim a commit that did not happen.
+                        commit_note = f"；Git 提交未发生（{self.last_commit_error}）"
 
                 # Append learnings to progress.txt
                 self.progress_journal.append_entry(
@@ -266,7 +309,7 @@ class RalphLoopEngine:
                 # Persist updated state to prd.json immediately
                 prd.save_to_file(self.prd_path)
                 executed_stories.append({"id": story.id, "title": story.title, "status": "PASS"})
-                print(f"✅ [Ralph {story.id}] 验证通过！已记录状态并提交 Git。")
+                print(f"✅ [Ralph {story.id}] 验证通过！已记录状态{commit_note}。")
             else:
                 print(f"❌ [Ralph {story.id}] 执行未通过: {detail}")
                 break

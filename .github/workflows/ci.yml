@@ -108,6 +108,28 @@ jobs:
       - name: Tracked-file hygiene gate
         run: python scripts/check_hygiene.py
 
+      # docs/architecture.md section 2 described a core/ tooling/ knowledge/
+      # security/ server/ layout that did not exist - 39 of the 43 files it
+      # listed were flat modules under baize/. Gate the tree against the
+      # filesystem so a reader can trust the paths.
+      - name: Architecture tree gate
+        run: python scripts/check_arch_tree.py
+
+      # `baize plugin install/remove` called `skill_index.build(cfg)`; the
+      # function is `build_index`. No test caught it because install needs the
+      # network, and remove deleted the directory *before* crashing. This gate
+      # resolves every module-attribute reference in the package statically.
+      - name: Module attribute gate
+        run: python scripts/check_module_attrs.py
+
+      # NO FAKE DONE at the API layer. Seven routes answered HTTP 200 with a
+      # hardcoded success payload ("PR #43 opened", "4/4 checks green") while
+      # performing no work; a caller could not tell a stub from a result. They
+      # now answer 501. This gate starts the real server and probes every
+      # declared stub route, so it fails on behaviour, not on source shape.
+      - name: Endpoint honesty gate
+        run: python scripts/check_endpoint_honesty.py
+
   install-smoke:
     name: one-command install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

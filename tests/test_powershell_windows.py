@@ -5,11 +5,15 @@ import shutil
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 from baize.powershell import (
+    NOT_TRANSLATED,
+    SUPPORTED_TRANSLATIONS,
     resolve_powershell_executable,
     translate_posix_to_powershell,
     build_powershell_invocation,
+    detect_wsl2_status,
     get_powershell_status,
     _fix_python_inline_quotes,
 )
@@ -108,6 +112,82 @@ class TestPowerShellWindows(unittest.TestCase):
         self.assertIn("shell_executable", status)
         self.assertTrue(status.get("utf8_enforced"))
         self.assertTrue(status.get("posix_shim_active"))
+
+
+class TestPosixShimHonesty(unittest.TestCase):
+    """The shim must not advertise translations it does not perform.
+
+    The previous capability list contained ``grep -> Select-String`` and the
+    module docstring claimed sed / xargs / find support. None of those was ever
+    written: the inputs fall through ``_translate_single_command`` unchanged and
+    reach PowerShell verbatim. These tests pin the corrected list.
+    """
+
+    def test_every_advertised_translation_actually_translates(self):
+        for src, fragment in SUPPORTED_TRANSLATIONS:
+            out = translate_posix_to_powershell(src)
+            self.assertIn(fragment, out,
+                          f"advertised {src!r} -> {fragment!r} but got {out!r}")
+            self.assertNotEqual(out.strip(), src.strip(),
+                                f"{src!r} was advertised but passed through")
+
+    def test_grep_is_not_advertised(self):
+        advertised = " ".join(
+            f"{src} {dst}" for src, dst in SUPPORTED_TRANSLATIONS)
+        self.assertNotIn("grep", advertised)
+        self.assertIn("grep", NOT_TRANSLATED)
+        # ...and the behaviour matches the corrected claim.
+        self.assertEqual(translate_posix_to_powershell("grep foo bar.txt"),
+                         "grep foo bar.txt")
+
+    def test_status_exposes_the_not_translated_list(self):
+        status = get_powershell_status()
+        self.assertIn("grep", status["not_translated"])
+        self.assertEqual(
+            sorted(status["supported_posix_translations"][0]),
+            ["posix", "powershell"])
+
+    def test_status_does_not_claim_os_isolation(self):
+        status = get_powershell_status()
+        self.assertEqual(status["execution_policy"], "Bypass")
+        self.assertIs(status["os_isolation"], False)
+        self.assertNotIn("Isolated", status["execution_policy"])
+
+    def test_shell_version_is_null_or_real_never_guessed(self):
+        status = get_powershell_status()
+        version = status["shell_version"]
+        if version is None:
+            self.assertTrue(status["shell_version_error"],
+                            "a null version must come with a reason")
+        else:
+            self.assertTrue(version.startswith("PowerShell v"),
+                            f"unexpected version string {version!r}")
+
+    def test_failed_wsl_probe_is_unknown_not_available(self):
+        real_run = subprocess.run
+
+        def boom(*a, **kw):
+            raise OSError("probe exploded")
+
+        with unittest.mock.patch.object(subprocess, "run", boom):
+            if sys.platform != "win32":
+                self.skipTest("wsl probe only runs on Windows")
+            res = detect_wsl2_status()
+        self.assertIsNone(res["available"],
+                          "a failed probe must not report availability")
+        self.assertIn("error", res)
+        self.assertEqual(res["distros"], [])
+
+    def test_no_distro_name_is_invented_when_none_is_listed(self):
+        if sys.platform != "win32":
+            self.skipTest("wsl probe only runs on Windows")
+        res = detect_wsl2_status()
+        # Whatever the host says, the answer must be internally consistent.
+        if res["available"] is True:
+            self.assertTrue(res["distros"])
+            self.assertEqual(res["default"], res["distros"][0])
+        else:
+            self.assertIsNone(res["default"])
 
     @unittest.skipUnless(PS_ABS_OK, PS_SKIP_REASON)
     def test_tool_run_command_powershell_execution(self):

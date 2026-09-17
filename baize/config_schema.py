@@ -86,6 +86,30 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_PROMPT_CACHE": ("bool", None),
     "BAIZE_AUTOMATIONS_FILE": ("path", None),
     "BAIZE_AUTOMATIONS_POLL_SECONDS": ("int_range", (1, 3600)),
+    # --- V37.1 service auth (fail-closed) ---
+    # Validating these closes the second half of the old fail-open: a key that is
+    # neither declared nor schema-checked cannot be misconfigured loudly.
+    "BAIZE_AUTH_TOKEN": ("any", None),           # may be empty (= writes denied)
+    "BAIZE_ALLOW_NO_AUTH": ("bool", None),
+    "BAIZE_CORS_ORIGINS": ("any", None),         # may be empty (no CORS header)
+    "BAIZE_ENABLE_SYNTHESIS_API": ("bool", None),
+    "BAIZE_GIT_EXE": ("any", None),
+    "BAIZE_SWARM_VERIFY_CMD": ("any", None),
+    "BAIZE_SWARM_ARTIFACT": ("any", None),
+    "BAIZE_SWARM_GIT_REF": ("any", None),
+    # --- V37.1: previously referenced-but-undeclared keys, now validated ---
+    "BAIZE_ALLOW_FETCH_URL": ("bool", None),
+    "BAIZE_AUTONOMY_LEVEL": ("int_range", (1, 3)),
+    "BAIZE_AUTO_HARVEST_SKILLS": ("bool", None),
+    "BAIZE_COVERAGE_DATA": ("any", None),
+    "BAIZE_FORCE_COLOR": ("bool", None),
+    "BAIZE_MANIFEST": ("any", None),
+    "BAIZE_MAX_TOKENS": ("any", None),           # empty = model default
+    "BAIZE_MCP_SPEC": ("any", None),
+    "BAIZE_MODEL_PROVIDER": ("any", None),
+    "BAIZE_ORCHESTRATOR_WORKERS": ("int_range", (1, 64)),
+    "BAIZE_TOOL_RETRY_MAX": ("int_range", (0, 10)),
+    "BAIZE_YOLO_MODE": ("bool", None),
 }
 
 

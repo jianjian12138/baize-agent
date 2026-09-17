@@ -34,6 +34,31 @@
   （由 `baize/orchestrator.py` 强制执行，`tests/test_orchestrator.py` 覆盖）。
 - 严禁在代码中写入模拟通过（`assert True` 占位、`return True # Simulated`、
   用 MagicMock 屏蔽真实导入）。发现即视为 P0 缺陷。
+- **HTTP 端点同样受此约束。** 一个返回 200 + 硬编码成功负载的桩，比文档写错更严重：
+  文档误导读者，端点误导程序。尚未实现的端点必须返回 501 并在
+  `baize/serve.py: STUB_ROUTES` 中声明；`make honesty` 会真实启动服务逐个探测这些
+  路由，并扫描源码里是否残留旧的编造字面量。当前共 11 条。
+- **写方法必须鉴权。** `do_POST` / `do_DELETE` 等状态变更方法必须调用
+  `_is_authorized()`；`tests/test_serve.py::test_every_write_method_checks_authorisation`
+  直接读源码断言这一点（`do_DELETE` 曾经完全没有鉴权检查，行为测试一直没发现，
+  因为没人发过 DELETE）。
+- **门禁自身也要被验证。** 新增/修改门禁脚本时必须用反证法确认它**会失败**：
+  把问题重新注入一次，确认门禁报红，再还原。只会变绿的门禁等于没有门禁。
+- **指标必须是被测出来的，不能是算出来的。** 一个除以自身的比率（`n / n`）永远等于
+  100%，而它看起来和实测值一模一样。`baize/mutation.py` 曾经报"100% 击杀率"，因为它算的是
+  `killed_count = len(mutants)`——从未执行过任何变异体。任何分数、比率、通过率都要能追到
+  一次真实运行，且**没有运行时要报 `None`，不要报 100%**。
+- **名字必须诚实。** 字段叫 `*_signature` 就必须是签名（有密钥、可验证）；没有就改名或加
+  `signed: false`。`BFT-SIG-***` 曾经是 `sha256(goal + votes + time.time())`——一个时间戳哈希，
+  每次调用都不同，连内容摘要都不是。同理 `verified_gate: True` 而没有任何校验、
+  `downloads: 12` 而没有任何计数，都是伪造的证据。
+- **导入的每个名字都必须存在。** `from .x import Y` 里 `Y` 不存在时，端点在**首次被调用时**
+  才炸（`CausalDebugger` 就是这样，`/v30/causal` 每次请求都 ImportError）。
+  `scripts/check_module_attrs.py` 现在会检查这一点，不要绕过它。
+- **请求里的字符串不许直接进文件名或写盘的源码。** `target_function` 曾经既进
+  `test_causal_{fn}.py` 的文件名、又进写盘的 Python 源码正文，一个换行就能把代码注入到
+  会被 pytest 收集的文件里。所有这类值先做 `isidentifier()` / 白名单校验，写盘前再做一次
+  路径包含性检查，输出目录要进 `.gitignore`。
 
 ## 3. 编码规约
 
@@ -42,21 +67,38 @@
 - **测试先行**：新功能先写失败测试，实现后转绿；测试必须发起真实调用。
 - **路径可移植**：严禁硬编码盘符路径；一律走 `.env` / `baize/config.py`。
 - **密钥红线**：密钥只进 `.env`（已 gitignore），严禁提交或硬编码。
-- **沙箱红线**：Agent 工具默认限制在 `BAIZE_WORKSPACE_DIR` 内；
+- **沙箱红线**：文件类工具（read_file / write_file / patch_file / list_dir）
+  默认限制在 `BAIZE_WORKSPACE_DIR` 内，越界抛 `PermissionError`；
   `BAIZE_ALLOW_OUTSIDE_WORKSPACE=1` 仅限明确知晓风险时开启。
+  **`bash` 不受此限制**——它只把 cwd 钉在工作区，绝对路径照样可达。
 
 ## 4. Agent 内置工具（V33 原语集）
 
-`baize/tools.py` 提供内置原语工具，全部经沙箱、AST 防护与 deny-list 门禁保护：
+`baize/tools.py` 提供内置原语工具。**先说边界，再说能力**：
+
+- 操作系统级沙箱**默认关闭**。只有 `BAIZE_SANDBOX_ENABLED=1` 才走
+  `baize/sandbox.py`（Linux Landlock / macOS Seatbelt）；Windows 上该模块
+  诚实降级为 `logical-only` 并返回 `degraded=True`，即**没有** OS 边界。
+- `bash` 的 deny-list 是**防误操作的护栏，不是安全边界**。实测 35 条破坏性
+  变体中仅拦截 18 条（51%）：引号拆分、`${HOME}` 展开、长选项、变量间接、
+  base64 管道、`find -delete`、`shred`、`diskpart`、`Remove-Item -Recurse`
+  全部可达。机器可读的完整披露见 `tools.EXECUTION_BOUNDARY`，`GET /health`
+  会原样返回。
+- `run_python` 的 AST 检查同样是**护栏而非沙箱**：它按名字过滤语法，
+  `getattr`、`__subclasses__` 遍历、字符串拼接属性名都能绕过（审计已证
+  端到端绕过）。真正起作用的是独立进程 + 环境变量脱敏 + `-I` + cwd 限定
+  + 超时强杀。
+- 结论：把 `bash` / `run_python` 当作「Agent 能以当前用户权限执行任何东西」
+  来评估信任。
 
 | 工具 | 用途 |
 |------|------|
 | read_file / write_file | 工作区文件读写（支持 `start_line`/`end_line` 切片读取） |
 | patch_file | 精准差量补丁（字符串精确替换/统一 diff，换行容错） |
 | list_dir | 工作区目录浏览 |
-| bash | 受限 shell（危险命令 deny-list 拦截，超时中断强杀） |
-| git | 安全子集 Git 操作（仅只读及 commit，shell=False） |
-| run_python | 安全 Python 沙箱（AST 拦截 import/反射逃逸，带超时） |
+| bash | 执行 shell 命令。deny-list 护栏拦截常见灾难命令（51% 覆盖，见上），超时强杀整棵进程树。**不构成安全边界** |
+| git | 安全子集 Git 操作（仅只读及 commit，shell=False，白名单子命令 + 拒绝选项注入） |
+| run_python | 独立进程执行 Python 片段：环境变量脱敏 + `-I` + cwd 限定工作区 + 超时强杀。AST 检查是护栏，不是沙箱 |
 | fetch_url | 网页内容安全提取（HTTP/HTTPS 验证，HTML 清洗） |
 | search_skills / load_skill | 检索技能索引 → 按需加载完整 SKILL.md（渐进披露） |
 | memory_recall / memory_log | 跨会话持久记忆检索与记录 |

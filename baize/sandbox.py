@@ -25,6 +25,7 @@ from shutil import which
 
 from .config import ROOT, load_config
 from .logging_setup import redact
+from . import proc as proc_mod
 
 logger = logging.getLogger("baize.sandbox")
 
@@ -65,15 +66,15 @@ def _plain(command: str, cwd: str, timeout: int) -> SandboxResult:
     head = cmd.split(None, 1)[0]
     if head in ("python", "python3"):
         cmd = _sys.executable + cmd[len(head):]
-    try:
-        proc = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
-            timeout=timeout, cwd=cwd, encoding="utf-8", errors="replace")
-    except subprocess.TimeoutExpired:
+    # proc.run, not subprocess.run: with shell=True a plain subprocess.run
+    # timeout kills the shell but not the grandchild that holds the pipe, so the
+    # wall time is unbounded. See baize/proc.py.
+    res = proc_mod.run(cmd, shell=True, timeout=timeout, cwd=cwd)
+    if res.timed_out:
         return SandboxResult(-1, "", f"command timed out after {timeout}s",
                              mechanism="none")
-    return SandboxResult(proc.returncode, redact(proc.stdout or ""),
-                         redact(proc.stderr or ""), mechanism="none")
+    return SandboxResult(res.returncode, redact(res.stdout or ""),
+                         redact(res.stderr or ""), mechanism="none")
 
 
 def _apply_landlock(workspace: str) -> None:
@@ -97,15 +98,73 @@ def _landlock_preexec(workspace: str):
     return _child
 
 
-def _seatbelt_command(command: str, workspace: str) -> str:
-    profile = (
+def _seatbelt_profile(workspace: str) -> str:
+    """Minimal Seatbelt profile: read/exec anywhere, write only under workspace."""
+    return (
         '(version 1)(deny default)'
         '(allow process-exec)'
         '(allow file-read*)'
         f'(allow file-write* (subpath "{workspace}"))'
     )
+
+
+def _seatbelt_command(command: str, workspace: str) -> str:
     # Prepend the sandbox wrapper; the original command stays shell-expanded.
-    return f'sandbox-exec -p \'{profile}\' sh -c {subprocess.list2cmdline([command])}'
+    return (f'sandbox-exec -p \'{_seatbelt_profile(workspace)}\' '
+            f'sh -c {subprocess.list2cmdline([command])}')
+
+
+@dataclass
+class ArgvPlan:
+    """How to run an argv with OS isolation - or an honest record that we cannot.
+
+    ``mechanism`` names the layer actually applied:
+
+      ``none``          sandbox disabled; ``argv`` runs as-is
+      ``landlock``      restriction installed in the child via ``preexec_fn``
+      ``seatbelt``      ``argv`` is prefixed with ``sandbox-exec``
+      ``logical-only``  enabled, but this platform has no mechanism and
+                        ``degraded`` is True
+    """
+    argv: list[str]
+    mechanism: str = "none"
+    preexec_fn: object | None = None
+    degraded: bool = False
+
+
+def plan_argv(argv, workspace: str, cfg: dict | None = None) -> ArgvPlan:
+    """Wrap ``argv`` for OS isolation, honouring the same switch as :func:`run`.
+
+    This exists because ``run_python`` executes ``[python, -I, -c, <code>]`` -
+    an argv with no shell, which cannot be expressed as the command *string*
+    :func:`run` takes. Without it, ``BAIZE_SANDBOX_ENABLED=1`` confined ``bash``
+    and silently left ``run_python`` unconfined: the switch promised one thing
+    and delivered another, which is the failure mode this module's docstring
+    says it exists to avoid.
+
+    ``preexec_fn`` is returned rather than a wrapped command string on purpose -
+    the snippet is arbitrary Python and shell-quoting it would be an injection
+    surface. On Windows it is always ``None``: there is no mechanism, so the
+    plan degrades honestly instead of pretending to confine.
+    """
+    args = [str(a) for a in argv]
+    cfg = cfg or load_config()
+    if cfg.get("BAIZE_SANDBOX_ENABLED", "0") != "1":
+        return ArgvPlan(args)
+
+    mech = platform_mechanism()
+    if mech == "landlock":  # pragma: no cover - Linux only
+        return ArgvPlan(args, "landlock", _landlock_preexec(workspace))
+    if mech == "seatbelt":  # pragma: no cover - macOS only
+        # sandbox-exec takes the command and its arguments directly, so no shell
+        # - and therefore no quoting hazard - is involved.
+        return ArgvPlan(["sandbox-exec", "-p", _seatbelt_profile(workspace), *args],
+                        "seatbelt")
+
+    logger.warning(
+        "OS sandbox unavailable on this platform; run_python degrades to "
+        "logical-only (AST guard + scrubbed env + workspace cwd only).")
+    return ArgvPlan(args, "logical-only", None, True)
 
 
 def run(command: str, cwd: str | None = None, timeout: int = 60,
@@ -134,28 +193,30 @@ def run(command: str, cwd: str | None = None, timeout: int = 60,
         return res
 
     if mech == "landlock":  # pragma: no cover - Linux only
-        try:
-            proc = subprocess.run(
-                command, shell=True, capture_output=True, text=True,
-                timeout=timeout, cwd=cwd, encoding="utf-8", errors="replace",
-                preexec_fn=_landlock_preexec(cwd))
-        except subprocess.TimeoutExpired:
+        # proc.run, with the kernel restriction installed by preexec_fn. This
+        # branch kept a direct subprocess.run after the rest of the package was
+        # routed through proc.py - it needs preexec_fn, which proc.run did not
+        # accept yet - and so it kept the same unbounded-timeout defect: the
+        # timeout killed the shell while the grandchild held the pipe open.
+        res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd,
+                           preexec_fn=_landlock_preexec(cwd))
+        if res.timed_out:
             return SandboxResult(-1, "", f"command timed out after {timeout}s",
                                  mechanism="landlock")
-        return SandboxResult(proc.returncode, redact(proc.stdout or ""),
-                             redact(proc.stderr or ""), mechanism="landlock")
+        return SandboxResult(res.returncode, redact(res.stdout or ""),
+                             redact(res.stderr or ""), mechanism="landlock")
 
     if mech == "seatbelt":  # pragma: no cover - macOS only
+        # proc.run (not subprocess.run) so a timeout kills the sandbox-exec tree
+        # rather than leaving the sandboxed child holding the pipe. See
+        # baize/proc.py.
         wrapped = _seatbelt_command(command, cwd)
-        try:
-            proc = subprocess.run(
-                wrapped, shell=True, capture_output=True, text=True,
-                timeout=timeout, cwd=cwd, encoding="utf-8", errors="replace")
-        except subprocess.TimeoutExpired:
+        res = proc_mod.run(wrapped, shell=True, timeout=timeout, cwd=cwd)
+        if res.timed_out:
             return SandboxResult(-1, "", f"command timed out after {timeout}s",
                                  mechanism="seatbelt")
-        return SandboxResult(proc.returncode, redact(proc.stdout or ""),
-                             redact(proc.stderr or ""), mechanism="seatbelt")
+        return SandboxResult(res.returncode, redact(res.stdout or ""),
+                             redact(res.stderr or ""), mechanism="seatbelt")
 
     # Fallback (should be unreachable); be honest.
     res = _plain(command, cwd, timeout)

@@ -1,6 +1,6 @@
 # 📖 白泽智能体 (Baize Agent V37.0.0 Prometheus) 完整使用说明手册
 
-> **白泽智能体 (Baize Agent)** 是一套面向 AI Agent 的**白盒工程化自主研发操作系统**：坚持**纯 Python 标准库构建（零第三方运行时依赖）**。以 **NO FAKE DONE** 物理门禁保证「绝不假绿」，原生支持 **Windows PowerShell 常驻 REPL (<5ms 极速响应)**、**AST 因果代码自愈**、**Asyncio Swarm 影子推演**、**5 大语言代码符号图谱** 与 **3 节点拜占庭博弈仲裁**。
+> **白泽智能体 (Baize Agent)** 是一套面向 AI Agent 的**白盒工程化自主研发操作系统**：坚持**纯 Python 标准库构建（零第三方运行时依赖）**。以 **NO FAKE DONE** 物理门禁保证「绝不假绿」，原生支持 **Windows PowerShell 常驻 REPL (<5ms 极速响应)**、**AST 因果代码自愈**、**Asyncio Swarm 影子推演**、**5 大语言代码符号图谱** 与 **评审票数门槛仲裁**。
 
 ---
 
@@ -120,7 +120,7 @@ baize [SUBCOMMAND] [OPTIONS]
 1. **Monaco 差异对比与 Hunk 细粒度采纳**：支持针对大文件修改单键 Cherry-Pick 采纳单个代码块；
 2. **多语言符号依赖图谱**：跨文件毫秒级检索 Python、TypeScript、Rust、Go、Java 中的接口、类与函数调用链；
 3. **达尔文元工具企业市场**：智能体自合成的工具附带加密 `DARWIN-***` 基因签名，跨团队一键挂载；
-4. **拜占庭共识演练台**：红队注入边界算子，蓝队沙箱验证，法官全票签署 `BFT-SIG-***` 防伪门禁。
+4. **评审票数门槛仲裁台**：对**调用方传入**的评审意见计票，与 `quorum`（默认 2）比较，并输出可复现的 `BFT-DIGEST-***` 内容摘要。**不传 `verdicts` 时返回 `awaiting_verdicts`，不返回任何裁决；不做任何签名。**
 
 ---
 
@@ -191,7 +191,7 @@ baize [SUBCOMMAND] [OPTIONS]
 | `/api/mcp/call` | `POST` | 调用指定 MCP 工具 | `{"server":"sqlite","tool":"query","arguments":{...}}` |
 | `/api/symbol/search` | `GET` | 跨文件检索代码符号 | `/api/symbol/search?q=UserService` |
 | `/api/swarm/speculate` | `POST` | 触发 Swarm 影子推演 | `{"goal":"优化并发安全"}` ➔ 3条分支并发推演结果 |
-| `/api/byzantine/arbitrate` | `POST` | 触发拜占庭多方共识仲裁 | `{"code":"...","goal":"发布评审"}` ➔ 仲裁签名 |
+| `/api/byzantine/arbitrate` | `POST` | 对传入的 `verdicts` 计票并应用 `quorum`（不传则返回 `awaiting_verdicts`） | `{"goal":"发布评审","verdicts":[{"vote":"APPROVE"}],"quorum":2}` ➔ 计票结果 + `BFT-DIGEST-***` 内容摘要（非签名） |
 
 ---
 

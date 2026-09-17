@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import proc as proc_mod
 from .observability import obs
 
 # --- lifecycle event names (first batch, extensible) -----------------------
@@ -176,18 +176,21 @@ class HookRegistry:
     def _run_command(self, hook: Hook, payload: dict) -> HookDecision:
         if not hook.command:
             return HookDecision(False, "command hook missing command", "fail_closed")
+        # NOT subprocess.run(shell=True, timeout=...): on Windows that kills only
+        # the cmd.exe wrapper and then blocks reading a pipe its grandchild still
+        # holds, so the "timeout" was measured at 11.35s for a 0.5s limit. See
+        # baize/proc.py.
         try:
-            proc = subprocess.run(
-                hook.command, shell=True, input=json.dumps(payload),
-                capture_output=True, encoding="utf-8", errors="replace",
+            proc = proc_mod.run(
+                hook.command, shell=True, input_text=json.dumps(payload),
                 timeout=hook.timeout)
-        except subprocess.TimeoutExpired:
-            obs.record_error("hook_timeout")
-            return HookDecision(False, f"hook timed out after {hook.timeout}s",
-                                "fail_closed")
         except Exception as e:  # noqa: BLE001
             obs.record_error("hook_exec_failed")
             return HookDecision(False, f"hook exec failed (fail-closed): {e}",
+                                "fail_closed")
+        if proc.timed_out:
+            obs.record_error("hook_timeout")
+            return HookDecision(False, f"hook timed out after {hook.timeout}s",
                                 "fail_closed")
         rc = proc.returncode
         stderr = (proc.stderr or "").strip()

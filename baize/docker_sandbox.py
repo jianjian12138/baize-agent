@@ -11,8 +11,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import uuid
 from typing import Any
 from pathlib import Path
+
+from . import proc as proc_mod
 
 __all__ = [
     "DockerSandboxDriver",
@@ -100,9 +103,16 @@ class DockerSandboxDriver:
         if not self.docker_available:
             return self._run_local_fallback(command)
 
-        # Build docker run invocation
+        # Build docker run invocation. The container gets an explicit unique name
+        # so the timeout path can remove *the container* rather than only the
+        # client. `--rm` fires when the container exits on its own; a timed-out
+        # container is not in that category, so without a name the client dying
+        # left the workload running (the same "timeout not actually enforced"
+        # defect class as baize/proc.py, one level up).
+        container_name = f"baize-sbx-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         docker_cmd = [
             "docker", "run", "--rm",
+            "--name", container_name,
             "-v", f"{self.workspace}:/workspace",
             "-w", "/workspace",
             f"--memory={self.memory_limit}",
@@ -112,30 +122,7 @@ class DockerSandboxDriver:
         ]
 
         try:
-            res = subprocess.run(
-                docker_cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                encoding="utf-8",
-                errors="replace",
-            )
-            return {
-                "returncode": res.returncode,
-                "stdout": res.stdout or "",
-                "stderr": res.stderr or "",
-                "degraded": False,
-                "driver": "docker_container",
-                "image": self.image,
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "returncode": 124,
-                "stdout": "",
-                "stderr": f"ERROR: Command timed out after {self.timeout}s inside Docker sandbox.",
-                "degraded": False,
-                "driver": "docker_container",
-            }
+            res = proc_mod.run(docker_cmd, timeout=self.timeout, encoding="utf-8")
         except Exception as exc:
             return {
                 "returncode": 1,
@@ -143,4 +130,64 @@ class DockerSandboxDriver:
                 "stderr": f"ERROR: Failed to run in Docker sandbox: {exc}",
                 "degraded": True,
                 "driver": "docker_error",
+                "container": container_name,
             }
+
+        if res.timed_out:
+            cleanup_rc, cleanup_err = self._force_remove_container(container_name)
+            note = (
+                f"ERROR: Command timed out after {self.timeout}s inside Docker "
+                f"sandbox. Container {container_name} force-removed "
+                f"(docker rm -f rc={cleanup_rc})"
+            )
+            if cleanup_err:
+                note += f": {cleanup_err}"
+            if res.stderr:
+                note += f"\n{res.stderr}"
+            return {
+                "returncode": 124,
+                "stdout": res.stdout,
+                "stderr": note,
+                "degraded": False,
+                "driver": "docker_container",
+                "image": self.image,
+                "container": container_name,
+                "container_removed": cleanup_rc == 0,
+            }
+
+        return {
+            "returncode": res.returncode,
+            "stdout": res.stdout,
+            "stderr": res.stderr,
+            "degraded": False,
+            "driver": "docker_container",
+            "image": self.image,
+            "container": container_name,
+        }
+
+    def _force_remove_container(self, name: str) -> tuple[int, str]:
+        """``docker rm -f <name>``, best effort. Returns ``(returncode, stderr)``.
+
+        The return code is the *real* one: ``0`` only when Docker confirmed the
+        container is gone. A failed cleanup is reported to the caller instead of
+        being swallowed, so "we timed out and cleaned up" cannot be printed for a
+        cleanup that never happened.
+
+        "No such container" is folded into success: ``--rm`` had already
+        collected it, which is the outcome this call wanted.
+        """
+        try:
+            res = subprocess.run(
+                ["docker", "rm", "-f", name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            return 1, f"{type(exc).__name__}: {exc}"
+        err = (res.stderr or "").strip()
+        if res.returncode != 0 and "No such container" in err:
+            return 0, f"already gone ({err})"
+        return res.returncode, err

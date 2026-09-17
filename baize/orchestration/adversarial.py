@@ -9,6 +9,8 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..safe_exec import exec_restricted
+
 
 @dataclass
 class BattleRound:
@@ -24,9 +26,10 @@ class ByzantineJudge:
 
     def arbitrate(self, round_number: int, blue_code: str, red_attack_input: dict, expected_behavior: str = "") -> BattleRound:
         try:
-            # Parse and execute Blue's code
-            local_scope: dict[str, Any] = {}
-            exec(blue_code, {"__builtins__": __builtins__}, local_scope)
+            # Parse and execute Blue's code under restricted builtins. This used
+            # to pass full __builtins__, so a "battle round" was really an
+            # unrestricted code-execution primitive driven by the request body.
+            local_scope = exec_restricted(blue_code)
 
             # Find main callable
             funcs = [v for v in local_scope.values() if callable(v)]

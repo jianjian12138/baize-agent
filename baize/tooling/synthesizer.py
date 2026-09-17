@@ -9,6 +9,8 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from ..safe_exec import exec_restricted
+
 
 @dataclass
 class SynthesizedTool:
@@ -55,7 +57,13 @@ class GeneStore:
 
 
 class MetaToolSynthesizer:
-    """Compiles and self-certifies micro-tools in a constrained Python namespace."""
+    """Compiles and self-certifies micro-tools in a restricted-builtin namespace.
+
+    "Restricted" means the obvious escapes are gone (no open, no __import__, no
+    eval/exec), not that the code is sandboxed. Callers are responsible for
+    authorising the request before handing code here - see
+    baize/serve.py::_code_exec_gate.
+    """
 
     def certify_tool(self, name: str, description: str, code_source: str, test_source: str) -> SynthesizedTool:
         tool = SynthesizedTool(
@@ -71,9 +79,12 @@ class MetaToolSynthesizer:
             ast.parse(code_source)
             ast.parse(test_source)
 
-            # 2. Execution environment
-            local_scope: dict[str, Any] = {}
-            exec(code_source, {"__builtins__": __builtins__}, local_scope)
+            # 2. Execution environment.
+            # Restricted builtins only - see baize/safe_exec for what this does and
+            # does not buy. This used to pass full __builtins__, which made the
+            # docstring's "constrained namespace" claim false: the synthesised
+            # code could import os and touch the filesystem.
+            local_scope = exec_restricted(code_source)
 
             # Extract target function
             target_func = local_scope.get(name)
@@ -81,8 +92,7 @@ class MetaToolSynthesizer:
                 return tool
 
             # 3. Run inline self-certification test
-            test_scope = {name: target_func, "__builtins__": __builtins__}
-            exec(test_source, test_scope, test_scope)
+            test_scope = exec_restricted(test_source, seed={name: target_func})
 
             # Find and execute test functions
             test_funcs = [v for k, v in test_scope.items() if k.startswith("test_") and callable(v)]

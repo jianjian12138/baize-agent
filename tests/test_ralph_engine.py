@@ -1,6 +1,8 @@
 """Unit tests for Ralph Pattern Autonomous PRD State Machine & Long-Horizon Delivery Loop."""
 from __future__ import annotations
 
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -110,6 +112,94 @@ class TestRalphEngine(unittest.TestCase):
             self.assertIn("status_board", res)
             self.assertTrue(len(res["executed_stories"]) > 0)
             self.assertTrue(Path(progress_file).exists())
+
+    # ----------------------------------------------------------------- #
+    # A commit that did not happen must not be reported as one
+    # ----------------------------------------------------------------- #
+
+    def test_commit_that_cannot_happen_returns_none_with_a_reason(self):
+        """``commit_git`` used to end with ``except Exception: return
+        "simulated_commit"``. The loop then stored that string in
+        ``story.commit_hash`` and printed "已记录状态并提交 Git" - a failed commit
+        recorded and announced as a successful one, which is the fabricated
+        success pattern this package claims to have removed.
+
+        Pinned here: no hash, no fabricated sentinel, and a reason the caller can
+        print. The workspace directory does not exist, so ``Popen`` cannot even
+        start - deterministic, and independent of whether git is installed.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            engine = RalphLoopEngine(
+                prd_path=str(Path(tmp_dir) / "prd.json"),
+                progress_path=str(Path(tmp_dir) / "progress.txt"),
+                workspace_dir=str(Path(tmp_dir) / "does-not-exist"),
+            )
+            story = UserStory(id="US-01", title="t", description="d")
+
+            sha = engine.commit_git(story)
+
+            self.assertIsNone(sha, "a commit that did not happen must not return a hash")
+            self.assertNotEqual(sha, "simulated_commit")
+            self.assertNotEqual(sha, "committed")
+            self.assertTrue(engine.last_commit_error,
+                            "the caller needs a reason to report")
+            self.assertEqual(story.commit_hash, "",
+                             "commit_hash must stay empty when nothing was committed")
+
+    def test_a_failing_git_commit_returns_none_not_a_sentinel(self):
+        """The git-ran-but-refused branch, not just the could-not-start branch."""
+        if not shutil.which("git"):
+            self.skipTest("git is not on PATH")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = Path(tmp_dir) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True,
+                           capture_output=True)
+            # No user.email/user.name configured in a bare temp repo, and the
+            # env is scrubbed of any global identity -> `git commit` exits
+            # non-zero. That is the branch under test.
+            engine = RalphLoopEngine(
+                prd_path=str(repo / "prd.json"),
+                progress_path=str(repo / "progress.txt"),
+                workspace_dir=str(repo),
+            )
+            story = UserStory(id="US-02", title="t", description="d")
+
+            sha = engine.commit_git(story)
+
+            self.assertIsNone(sha)
+            self.assertNotEqual(sha, "simulated_commit")
+            self.assertIn("git commit", engine.last_commit_error)
+
+    def test_a_real_commit_returns_the_real_hash(self):
+        """The happy path, so the two tests above cannot pass by always returning None."""
+        if not shutil.which("git"):
+            self.skipTest("git is not on PATH")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = Path(tmp_dir) / "repo"
+            repo.mkdir()
+            run = lambda *a: subprocess.run(list(a), cwd=repo, check=True,
+                                            capture_output=True)
+            run("git", "init", "-q")
+            run("git", "config", "user.email", "probe@example.invalid")
+            run("git", "config", "user.name", "probe")
+            (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+
+            engine = RalphLoopEngine(
+                prd_path=str(repo / "prd.json"),
+                progress_path=str(repo / "progress.txt"),
+                workspace_dir=str(repo),
+            )
+            story = UserStory(id="US-03", title="real commit", description="d")
+
+            sha = engine.commit_git(story)
+
+            self.assertIsNotNone(sha, f"expected a hash, got error: {engine.last_commit_error!r}")
+            self.assertEqual(len(sha), 40, "git rev-parse HEAD returns a full sha1")
+            self.assertEqual(engine.last_commit_error, "")
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                                  capture_output=True, text=True).stdout.strip()
+            self.assertEqual(sha, head)
 
 
 if __name__ == "__main__":

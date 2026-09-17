@@ -11,6 +11,7 @@ Covers the acceptance criteria from the P1-P3 plan:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from baize.agent import Agent
@@ -215,10 +216,26 @@ def test_pre_tool_use_crash_fail_closed(env):
 def test_command_hook_timeout_fail_closed():
     # `ping -n 12 127.0.0.1` reliably hangs ~11s on the loopback; we cut it at
     # 0.5s, so this exercises the timeout fail-closed path (not a quick rc).
+    #
+    # The elapsed-time assertion is the point of this test, not decoration. The
+    # previous version only checked the decision, so it passed while taking
+    # 11.35s against a 0.5s limit: subprocess.run(shell=True) on Windows kills
+    # cmd.exe but not the grandchild holding the pipe, and then blocks on it.
+    # The hook was reported as timed out while the timeout was never enforced.
+    # Asserting wall time is the only way this test can catch that.
     hooks = HookRegistry([Hook(EVENT_PRE_TOOL_USE, "*", "command",
                                command="ping -n 12 127.0.0.1", timeout=0.5)])
+    t0 = time.perf_counter()
     d = hooks.pre_tool_use("bash", {"command": "ls"})
+    elapsed = time.perf_counter() - t0
     assert not d.allow and d.decision == "fail_closed"
+    # Generous ceiling: the kill plus the bounded drain is well under 2s, and the
+    # unfixed behaviour was 11s+, so this separates the two cases unambiguously
+    # without being flaky on a loaded machine.
+    assert elapsed < 5.0, (
+        f"hook 'timed out' after {elapsed:.2f}s against a 0.5s limit - the "
+        f"timeout is not being enforced (see baize/proc.py)"
+    )
 
 
 # --- ① lifecycle events fire (Agent) --------------------------------------
