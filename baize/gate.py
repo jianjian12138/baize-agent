@@ -357,7 +357,10 @@ def check_loop_integrity(manifest_path: str = "baize.manifest.json",
             "runs_checked": len(runs)}
 
 
-def check_quality(cfg: dict | None = None) -> dict:
+def check_quality(cfg: dict | None = None,
+                  manifest_path: str | None = None,
+                  data_file: str | None = None,
+                  now: float | None = None) -> dict:
     """V23.6 / V26-C5 multi-dimensional quality gate.
 
     Aggregates existing honest signals into six dimensions:
@@ -368,14 +371,33 @@ def check_quality(cfg: dict | None = None) -> dict:
       - locatability     : skill index hygiene (missing-description rate)
       - maintainability  : has tests/ + README (static repo hygiene)
     Below ``BAIZE_QUALITY_THRESHOLD`` the overall gate FAILS (intercept).
+
+    ``manifest_path``, ``data_file`` and ``now`` are forwarded to the two checks
+    this function *re-runs*. Without them it silently fell back to the defaults,
+    so ``run_gate`` could report two different subjects in one output. Observed:
+
+        $ python -m baize gate --manifest bogus.json
+        manifest : FAIL
+          - manifest invalid: V1: evidence missing on disk: ...
+        quality  : 1.0 PASS
+          - runnable: 1.0          <- documented as "manifest evidence is real"
+
+        $ python -m baize gate --coverage-data D:/tmp/NOPE.coverage
+        coverage : UNKNOWN (no data file D:/tmp/NOPE.coverage)
+        quality  : 1.0 PASS
+          - coverage_clarity: 1.0  <- documented as "real coverage measured"
+
+    A dimension named after a check must be that check's answer about the *same*
+    subject.
     """
     cfg = cfg or load_config()
     notes: list[str] = []
     # 1. runnable — manifest evidence actually exists / non-empty / fresh.
     man_ok, _ = check_manifest(
-        cfg.get("BAIZE_MANIFEST", "baize.manifest.json"), notes=notes)
+        manifest_path or cfg.get("BAIZE_MANIFEST", "baize.manifest.json"),
+        now=now, notes=notes)
     # 2. coverage clarity — real coverage measured, not faked.
-    cov = check_coverage(cfg=cfg)
+    cov = check_coverage(data_file, cfg=cfg)
     cov_score = {"pass": 1.0, "unknown": 0.5, "fail": 0.0}.get(
         cov.get("status"), 0.0)
     # 3. composition — kernel + modes actually assemble.
@@ -418,13 +440,19 @@ def check_quality(cfg: dict | None = None) -> dict:
 
 def run_gate(manifest_path: str = "baize.manifest.json",
              data_file: str | None = None,
-             now: float | None = None) -> dict:
+             now: float | None = None,
+             cfg: dict | None = None) -> dict:
+    """Run every check and aggregate. Each input is threaded to *every* check
+    that evaluates it, so no reported number describes a different subject than
+    the line above it (see ``check_quality``)."""
+    cfg = cfg or load_config()
     manifest_notes: list[str] = []
     man_ok, man_problems = check_manifest(manifest_path, now=now,
                                           notes=manifest_notes)
-    cov = check_coverage(data_file)
+    cov = check_coverage(data_file, cfg=cfg)
     comp = check_composition()
-    quality = check_quality()
+    quality = check_quality(cfg, manifest_path=manifest_path,
+                            data_file=data_file, now=now)
     loop = check_loop_integrity()
     if (not man_ok or cov["status"] == "fail" or comp["status"] == "fail"
             or not quality["pass"] or loop["status"] == "fail"):

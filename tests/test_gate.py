@@ -245,3 +245,90 @@ def test_tracked_paths_lists_the_repo(tmp_path):
     tracked = gate.tracked_paths(tmp_path)
     assert tracked is not None
     assert "a.py" in tracked
+
+
+# ------------------------------------------------- one subject per output
+#
+# `run_gate` forwarded its inputs to the top-level checks but let `check_quality`
+# re-run the same two checks with their *defaults*, so a single output could
+# describe two subjects. Observed with the real CLI:
+#
+#   $ python -m baize gate --manifest bogus.json
+#   manifest : FAIL
+#     - manifest invalid: V1: evidence missing on disk: ...
+#   quality  : 1.0 PASS
+#     - runnable: 1.0        <- documented as "manifest evidence is real"
+#
+#   $ python -m baize gate --coverage-data D:/tmp/NOPE.coverage
+#   coverage : UNKNOWN (no data file D:/tmp/NOPE.coverage)
+#   quality  : 1.0 PASS
+#     - coverage_clarity: 1.0
+
+
+def test_the_quality_score_describes_the_manifest_it_was_given(tmp_path):
+    """`runnable` is documented as "manifest evidence is real". It has to be the
+    answer about the manifest the caller asked for, not about the default one."""
+    bogus = _manifest(tmp_path, ["baize/DOES_NOT_EXIST.py"])
+    rep = gate.run_gate(bogus)
+
+    assert rep["manifest_ok"] is False
+    assert rep["quality"]["dimensions"]["runnable"] == 0.0, (
+        "a green 'runnable' printed under a FAILing manifest is a score for a "
+        "file nobody looked at")
+    assert rep["quality"]["pass"] is False
+
+
+def test_check_quality_forwards_the_data_file_to_check_coverage(monkeypatch):
+    """`coverage_clarity` must be `check_coverage`'s answer about the file it was
+    given, not about the default.
+
+    Two earlier versions of this test asserted a *score* instead, and both passed
+    for the wrong reason: `check_coverage` returns "unknown" (0.5) for a missing
+    file, for an unreadable one, and for a stale one - so whenever the repo's own
+    `.coverage` happened to be stale, the un-forwarded default scored the same
+    0.5 as the argument under test. A test the environment can satisfy is not
+    testing the forwarding. Record the argument instead.
+    """
+    seen: dict = {}
+    real = gate.check_coverage
+
+    def spy(data_file=None, cfg=None):
+        seen["data_file"] = data_file
+        return real(data_file, cfg=cfg)
+
+    monkeypatch.setattr(gate, "check_coverage", spy)
+    gate.check_quality(data_file="explicit.coverage")
+
+    assert seen["data_file"] == "explicit.coverage"
+
+
+def test_run_gate_threads_its_inputs_into_check_quality(monkeypatch):
+    """Every input `run_gate` reports on has to reach the re-run inside
+    `check_quality`, or one output describes two different subjects."""
+    seen: dict = {}
+    real = gate.check_quality
+
+    def spy(cfg=None, manifest_path=None, data_file=None, now=None):
+        seen.update(cfg=cfg, manifest_path=manifest_path,
+                    data_file=data_file, now=now)
+        return real(cfg, manifest_path=manifest_path, data_file=data_file, now=now)
+
+    monkeypatch.setattr(gate, "check_quality", spy)
+    gate.run_gate("m.json", "d.coverage", now=123.0)
+
+    assert seen["manifest_path"] == "m.json"
+    assert seen["data_file"] == "d.coverage"
+    assert seen["now"] == 123.0
+    assert seen["cfg"] is not None, "cfg must be resolved once and reused"
+
+
+def test_calibration_a_good_manifest_still_scores_runnable(tmp_path):
+    """Calibration: runnable must be able to reach 1.0, or the test above would
+    pass for a dimension that is simply hardcoded to 0."""
+    evidence = tmp_path / "baize" / "thing.py"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text("x = 1\n", encoding="utf-8")
+
+    rep = gate.run_gate(_manifest(tmp_path, ["baize/thing.py"]))
+    assert rep["manifest_ok"] is True
+    assert rep["quality"]["dimensions"]["runnable"] == 1.0
