@@ -29,6 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import __version__
 from .config import ROOT, load_config
 from .hooks import HookRegistry
 from .autonomy import AutonomyPolicy, READONLY_TOOLS, build_policy
@@ -187,7 +188,10 @@ def build_system_prompt(role: str = "executor",
     }
     base = role_prompts.get(role, role_prompts["executor"])
     parts = [
-        "You are Baize, an autonomous engineering agent (V33 runtime). "
+        # Read the release from the single source of truth instead of a literal.
+        # This line used to be hardcoded "(V33 runtime)" and was still saying V33
+        # four releases later, so every model call was told the wrong version.
+        f"You are Baize, an autonomous engineering agent (V{__version__} runtime). "
         "You may receive REFLECTION CHECKPOINT prompts - use them to "
         "self-assess and correct course instead of repeating failing actions.",
         base,

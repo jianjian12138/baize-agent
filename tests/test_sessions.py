@@ -145,12 +145,17 @@ def test_ui_compress_report_renders():
 def test_dashboard_contains_fork_and_compress_controls():
     html = dashboard.render("20.0.0")
     assert "会话分支" in html
-    assert 'id="forkform"' in html
-    assert 'id="compressform"' in html
+    # The Universal Desktop Studio replaced the original single-page dashboard, so
+    # the control ids changed from forkform/compressform. Assert the real elements
+    # AND their wiring: the old assertion checked ids that only existed in the
+    # retired markup, while compress was genuinely unreachable - the endpoint and
+    # the JS handler were both there, but no element ever called the handler.
+    assert 'id="fork-parent-input"' in html
+    assert 'id="compress-id-input"' in html
+    assert "submitFork()" in html
+    assert "submitCompress()" in html
     assert "/sessions/fork" in html
     assert "/sessions/compress" in html
-    # JS handlers wired
-    assert "forkform" in html and "compressform" in html
 
 
 def test_stdlib_only_no_third_party_imports():

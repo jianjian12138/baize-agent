@@ -960,6 +960,19 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
           </div>
         </div>
 
+        <div class="panel-card" style="margin-bottom:16px;">
+          <h3>🔀 分叉与压缩 (Fork &amp; Compress)</h3>
+          <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+            <input type="text" id="fork-parent-input" placeholder="父会话 ID（可从下方列表复制）" />
+            <button class="primary-btn" onclick="submitFork()" style="white-space:nowrap">🍴 分叉新会话</button>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="text" id="compress-id-input" placeholder="要压缩的会话 ID" />
+            <button class="primary-btn" onclick="submitCompress()" style="white-space:nowrap">🗜️ 压缩会话</button>
+          </div>
+          <div id="fork-compress-result" style="font-size:12px;color:var(--text-dim);margin-top:8px;"></div>
+        </div>
+
         <div class="panel-card">
           <h3>会话历史列表 (Append-only JSONL)</h3>
           <div id="archive-session-table">加载中...</div>
@@ -2150,14 +2163,22 @@ async function selectSession(sid) {
   }
 }
 
+function setForkCompressResult(msg, isError) {
+  const el = document.getElementById('fork-compress-result');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--danger)' : 'var(--accent)';
+}
+
 async function submitFork() {
   const p = document.getElementById('fork-parent-input').value.trim();
-  if (p) forkSession(p);
+  if (!p) { setForkCompressResult('请输入父会话 ID', true); return; }
+  await forkSession(p);
 }
 
 async function submitCompress() {
   const sid = document.getElementById('compress-id-input').value.trim();
-  if (!sid) return;
+  if (!sid) { setForkCompressResult('请输入要压缩的会话 ID', true); return; }
   try {
     const res = await fetch('/sessions/compress', {
       method: 'POST',
@@ -2165,9 +2186,9 @@ async function submitCompress() {
       body: JSON.stringify({ id: sid })
     });
     const d = await res.json();
-    alert('会话压缩完成: 节省 tokens ' + (d.saved_tokens || 0));
+    setForkCompressResult('会话压缩完成: 节省 tokens ' + (d.saved_tokens || 0));
   } catch (e) {
-    alert('压缩失败: ' + e);
+    setForkCompressResult('压缩失败: ' + e, true);
   }
 }
 
@@ -2180,11 +2201,11 @@ async function forkSession(sid) {
     });
     const data = await res.json();
     if (data.new_session_id) {
-      alert('已成功从 ' + sid + ' 分叉出新会话: ' + data.new_session_id);
+      setForkCompressResult('已从 ' + sid + ' 分叉出新会话: ' + data.new_session_id);
       loadSessions();
     }
   } catch (err) {
-    alert('Fork 失败: ' + err.message);
+    setForkCompressResult('Fork 失败: ' + err.message, true);
   }
 }
 

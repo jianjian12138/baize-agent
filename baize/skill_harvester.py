@@ -144,7 +144,12 @@ class SkillHarvester:
 
             try:
                 from . import skill_index
-                skill_index.build()
+                # build_index(), not build(): the module exposes build_index
+                # (see skill_index.py and cli.py). Calling the wrong name raised
+                # AttributeError, which the except below swallowed into a
+                # warning - so every harvested skill silently failed to reach
+                # the index and was never findable again.
+                skill_index.build_index()
             except Exception as e:
                 log.warning("[harvester] failed to rebuild index: %s", e)
 

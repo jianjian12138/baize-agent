@@ -114,15 +114,28 @@ class TeamMemory:
     # --- task claiming (prevents duplicate work) ----------------------------
 
     def claim(self, task_id: str, role: str) -> bool:
-        """Atomically-ish claim a task. False when someone already owns it."""
-        owner = self.owner_of(task_id)
-        if owner is not None:
-            obs.inc("team_memory_claim_conflicts")
-            return owner == role      # idempotent for the same role
-        self._append({"kind": "claim", "task_id": str(task_id), "role": role,
-                      "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
-        obs.inc("team_memory_claims")
-        return True
+        """Claim a task for a role. False when someone else already owns it.
+
+        The read and the write must happen inside ONE critical section. They used
+        to be two: ``owner_of()`` took the lock, released it, then ``_append()``
+        took it again. With ten threads that meant all ten could read
+        "unclaimed", all ten appended a claim, and all ten were told they had
+        won - the duplicate-work guard silently did nothing under exactly the
+        concurrency it exists for.
+
+        Scope: atomic within one process. Two processes sharing the same JSONL
+        are not serialised by an RLock; cross-process ownership is what the
+        (reserved) ``shared`` backend would have to provide.
+        """
+        with self._lock:
+            owner = self.owner_of(task_id)
+            if owner is not None:
+                obs.inc("team_memory_claim_conflicts")
+                return owner == role      # idempotent for the same role
+            self._append({"kind": "claim", "task_id": str(task_id), "role": role,
+                          "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
+            obs.inc("team_memory_claims")
+            return True
 
     def owner_of(self, task_id: str) -> str | None:
         for rec in self._read():

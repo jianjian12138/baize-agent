@@ -21,12 +21,18 @@ __all__ = [
 
 
 def is_docker_available() -> bool:
-    """Check whether Docker runtime CLI is available on host machine."""
+    """Whether a Docker *daemon* is reachable, not merely whether the CLI exists.
+
+    ``docker --version`` succeeds with no daemon running - the CLI is just a
+    client. Gating on it meant the driver took the container path, got exit 127
+    from ``docker run``, and never reached the fallback it advertises. ``docker
+    info`` is the cheapest call that actually talks to the daemon.
+    """
     docker_exe = shutil.which("docker")
     if not docker_exe:
         return False
     try:
-        res = subprocess.run(["docker", "--version"], capture_output=True, timeout=3)
+        res = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
         return res.returncode == 0
     except Exception:
         return False
@@ -49,16 +55,50 @@ class DockerSandboxDriver:
         self.cpu_limit = cpu_limit
         self.docker_available = is_docker_available()
 
-    def run(self, command: str) -> dict[str, Any]:
-        """Execute command in container or fallback to local sandboxed execution."""
-        if not self.docker_available:
+    def _run_local_fallback(self, command: str) -> dict[str, Any]:
+        """Actually run ``command`` through the local OS sandbox.
+
+        Returns the real exit code and real output. The degraded notice goes to
+        ``stderr`` so it can never be mistaken for the command's own stdout.
+        """
+        from .sandbox import run as sandbox_run
+
+        note = (
+            "[degraded] Docker daemon unreachable; running through the local OS "
+            "sandbox (baize.sandbox) instead. Isolation is weaker than a "
+            "container: no image pinning, no memory/cpu cgroup limits.\n"
+        )
+        try:
+            res = sandbox_run(command, cwd=self.workspace, timeout=self.timeout)
+        except Exception as exc:  # pragma: no cover - defensive
             return {
-                "returncode": 0,
-                "stdout": f"[Docker 未安装/未启动: 自动降级为本地沙箱执行]\n{command}",
-                "stderr": "",
+                "returncode": 1,
+                "stdout": "",
+                "stderr": f"{note}ERROR: local sandbox fallback failed: {exc}",
                 "degraded": True,
-                "driver": "fallback_local",
+                "driver": "fallback_local_sandbox",
+                "mechanism": "none",
             }
+        return {
+            "returncode": res.returncode,
+            "stdout": res.stdout,
+            "stderr": note + res.stderr,
+            "degraded": True,
+            "driver": "fallback_local_sandbox",
+            "mechanism": res.mechanism,
+        }
+
+    def run(self, command: str) -> dict[str, Any]:
+        """Execute ``command`` in a container, or degrade to the local sandbox.
+
+        The fallback genuinely executes the command and reports its real exit
+        code. An earlier version returned ``returncode: 0`` without running
+        anything and echoed the command text back as ``stdout`` - a placeholder
+        presented as an implementation, which is exactly the kind of fabricated
+        evidence the honesty rule forbids. If we cannot run it, we say so.
+        """
+        if not self.docker_available:
+            return self._run_local_fallback(command)
 
         # Build docker run invocation
         docker_cmd = [

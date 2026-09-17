@@ -297,9 +297,14 @@ def cmd_gate(args) -> int:
     for p in rep["manifest_problems"]:
         print(f"    - {p}")
     c = rep["coverage"]
-    tail = (f" ({c['total']}% >= {c['threshold']}%)"
-            if c.get("total") is not None
-            else f" ({c.get('reason')})")
+    # The operator must reflect the actual comparison. It used to be hardcoded
+    # ">=", so a FAILING gate printed "coverage : FAIL (76.7% >= 85%)" - a false
+    # statement, and a confusing one to debug.
+    if c.get("total") is None:
+        tail = f" ({c.get('reason')})"
+    else:
+        op = ">=" if c["total"] >= c["threshold"] else "<"
+        tail = f" ({c['total']}% {op} {c['threshold']}%)"
     print(f"  coverage : {c['status'].upper()}{tail}")
     q = rep.get("quality", {})
     if q:

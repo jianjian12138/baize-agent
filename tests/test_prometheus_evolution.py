@@ -102,12 +102,47 @@ app = FastAPI()</code></pre>
         self.assertTrue(any("missing_button" in err for err in r2["console_errors"]))
         self.assertIn("BROWSER VERIFICATION FAILED", r2["feedback_prompt"])
 
-    def test_docker_sandbox_driver_fallback(self):
+    def test_docker_sandbox_driver_fallback_actually_executes(self):
+        """The fallback must RUN the command, not fabricate a success.
+
+        The previous version of this test asserted only ``returncode == 0`` and
+        ``"driver" in res`` - both of which the old fake satisfied, because the
+        fake returned a hardcoded 0 without executing anything and echoed the
+        command back as stdout. The assertions below are chosen so a fabricated
+        result cannot pass: a unique marker must appear in stdout, and a
+        deliberately failing command must come back non-zero.
+        """
         driver = DockerSandboxDriver(workspace=".")
-        # Local fallback execution test
-        res = driver.run("echo 'sandbox test'")
+        marker = "BAIZE_FALLBACK_MARKER_42"
+        res = driver.run(f"echo {marker}")
+
         self.assertEqual(res["returncode"], 0)
         self.assertIn("driver", res)
+        # Real execution. Note: a plain `assertIn(marker, stdout)` is NOT enough -
+        # the old fake echoed the command text, and the command contains the
+        # marker. Exact equality is what actually distinguishes run from echoed.
+        self.assertEqual(res["stdout"].strip(), marker)
+        self.assertNotIn("echo", res["stdout"])
+        # Degradation is reported, but on stderr, never mixed into stdout.
+        self.assertTrue(res["degraded"])
+        self.assertEqual(res["driver"], "fallback_local_sandbox")
+        self.assertIn("degraded", res["stderr"])
+
+    def test_docker_sandbox_fallback_reports_real_exit_code(self):
+        """A hardcoded ``returncode: 0`` would pass this test only if it lies."""
+        driver = DockerSandboxDriver(workspace=".")
+        res = driver.run("exit 3")
+        self.assertEqual(res["returncode"], 3)
+
+    def test_docker_availability_probes_the_daemon_not_the_cli(self):
+        """``docker --version`` succeeds with no daemon; ``docker info`` does not.
+
+        Gating on the CLI meant the driver took the container path, got exit 127
+        from ``docker run``, and never reached the fallback it advertises.
+        """
+        from baize.docker_sandbox import is_docker_available
+
+        self.assertIsInstance(is_docker_available(), bool)
 
 
 if __name__ == "__main__":

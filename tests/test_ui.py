@@ -1,6 +1,7 @@
 """Real tests for the V20 interaction layer: TUI, dashboard, team memory."""
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -106,8 +107,21 @@ def test_dashboard_renders_self_contained_html():
     assert html.startswith("<!DOCTYPE html>")
     assert f"V{__version__}" in html
     assert "__VER__" not in html            # placeholder fully substituted
-    for external in ("http://", "https://", "cdn."):
-        assert external not in html         # zero external assets
+
+    # Self-contained means the page loads nothing from outside itself. The old
+    # check was `"http://" not in html`, which is too coarse: it also rejected a
+    # loopback URL sitting in a JS string argument (the puppeteer MCP demo call
+    # passes url:'http://127.0.0.1:8787'), which loads nothing at all. Assert the
+    # constructs that actually fetch something, and forbid any non-loopback host.
+    for loader in (r"<script[^>]*\bsrc\s*=", r"<link[^>]*\bhref\s*=",
+                   r"@import", r"cdn\."):
+        assert not re.search(loader, html, re.I), f"external asset loader present: {loader}"
+    external = [
+        url for url in re.findall(r"https?://[^\"'\s<>)]+", html)
+        if not re.match(r"https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?", url)
+    ]
+    assert not external, f"non-loopback origins in the page: {external}"
+
     for endpoint in ("/health", "/metrics", "/sessions", "/run"):
         assert endpoint in html
 
