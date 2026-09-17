@@ -315,6 +315,147 @@ def test_a_degraded_sandbox_ranks_above_a_failed_one(monkeypatch, tmp_path):
     assert rep["checked_branches"] == 2, "an unchecked branch is not 'checked'"
 
 
+# ---------------------------------------------------------------------------
+# the summary must not name a cause it never checked
+#
+# `to_dict()["message"]` is returned in the body of a 200 response from
+# POST /v30/swarm/speculate (baize/serve.py), so a wrong reason here is a wrong
+# reason told to a caller.
+# ---------------------------------------------------------------------------
+
+def _degraded_branches(monkeypatch, tmp_path, n=3):
+    """n branches that were each meant to be verified but could not be."""
+    out = []
+    for i in range(n):
+        b = _verify_with(monkeypatch, tmp_path, _StubResult(128),
+                         sandbox=_StubSandbox(
+                             tmp_path, degraded=True,
+                             reason="base path is not a git repository"))
+        b.branch_id = f"b{i}"
+        b.isolation = "scratch-dir-degraded"
+        out.append(b)
+    return out
+
+
+def test_a_fully_degraded_run_does_not_blame_the_config(monkeypatch, tmp_path):
+    """Nothing was checked - but a verify command WAS configured. The summary
+    used to assert "no verify command configured", a cause it never looked at."""
+    from baize.swarm import SwarmResult
+
+    res = SwarmResult(goal="g", branches=_degraded_branches(monkeypatch, tmp_path),
+                      total_elapsed_ms=1.0)
+    rep = res.to_dict()
+
+    assert rep["checked_branches"] == 0
+    assert "no verify command configured" not in rep["message"], (
+        "the command was configured; only the sandbox degraded")
+    assert "degraded" in rep["message"]
+    assert "no branch was checked" in rep["message"]
+
+
+def test_a_run_with_no_command_configured_still_says_so(monkeypatch, tmp_path):
+    """Calibration: the genuine "nothing configured" case must keep saying it,
+    or the test above would pass for a message that says nothing at all."""
+    from baize.swarm import SwarmResult
+
+    monkeypatch.delenv("BAIZE_SWARM_VERIFY_CMD", raising=False)
+    branches = []
+    for i in range(2):
+        b = _branch()
+        b.branch_id = f"b{i}"
+        branches.append(b)
+
+    res = SwarmResult(goal="g", branches=branches, total_elapsed_ms=1.0)
+    rep = res.to_dict()
+
+    assert rep["checked_branches"] == 0
+    assert "no verify command configured" in rep["message"]
+
+
+def test_a_branch_that_crashed_before_verifying_does_not_blame_the_config(monkeypatch, tmp_path):
+    """A branch that raised never reached `_verify`, so nothing recorded whether
+    a command was configured. Quote the error; do not invent the config as the
+    reason."""
+    from baize.swarm import SwarmResult
+
+    b = _branch()
+    b.status = "failed"
+    b.error = "RuntimeError: BOOM-marker"
+
+    res = SwarmResult(goal="g", branches=[b], total_elapsed_ms=1.0)
+    rep = res.to_dict()
+
+    assert rep["checked_branches"] == 0
+    assert "no verify command configured" not in rep["message"]
+    assert "BOOM-marker" in rep["message"]
+
+
+def test_unchecked_branches_are_named_in_the_summary(monkeypatch, tmp_path):
+    """"1/1 checked branches passed" is true and reads like "all good". Say how
+    many branches were never checked."""
+    from baize.swarm import SwarmResult
+
+    checked = _branch()
+    checked.verified = True
+    res = SwarmResult(goal="g",
+                      branches=[checked] + _degraded_branches(monkeypatch, tmp_path, n=2),
+                      total_elapsed_ms=1.0)
+    rep = res.to_dict()
+
+    assert rep["checked_branches"] == 1
+    assert rep["branches_count"] == 3
+    assert "1/1 checked branches passed" in rep["message"]
+    assert "2/3 branches were not checked" in rep["message"]
+
+
+def test_a_degraded_branch_records_the_command_it_never_ran(monkeypatch, tmp_path):
+    """The fact that makes the distinction possible: the command is recorded
+    even when it is not run, so "meant to verify" != "no command configured"."""
+    branch = _verify_with(monkeypatch, tmp_path, _StubResult(128),
+                          sandbox=_StubSandbox(tmp_path, degraded=True, reason="x"))
+    assert branch.verify_command == "a-verify-command"
+    assert branch.verify_exit_code is None, "it never ran"
+    assert branch.verified is None
+
+
+def test_no_command_configured_leaves_the_command_unset(monkeypatch, tmp_path):
+    """Calibration for the test above."""
+    from baize import swarm
+
+    monkeypatch.delenv("BAIZE_SWARM_VERIFY_CMD", raising=False)
+    branch = _branch()
+    swarm._verify(branch, _StubSandbox(tmp_path))
+
+    assert branch.verify_command is None
+    assert branch.error is None
+
+
+def test_the_summary_does_not_call_an_unmeasured_churn_measured():
+    """A branch that never reached `measure_churn()` has churn_lines=None. The
+    summary used to render that as "实测代码抖动 None 行" - the word 实测
+    (measured) attached to a value nobody measured."""
+    from baize.swarm import SwarmResult
+
+    b = _branch()
+    b.churn_lines = None
+    rep = SwarmResult(goal="g", branches=[b], total_elapsed_ms=1.0).to_dict()
+
+    assert "实测" not in rep["message"]
+    assert "代码抖动未测量" in rep["message"]
+
+
+def test_the_summary_still_reports_a_measured_churn():
+    """Calibration: a real measurement must still be reported as one, so the
+    test above cannot pass for a message that never says 实测 at all."""
+    from baize.swarm import SwarmResult
+
+    b = _branch()
+    b.churn_lines = 7
+    rep = SwarmResult(goal="g", branches=[b], total_elapsed_ms=1.0).to_dict()
+
+    assert "实测代码抖动 7 行" in rep["message"]
+
+
 def test_cleanup_reports_a_leftover_it_could_not_remove(tmp_path, monkeypatch,
                                                         caplog):
     """A cleanup that did not happen must not be reported as one that did.

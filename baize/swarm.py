@@ -92,9 +92,18 @@ class CandidateBranch:
     risk_score: float
     #: Measured by `git diff --numstat` inside the worktree. None = not measured.
     churn_lines: int | None = None
-    #: None = no verify command configured (NOT "passed").
+    #: Three-valued, and every value has more than one cause: True = ran and
+    #: exited 0; False = ran and exited non-zero; None = NOT CHECKED, which is
+    #: what you get when no command was configured, when the sandbox degraded,
+    #: or when the branch crashed before verification. ``error`` says which.
+    #: None must never be read as "passed".
     verified: bool | None = None
     verify_exit_code: int | None = None
+    #: The command this branch was meant to verify with, recorded as soon as one
+    #: is known to be configured - including when it never ran, so that "was
+    #: meant to be verified but was not" stays distinguishable from "no command
+    #: was configured at all". A value here with ``verify_exit_code is None``
+    #: means the command was configured but not run.
     verify_command: str | None = None
     latency_ms: float = 0.0
     status: str = "pending"
@@ -282,14 +291,41 @@ class SwarmResult:
             b.churn_lines if b.churn_lines is not None else 0,
         ))
 
+    def _verify_note(self) -> str:
+        """Explain the verification outcome, reading the reason off the branches.
+
+        The previous version asserted one cause for "nothing was checked" -
+        "no verify command configured" - without looking at anything. A run in
+        which every branch degraded, and a run in which every branch crashed
+        before the verify step, also end with nothing checked, and the summary
+        then named a cause that was not true - in the body of a 200 response
+        from ``POST /v30/swarm/speculate``. A sentence that states a reason has
+        to read that reason off the data.
+        """
+        total = len(self.branches)
+        verified = sum(1 for b in self.branches if b.verified is True)
+        checked = sum(1 for b in self.branches if b.verified is not None)
+        unchecked = total - checked
+
+        if checked:
+            note = f"{verified}/{checked} checked branches passed"
+            if unchecked:
+                # Silence about the gap is how "1/1 passed" gets read as "all
+                # good" when 2 of the 3 branches were never checked at all.
+                note += f"; {unchecked}/{total} branches were not checked"
+            return note
+
+        if all(b.verify_command is None and b.error is None for b in self.branches):
+            return ("no verify command configured (BAIZE_SWARM_VERIFY_CMD); "
+                    "no branch was checked")
+        reason = next((b.error for b in self.branches if b.error), "reason not recorded")
+        return (f"no branch was checked: {unchecked}/{total} branches never ran the "
+                f"verify command ({reason})")
+
     def to_dict(self) -> dict[str, Any]:
         verified = sum(1 for b in self.branches if b.verified is True)
         checked = sum(1 for b in self.branches if b.verified is not None)
-        if checked == 0:
-            verify_note = ("no verify command configured (BAIZE_SWARM_VERIFY_CMD); "
-                           "no branch was checked")
-        else:
-            verify_note = f"{verified}/{checked} checked branches passed"
+        verify_note = self._verify_note()
         return {
             "goal": self.goal,
             "total_elapsed_ms": round(self.total_elapsed_ms, 2),
@@ -302,10 +338,24 @@ class SwarmResult:
             "message": (
                 f"Swarm 推演完成（隔离方式: {self.isolation}）：从 {len(self.branches)} "
                 f"条策略路线中选出 [{self.winner.branch_id}]"
-                f"（预设风险分 {self.winner.risk_score}, 实测代码抖动 "
-                f"{self.winner.churn_lines} 行）。{verify_note}。"
+                f"（预设风险分 {self.winner.risk_score}, {self._churn_note()}）。"
+                f"{verify_note}。"
             ),
         }
+
+    def _churn_note(self) -> str:
+        """Describe the winner's churn without claiming a measurement that never
+        happened.
+
+        ``churn_lines`` is None when a branch never reached ``measure_churn()``
+        (it crashed, or the sandbox gave it nothing to measure). The summary
+        used to interpolate it unconditionally as "实测代码抖动 None 行" - the
+        word 实测 (measured) attached to a value that was not measured, which is
+        the same defect as reporting a verdict from a stale data file.
+        """
+        if self.winner.churn_lines is None:
+            return "代码抖动未测量"
+        return f"实测代码抖动 {self.winner.churn_lines} 行"
 
 
 def _verify_output_excerpt(res, limit: int = 300) -> str:
@@ -325,13 +375,25 @@ def _verify_output_excerpt(res, limit: int = 300) -> str:
 
 
 def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
-    """Run BAIZE_SWARM_VERIFY_CMD inside the worktree, if configured."""
+    """Run BAIZE_SWARM_VERIFY_CMD inside the worktree, if configured.
+
+    ``verify_command`` is recorded as soon as a command is known to be
+    configured, *before* the early returns. That is what lets a caller tell
+    "this branch was meant to be verified and was not" apart from "no command
+    was configured at all" - without it, a run in which every branch degraded
+    is indistinguishable from a run with verification switched off, and the
+    summary then names a cause it never checked.
+    """
     cmd = (load_config().get("BAIZE_SWARM_VERIFY_CMD") or "").strip()
     if not cmd:
         # Not "passed" - not checked. None is the honest value.
         branch.verified = None
         return
+    branch.verify_command = cmd
     if sandbox.path is None:
+        branch.verified = None
+        branch.error = ("not verified: the sandbox has no path, so there was "
+                        "nowhere to run the verify command")
         return
     if sandbox.degraded:
         # The branch ran in a plain scratch directory, not a worktree, so a
@@ -346,7 +408,6 @@ def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
                         f"directory ({sandbox.reason or 'reason not recorded'}), "
                         "so a verify command there would not test the candidate")
         return
-    branch.verify_command = cmd
     res = proc_mod.run(cmd, shell=True, timeout=300, cwd=str(sandbox.path))
     if res.timed_out:
         branch.verified = False
