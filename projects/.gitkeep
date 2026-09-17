@@ -1,0 +1,5 @@
+# Agent-generated example projects land here at runtime.
+#
+# This placeholder keeps the directory in git so a fresh clone satisfies
+# `python -m baize doctor`, which requires BAIZE_PROJECTS_DIR to exist.
+# Content under this directory is gitignored - see .gitignore.
