@@ -290,7 +290,7 @@ def cmd_gate(args) -> int:
     from . import gate
     rep = gate.run_gate(
         getattr(args, "manifest", "baize.manifest.json"),
-        getattr(args, "coverage_data", ".coverage"))
+        getattr(args, "coverage_data", None))
     print("NO FAKE DONE GATE")
     print(f"  manifest : {'PASS' if rep['manifest_ok'] else 'FAIL'}")
     for p in rep["manifest_problems"]:

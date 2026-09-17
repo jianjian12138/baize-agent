@@ -230,6 +230,22 @@ def rewrite_file(
 # --------------------------------------------------------------- test measure
 
 
+_COLLECTED_MEMO: list[int | None] = [None]
+
+
+def collected_count() -> int:
+    """Collected test count, memoised.
+
+    ``--collect-only`` is a subprocess call, and more than one count claim wants
+    the same number; measuring it twice per gate run is pure waste. Memoised
+    rather than cached to disk: a stale number on disk is how a badge starts
+    lying.
+    """
+    if _COLLECTED_MEMO[0] is None:
+        _COLLECTED_MEMO[0] = measure_tests(run=False)[1]
+    return _COLLECTED_MEMO[0]
+
+
 def _run_pytest(args: list[str]) -> str:
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", *args],
@@ -461,6 +477,19 @@ def count_claims() -> list[CountClaim]:
             re.compile(r"`BAIZE_ALLOW_FETCH_URL=1` 后 (\d+) 个"),
             lambda: measure_tools()[1],
             "all reg.register() calls in baize/tools.py",
+        ),
+        # The tutorial's own fact table was ungated, and drifted: it advertised
+        # "683 collected / 681 passed / 2 skipped" and a 77.4% coverage RED long
+        # after the suite had reached 1278 and the gate had gone green. Only the
+        # collected count is gated - passed and skipped need a full run, which
+        # this cheap gate deliberately does not do - so the row states only the
+        # number that can be checked here.
+        CountClaim(
+            "docs/tutorials/01-认识白泽引擎.md",
+            "test cases collected",
+            re.compile(r"测试用例 \| \*\*(\d+) 个收集"),
+            collected_count,
+            "pytest tests/ --collect-only",
         ),
     ]
 

@@ -17,6 +17,7 @@ All checks are fail-closed: any uncertainty is surfaced, never hidden.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -26,8 +27,99 @@ from .config import load_config, ROOT
 # file is suspect - the work may have regressed since).
 MANIFEST_STALE_SECONDS = 60 * 60 * 24 * 7
 
+# The sources a coverage percentage claims to describe. Kept here, next to the
+# staleness rule itself, so the CLI gate and scripts/coverage_gate.py cannot
+# drift apart on what "the tree" means.
+COVERAGE_SOURCE_DIRS = ("baize", "tests")
+
 __all__ = ["check_manifest", "check_coverage", "check_loop_integrity",
-           "run_gate", "MANIFEST_STALE_SECONDS"]
+           "run_gate", "MANIFEST_STALE_SECONDS", "COVERAGE_SOURCE_DIRS",
+           "newest_source", "newest_source_mtime", "coverage_data_is_stale",
+           "resolve_coverage_data_file"]
+
+
+def newest_source(root: Path | None = None) -> tuple[float, Path | None]:
+    """``(newest mtime, which file)`` over ``COVERAGE_SOURCE_DIRS``.
+
+    The decision and the message must come from the same scan, or a caller can
+    name a file it did not actually compare against.
+    """
+    root = ROOT if root is None else Path(root)
+    newest, which = 0.0, None
+    for sub in COVERAGE_SOURCE_DIRS:
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for path in d.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                m = path.stat().st_mtime
+            except OSError:
+                continue
+            if m > newest:
+                newest, which = m, path
+    return newest, which
+
+
+def newest_source_mtime(root: Path | None = None) -> float:
+    """Newest mtime among the sources a coverage number claims to describe.
+
+    ``0.0`` means "nothing to compare against", which callers must read as
+    *cannot judge* rather than *everything is fresh*.
+    """
+    return newest_source(root)[0]
+
+
+def coverage_data_is_stale(data_file: Path | str,
+                           root: Path | None = None) -> str | None:
+    """Why ``data_file`` cannot describe the tree at ``root``, or ``None``.
+
+    A data file older than the newest source file was measured against a tree
+    that no longer exists, so the percentage it holds is not a statement about
+    the current code. Equal timestamps pass: coverage writes its data after the
+    sources are read, and coarse filesystem clocks make a same-second write
+    normal.
+
+    This rule lives here, not in each caller, because it was independently
+    rediscovered twice: scripts/coverage_gate.py learned it after reporting
+    83.6% FAILED from an hour-old file, and ``check_coverage`` was still reading
+    a stale ``.coverage`` to report 83.5% FAILED against a tree that measured
+    86.6% PASS.
+    """
+    data_file = Path(data_file)
+    root = ROOT if root is None else Path(root)
+    newest, which = newest_source(root)
+    if newest == 0.0:
+        return None  # nothing to compare against - cannot judge, so do not block
+    try:
+        written = data_file.stat().st_mtime
+    except OSError as exc:
+        return f"cannot stat data file {str(data_file)!r}: {exc}"
+    if written >= newest:
+        return None
+    behind = newest - written
+    newest_name = str(which.relative_to(root)) if which else "?"
+    return (
+        f"data file {str(data_file)!r} was written {behind:.0f}s before the "
+        f"newest source file ({newest_name}); it describes an older tree"
+    )
+
+
+def resolve_coverage_data_file(explicit: str | None = None,
+                               cfg: dict | None = None) -> str:
+    """Explicit argument > ``COVERAGE_FILE`` > ``BAIZE_COVERAGE_DATA`` > default.
+
+    Honouring ``COVERAGE_FILE`` is not a nicety: ``coverage run`` honours it, so
+    a gate that does not will happily measure a different, older file than the
+    run it is supposed to be checking.
+    """
+    if explicit:
+        return explicit
+    from_env = os.environ.get("COVERAGE_FILE")
+    if from_env:
+        return from_env
+    return (cfg or {}).get("BAIZE_COVERAGE_DATA") or ".coverage"
 
 
 def check_manifest(manifest_path: str,
@@ -70,15 +162,26 @@ def check_manifest(manifest_path: str,
     return (not problems), problems
 
 
-def check_coverage(data_file: str = ".coverage") -> dict:
-    """Measure real coverage if possible; otherwise report unknown."""
+def check_coverage(data_file: str | None = None,
+                   cfg: dict | None = None) -> dict:
+    """Measure real coverage if possible; otherwise report unknown.
+
+    A *stale* data file is ``unknown``, not ``fail``: reporting a percentage
+    from an older tree as a verdict is the same lie as reporting green from one.
+    """
     try:
         import coverage  # dev dependency only; never imported on the runtime
     except ImportError:
         return {"status": "unknown",
                 "reason": "coverage package not installed"}
+    data_file = resolve_coverage_data_file(data_file, cfg)
     if not Path(data_file).exists():
         return {"status": "unknown", "reason": f"no data file {data_file}"}
+    stale = coverage_data_is_stale(data_file)
+    if stale is not None:
+        return {"status": "unknown",
+                "reason": f"cannot verify - {stale}",
+                "data_file": data_file}
     try:
         threshold = int(load_config().get("TEST_COVERAGE_THRESHOLD", 85))
         cov = coverage.Coverage(data_file=data_file)
@@ -88,7 +191,8 @@ def check_coverage(data_file: str = ".coverage") -> dict:
         return {"status": "unknown", "reason": str(exc)}
     ok = total >= threshold
     return {"status": "pass" if ok else "fail",
-        "total": round(total, 1), "threshold": threshold}
+        "total": round(total, 1), "threshold": threshold,
+        "data_file": data_file}
 
 
 def check_composition(cfg: dict | None = None) -> dict:
@@ -182,7 +286,7 @@ def check_quality(cfg: dict | None = None) -> dict:
     man_ok, _ = check_manifest(
         cfg.get("BAIZE_MANIFEST", "baize.manifest.json"))
     # 2. coverage clarity — real coverage measured, not faked.
-    cov = check_coverage(cfg.get("BAIZE_COVERAGE_DATA", ".coverage"))
+    cov = check_coverage(cfg=cfg)
     cov_score = {"pass": 1.0, "unknown": 0.5, "fail": 0.0}.get(
         cov.get("status"), 0.0)
     # 3. composition — kernel + modes actually assemble.
@@ -223,7 +327,7 @@ def check_quality(cfg: dict | None = None) -> dict:
 
 
 def run_gate(manifest_path: str = "baize.manifest.json",
-             data_file: str = ".coverage",
+             data_file: str | None = None,
              now: float | None = None) -> dict:
     man_ok, man_problems = check_manifest(manifest_path, now=now)
     cov = check_coverage(data_file)

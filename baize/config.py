@@ -34,12 +34,14 @@ _DEFAULTS = {
     # to this line is telling you the edit changed the contract, not that the test
     # is stale. Fix the coverage, do not edit the test.
     #
-    # KNOWN GAP (measured 2026-09-17 on v30-dev): actual coverage is 77.4%
-    # (8610 statements, .coverage). The gate is therefore RED. That is the honest
-    # state - the repo does not meet its own floor. Lowering this number would
-    # make the gate green by moving the goalposts, which is the failure mode this
-    # whole single-source exercise exists to stop. Raise coverage by ~8 points,
-    # then this floor is satisfied with no edit needed.
+    # Do not record the current coverage percentage here. It was recorded here
+    # once ("KNOWN GAP: actual coverage is 77.4%, the gate is therefore RED") and
+    # the number was true when measured and false within the same day: committing
+    # the 24 files that had been left untracked moved coverage to 86.6% and turned
+    # the gate green, while this comment went on announcing a red gate to every
+    # reader. A percentage in prose is a measurement wearing a claim's clothes.
+    # The floor is the promise; the current value is whatever `make cov` prints.
+    # Never lower this floor to make the gate pass.
     "TEST_COVERAGE_THRESHOLD": "85",
     # --- Agent runtime (V19) ---
     "BAIZE_MODEL_BASE_URL": "",          # OpenAI-compatible endpoint base
