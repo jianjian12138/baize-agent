@@ -308,6 +308,22 @@ class SwarmResult:
         }
 
 
+def _verify_output_excerpt(res, limit: int = 300) -> str:
+    """The most informative slice of a failed verify command's output.
+
+    ``git`` explains itself on stderr; some commands only use stdout. A failure
+    recorded without either is a failure nobody can diagnose - which is exactly
+    what happened once: a verify command exited non-zero in a full-suite run,
+    the exit code was kept and the reason thrown away, and the resulting test
+    failure (`assert False is True`) could not be attributed to anything.
+    """
+    for stream in (res.stderr, res.stdout):
+        text = (stream or "").strip()
+        if text:
+            return text if len(text) <= limit else text[:limit] + " ..."
+    return "(no output)"
+
+
 def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
     """Run BAIZE_SWARM_VERIFY_CMD inside the worktree, if configured."""
     cmd = (load_config().get("BAIZE_SWARM_VERIFY_CMD") or "").strip()
@@ -317,15 +333,33 @@ def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
         return
     if sandbox.path is None:
         return
+    if sandbox.degraded:
+        # The branch ran in a plain scratch directory, not a worktree, so a
+        # verify command there says nothing about the candidate. Observed:
+        # `git status --porcelain` exits 128 ("not a git repository") in that
+        # directory, and `verified` became False - the same value as "the
+        # candidate failed verification", which it is not. The module already
+        # ranks None ("not checked") above False ("failed"), so the honest value
+        # is None, with the degradation recorded as the reason.
+        branch.verified = None
+        branch.error = ("not verified: the sandbox degraded to a scratch "
+                        f"directory ({sandbox.reason or 'reason not recorded'}), "
+                        "so a verify command there would not test the candidate")
+        return
     branch.verify_command = cmd
     res = proc_mod.run(cmd, shell=True, timeout=300, cwd=str(sandbox.path))
     if res.timed_out:
         branch.verified = False
         branch.verify_exit_code = -1
-        branch.error = "verify command timed out after 300s"
+        branch.error = ("verify command timed out after 300s; last output: "
+                        + _verify_output_excerpt(res))
         return
     branch.verify_exit_code = res.returncode
     branch.verified = res.returncode == 0
+    if not branch.verified:
+        # Keep the reason. A bare exit code is not a diagnosis.
+        branch.error = (f"verify command exited {res.returncode}: "
+                        + _verify_output_excerpt(res))
 
 
 def _run_branch(branch: CandidateBranch, goal: str, base_repo: str, ref: str) -> None:

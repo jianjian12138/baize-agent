@@ -165,6 +165,156 @@ def test_a_failing_verify_command_reports_false(monkeypatch):
     assert res["checked_branches"] > 0
 
 
+# ---------------------------------------------- a failure must say why it failed
+#
+# `_verify` used to keep the exit code and discard stdout/stderr. A verify
+# command then exited non-zero once in a full-suite run, and the resulting
+# failure - `assert False is True` - could not be attributed to anything,
+# because the reason had been thrown away at the point of failure. These tests
+# drive `_verify` with a stubbed process result so the recorded text is pinned
+# exactly, with no shell quoting in the way.
+
+
+class _StubResult:
+    def __init__(self, returncode=0, stdout="", stderr="", timed_out=False):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timed_out = timed_out
+
+
+class _StubSandbox:
+    def __init__(self, path, degraded=False, reason=None):
+        self.path = path
+        self.degraded = degraded
+        self.reason = reason
+
+
+def _branch():
+    from baize.swarm import CandidateBranch
+
+    return CandidateBranch(branch_id="b1", title="t", strategy="s",
+                           risk_score=0.1)
+
+
+def _verify_with(monkeypatch, tmp_path, result, sandbox=None):
+    from baize import swarm
+
+    monkeypatch.setenv("BAIZE_SWARM_VERIFY_CMD", "a-verify-command")
+    monkeypatch.setattr(swarm.proc_mod, "run", lambda *a, **k: result)
+    branch = _branch()
+    swarm._verify(branch, sandbox or _StubSandbox(tmp_path))
+    return branch
+
+
+def test_a_failing_verify_command_records_why(monkeypatch, tmp_path):
+    """The reason must survive, not just the exit code."""
+    branch = _verify_with(monkeypatch, tmp_path,
+                          _StubResult(returncode=3, stderr="fatal: BOOM-marker\n"))
+    assert branch.verified is False
+    assert branch.verify_exit_code == 3
+    assert "BOOM-marker" in branch.error
+    assert "3" in branch.error, "the exit code must be in the message"
+
+
+def test_a_passing_verify_command_records_no_error(monkeypatch, tmp_path):
+    """Calibration: nothing is recorded when the command passes, so the test
+    above cannot pass by writing a message unconditionally."""
+    branch = _verify_with(monkeypatch, tmp_path, _StubResult(returncode=0))
+    assert branch.verified is True
+    assert branch.error is None
+
+
+def test_a_timed_out_verify_command_says_so(monkeypatch, tmp_path):
+    branch = _verify_with(monkeypatch, tmp_path,
+                          _StubResult(returncode=-1, stderr="partial output",
+                                      timed_out=True))
+    assert branch.verified is False
+    assert branch.verify_exit_code == -1
+    assert "timed out" in branch.error
+    assert "partial output" in branch.error
+
+
+def test_a_silent_failure_is_reported_as_silent(monkeypatch, tmp_path):
+    """No output is a fact about the command, and saying so beats an empty
+    message that reads like 'no reason'."""
+    branch = _verify_with(monkeypatch, tmp_path, _StubResult(returncode=1))
+    assert branch.verified is False
+    assert "no output" in branch.error
+
+
+def test_stdout_is_used_when_stderr_is_empty(monkeypatch, tmp_path):
+    """Some commands explain themselves on stdout; either stream is a reason."""
+    branch = _verify_with(monkeypatch, tmp_path,
+                          _StubResult(returncode=2, stdout="stdout-explains\n"))
+    assert "stdout-explains" in branch.error
+
+
+def test_a_very_long_failure_reason_is_truncated(monkeypatch, tmp_path):
+    """A reason is a pointer, not a transcript: keep it bounded."""
+    branch = _verify_with(monkeypatch, tmp_path,
+                          _StubResult(returncode=1, stderr="x" * 5000))
+    assert len(branch.error) < 500
+    assert branch.error.endswith("...")
+
+
+# ------------------------------------------------- degraded is not "failed"
+#
+# When `git worktree add` fails, `create()` falls back to a plain temp
+# directory. A verify command run there tests the directory, not the candidate:
+# `git status --porcelain` exits 128 ("not a git repository"). Reporting that as
+# `verified=False` is indistinguishable from "the candidate failed
+# verification". Reproduced with a non-repo base path: all three branches came
+# back verified=False, rc=128, isolation=scratch-dir-degraded.
+
+
+def test_a_degraded_sandbox_reports_not_checked_not_failed(monkeypatch, tmp_path):
+    called = []
+    from baize import swarm
+
+    monkeypatch.setenv("BAIZE_SWARM_VERIFY_CMD", "a-verify-command")
+    monkeypatch.setattr(swarm.proc_mod, "run",
+                        lambda *a, **k: called.append(a) or _StubResult(128))
+
+    branch = _branch()
+    sandbox = _StubSandbox(tmp_path, degraded=True,
+                           reason="base path is not a git repository")
+    swarm._verify(branch, sandbox)
+
+    assert branch.verified is None, (
+        "a meaningless verify must be 'not checked', not 'failed'")
+    assert branch.verify_exit_code is None
+    assert "degraded" in branch.error
+    assert "not a git repository" in branch.error
+    assert called == [], "no verify command should be run outside the worktree"
+
+
+def test_a_degraded_sandbox_ranks_above_a_failed_one(monkeypatch, tmp_path):
+    """The module's own ranking: True, then None, then False. A branch we could
+    not check must not be ranked below one that genuinely failed."""
+    from baize.swarm import SwarmResult
+
+    checked = _branch()
+    checked.verified = True
+    checked.risk_score = 0.9          # deliberately the riskiest of the three
+
+    unchecked = _verify_with(monkeypatch, tmp_path, _StubResult(128),
+                             sandbox=_StubSandbox(tmp_path, degraded=True,
+                                                  reason="no worktree"))
+    failed = _verify_with(monkeypatch, tmp_path, _StubResult(1, stderr="boom"))
+
+    assert checked.verified is True
+    assert unchecked.verified is None, "degraded must be not-checked"
+    assert failed.verified is False, "a real failure is still a failure"
+
+    res = SwarmResult(goal="g", branches=[failed, unchecked, checked],
+                      total_elapsed_ms=1.0)
+    assert res.winner is checked, "True must outrank None, which outranks False"
+    rep = res.to_dict()
+    assert rep["verified_branches"] == 1
+    assert rep["checked_branches"] == 2, "an unchecked branch is not 'checked'"
+
+
 def test_cleanup_reports_a_leftover_it_could_not_remove(tmp_path, monkeypatch,
                                                         caplog):
     """A cleanup that did not happen must not be reported as one that did.
