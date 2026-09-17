@@ -2,7 +2,7 @@
 # Works on Unix/macOS and Windows (via Git Bash / WSL).
 PY ?= python
 
-.PHONY: install doctor test index clean cov gate chat serve repl truth hygiene
+.PHONY: install doctor test index clean cov gate chat serve repl truth hygiene deps
 
 install:
 	$(PY) install/bootstrap.py
@@ -28,8 +28,18 @@ cov:
 	$(PY) -m coverage run -m pytest tests/ -q
 	$(PY) scripts/coverage_gate.py
 
-# Alias so CI can simply call `make gate`.
-gate: cov truth hygiene
+# Alias so CI can simply call `make gate`. Cheap checks first so a broken
+# promise fails in seconds instead of after a full coverage run.
+gate: deps truth hygiene cov
+
+# The engine's headline promise: `pip install baize-agent` pulls no third-party
+# packages, so `import baize` works on a bare interpreter.
+# scripts/check_zero_deps.py fails ONLY on module-level third-party imports,
+# because only those execute on `import baize`. Guarded optional imports
+# (try/except ImportError, function-body, TYPE_CHECKING) are reported, not
+# failed - the previous all-or-nothing version was red from V24 to V37.
+deps:
+	$(PY) scripts/check_zero_deps.py
 
 # Version + test count single source of truth. baize/__init__.py holds the only
 # version literals; scripts/sync_truth.py owns every derived surface (README

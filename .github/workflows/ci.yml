@@ -38,30 +38,16 @@ jobs:
         run: python -m pip install --upgrade pip pytest pytest-cov
 
       - name: Verify zero runtime dependencies
-        shell: bash
-        run: |
-          python - <<'PY'
-          import ast, pathlib, sys
-          stdlib = set(sys.stdlib_module_names)
-          bad = []
-          for f in pathlib.Path("baize").rglob("*.py"):
-              tree = ast.parse(f.read_text(encoding="utf-8"))
-              for node in ast.walk(tree):
-                  if isinstance(node, ast.Import):
-                      mods = [a.name.split(".")[0] for a in node.names]
-                  elif isinstance(node, ast.ImportFrom):
-                      mods = [(node.module or "").split(".")[0]] if node.level == 0 else []
-                  else:
-                      continue
-                  for m in mods:
-                      if m and m not in stdlib and m != "baize":
-                          bad.append(f"{f}: {m}")
-          if bad:
-              print("Third-party imports found in runtime package:")
-              print("\n".join(bad))
-              sys.exit(1)
-          print("OK: baize/ imports stdlib only")
-          PY
+        # scripts/check_zero_deps.py separates HARD from SOFT:
+        #   HARD = a module-level third-party import. It runs on `import baize`,
+        #          so it raises ModuleNotFoundError on a clean interpreter.
+        #   SOFT = the same import inside try/except ImportError, in a function
+        #          body, or under TYPE_CHECKING. The package still imports; only
+        #          the optional feature degrades.
+        # The inline AST version this replaced failed on BOTH, so this job had
+        # been red since V24 (7af42a5) and had never once been green. A gate
+        # nobody has seen pass is a gate everybody learns to ignore.
+        run: python scripts/check_zero_deps.py
 
       - name: Static grep gate (red line C — ext fail-closed)
         shell: bash
