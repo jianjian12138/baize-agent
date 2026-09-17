@@ -295,6 +295,11 @@ def cmd_gate(args) -> int:
     print(f"  manifest : {'PASS' if rep['manifest_ok'] else 'FAIL'}")
     for p in rep["manifest_problems"]:
         print(f"    - {p}")
+    # "not judged" is neither a pass nor a failure, so it must not be printed as
+    # either - and it must not be silently dropped, which is how a check that
+    # stopped running reads like a check that passed.
+    for n in rep.get("manifest_notes", []):
+        print(f"    ~ {n}")
     c = rep["coverage"]
     # The operator must reflect the actual comparison. It used to be hardcoded
     # ">=", so a FAILING gate printed "coverage : FAIL (76.7% >= 85%)" - a false

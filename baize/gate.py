@@ -3,9 +3,15 @@
 This is the single source of truth for "is this project honestly done":
 
 * Manifest gate - every phase marked ``done`` must list evidence files that
-  actually EXIST, are NON-EMPTY, and are NOT STALE (mtime within
-  ``MANIFEST_STALE_SECONDS``). This closes risk #5 / #6: a phase cannot claim
-  completion on a missing, empty, or ancient file (no stale fake green).
+  actually EXIST and are NON-EMPTY. Age is checked only where age means
+  something: an evidence file that git tracks has its mtime rewritten by every
+  checkout, so ``now - mtime`` measures the checkout, not the file. Tracked
+  evidence is therefore reported as "freshness not judged" instead of being
+  judged. (It used to be judged, which produced ``evidence STALE (28d old):
+  baize/subagent.py`` - the *implementation* of the phase - on a healthy tree,
+  while a fresh clone passed the same check vacuously. All 173 evidence entries
+  in this repo are tracked, so the rule could only ever fire where it was wrong.)
+  Existence and non-emptiness stay hard failures; those are sound.
 * Coverage gate - if the ``coverage`` dev package is installed we measure the
   REAL TOTAL and compare to ``TEST_COVERAGE_THRESHOLD``; otherwise we report
   ``unknown`` rather than pretending green.
@@ -18,13 +24,16 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
 from .config import load_config, ROOT
 
-# Evidence older than this is treated as stale (a "done" claim on a week-old
-# file is suspect - the work may have regressed since).
+# Evidence older than this is treated as stale - but only for evidence git does
+# not track. For a tracked file the mtime is written by checkout, so this
+# threshold is never consulted; see `check_manifest`. A "done" claim on a
+# week-old *artifact* is still suspect; a week-old *source file* is normal.
 MANIFEST_STALE_SECONDS = 60 * 60 * 24 * 7
 
 # The sources a coverage percentage claims to describe. Kept here, next to the
@@ -35,7 +44,7 @@ COVERAGE_SOURCE_DIRS = ("baize", "tests")
 __all__ = ["check_manifest", "check_coverage", "check_loop_integrity",
            "run_gate", "MANIFEST_STALE_SECONDS", "COVERAGE_SOURCE_DIRS",
            "newest_source", "newest_source_mtime", "coverage_data_is_stale",
-           "resolve_coverage_data_file"]
+           "resolve_coverage_data_file", "tracked_paths"]
 
 
 def newest_source(root: Path | None = None) -> tuple[float, Path | None]:
@@ -122,11 +131,57 @@ def resolve_coverage_data_file(explicit: str | None = None,
     return (cfg or {}).get("BAIZE_COVERAGE_DATA") or ".coverage"
 
 
+def tracked_paths(root: Path | str | None = None) -> set[str] | None:
+    """Repo-relative paths tracked by git, or ``None`` when that cannot be known.
+
+    This exists so a caller can ask whether a file's mtime means anything. Git
+    rewrites the mtime of every tracked file on checkout, so for a tracked file
+    ``now - mtime`` measures *when you cloned*, not when the file was produced.
+    A check built on that number therefore reports the checkout age and calls it
+    the file's age - green in a fresh clone (where CI runs) and red in a
+    long-lived working copy, which is the opposite of useful.
+
+    Returns ``None`` when git is unavailable, the path is not a repository, or
+    git fails - "cannot judge", never "assume stale".
+    """
+    git = shutil.which("git")
+    if git is None:
+        return None
+    base = ROOT if root is None else Path(root)
+    # Routed through proc.run, not subprocess.run: on a timeout the whole process
+    # tree has to be killed, and `subprocess.run(timeout=)` only kills the direct
+    # child. tests/test_proc_timeout.py caught this file doing it the direct way
+    # - the repo's own gate, working on a change I made.
+    from .proc import run as _proc_run
+    try:
+        res = _proc_run([git, "-c", "core.quotepath=false", "ls-files", "-z"],
+                        timeout=60, cwd=str(base))
+    except OSError:
+        # Popen raises when cwd is unusable or the binary vanished between the
+        # `which` call and here. Cannot judge, so say so rather than assume.
+        return None
+    if res.timed_out or res.returncode != 0:
+        return None
+    # -z plus quotepath=false: a plain `read` would split on the quotes git adds
+    # around non-ASCII paths, silently dropping exactly those files.
+    return {p for p in res.stdout.split("\0") if p}
+
+
 def check_manifest(manifest_path: str,
                    max_stale_seconds: int = MANIFEST_STALE_SECONDS,
-                   now: float | None = None) -> tuple[bool, list[str]]:
+                   now: float | None = None,
+                   notes: list[str] | None = None) -> tuple[bool, list[str]]:
     """Return (ok, problems). A 'done' phase's evidence must exist, be
-    non-empty, and be fresh."""
+    non-empty, and - when its age can be trusted - be fresh.
+
+    The freshness dimension only applies to evidence git does *not* track. For
+    tracked evidence the mtime is written by checkout, so it says nothing about
+    the file; measuring it produced a confident "evidence STALE (28d old)" for
+    `baize/subagent.py`, the *implementation* of the phase, on a tree that was
+    perfectly healthy. All 173 evidence entries in this repo are tracked, so
+    that rule could only ever fire where it was wrong and never where CI runs.
+    Tracked evidence is recorded in ``notes`` instead of being judged.
+    """
     from .manifest import validate_manifest
     now = now if now is not None else time.time()
     path = Path(manifest_path)
@@ -141,6 +196,9 @@ def check_manifest(manifest_path: str,
         return False, [f"manifest unreadable: {exc}"]
     problems: list[str] = []
     base = path.parent
+    tracked = tracked_paths(base)
+    unjudged_tracked: list[str] = []
+    unjudged_no_git: list[str] = []
     for ph in data.get("phases", []):
         if ph.get("status") != "done":
             continue
@@ -155,11 +213,41 @@ def check_manifest(manifest_path: str,
                 problems.append(f"{ph['id']}: evidence EMPTY: {ev}")
                 continue
             age = now - fp.stat().st_mtime
-            if age > max_stale_seconds:
-                problems.append(
-                    f"{ph['id']}: evidence STALE "
-                    f"({int(age // 86400)}d old): {ev}")
+            if age <= max_stale_seconds:
+                continue
+            rel = _repo_relative(fp, base)
+            if tracked is None:
+                unjudged_no_git.append(ev)
+                continue
+            if rel is not None and rel in tracked:
+                unjudged_tracked.append(ev)
+                continue
+            problems.append(
+                f"{ph['id']}: evidence STALE "
+                f"({int(age // 86400)}d old): {ev}")
+    if notes is not None:
+        # Aggregate: one line per reason, not one per file. 173 evidence entries
+        # would otherwise bury the verdict they are a footnote to.
+        if unjudged_tracked:
+            notes.append(
+                f"{len(unjudged_tracked)} evidence file(s) are older than "
+                f"{int(max_stale_seconds // 86400)}d AND tracked by git, so their mtime "
+                f"records the checkout rather than the file - freshness not judged "
+                f"(e.g. {unjudged_tracked[0]})")
+        if unjudged_no_git:
+            notes.append(
+                f"{len(unjudged_no_git)} evidence file(s) could not be judged: git is "
+                f"unavailable, so their mtime cannot be trusted as an age")
     return (not problems), problems
+
+
+def _repo_relative(fp: Path, base: Path) -> str | None:
+    """``fp`` relative to ``base`` in git's slash form, or None if outside."""
+    try:
+        rel = fp.resolve().relative_to(base.resolve())
+    except (ValueError, OSError):
+        return None
+    return str(rel).replace("\\", "/")
 
 
 def check_coverage(data_file: str | None = None,
@@ -282,9 +370,10 @@ def check_quality(cfg: dict | None = None) -> dict:
     Below ``BAIZE_QUALITY_THRESHOLD`` the overall gate FAILS (intercept).
     """
     cfg = cfg or load_config()
+    notes: list[str] = []
     # 1. runnable — manifest evidence actually exists / non-empty / fresh.
     man_ok, _ = check_manifest(
-        cfg.get("BAIZE_MANIFEST", "baize.manifest.json"))
+        cfg.get("BAIZE_MANIFEST", "baize.manifest.json"), notes=notes)
     # 2. coverage clarity — real coverage measured, not faked.
     cov = check_coverage(cfg=cfg)
     cov_score = {"pass": 1.0, "unknown": 0.5, "fail": 0.0}.get(
@@ -323,13 +412,16 @@ def check_quality(cfg: dict | None = None) -> dict:
     score = round(sum(dims[k] * w for k, w in weights.items()), 3)
     threshold = float(cfg.get("BAIZE_QUALITY_THRESHOLD", "0.8"))
     return {"dimensions": dims, "score": score,
-            "threshold": threshold, "pass": score >= threshold}
+            "threshold": threshold, "pass": score >= threshold,
+            "notes": notes}
 
 
 def run_gate(manifest_path: str = "baize.manifest.json",
              data_file: str | None = None,
              now: float | None = None) -> dict:
-    man_ok, man_problems = check_manifest(manifest_path, now=now)
+    manifest_notes: list[str] = []
+    man_ok, man_problems = check_manifest(manifest_path, now=now,
+                                          notes=manifest_notes)
     cov = check_coverage(data_file)
     comp = check_composition()
     quality = check_quality()
@@ -344,6 +436,7 @@ def run_gate(manifest_path: str = "baize.manifest.json",
     return {
         "manifest_ok": man_ok,
         "manifest_problems": man_problems,
+        "manifest_notes": manifest_notes,
         "coverage": cov,
         "composition": comp,
         "quality": quality,
