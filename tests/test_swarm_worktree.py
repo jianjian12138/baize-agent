@@ -860,3 +860,139 @@ def test_cleanup_reports_a_leftover_it_could_not_remove(tmp_path, monkeypatch,
     sb.cleanup()
     assert not path.exists()
     assert sb.path is None
+
+
+# ---------------------------------------------------------------------------
+# the goal is data, never shell input
+# ---------------------------------------------------------------------------
+
+def _as_text(command) -> str:
+    """Render either an argv list or a shell string as one string."""
+    if isinstance(command, (list, tuple)):
+        return " ".join(str(part) for part in command)
+    return str(command)
+
+
+def test_the_request_goal_cannot_reach_a_shell(monkeypatch, tmp_path):
+    """The verify command is shell-executed; the goal must never join it.
+
+    `_verify` runs `BAIZE_SWARM_VERIFY_CMD` with `shell=True`, and the goal
+    arrives from the caller (`POST /v30/swarm/speculate` reads `data["goal"]`).
+    Today nothing joins the two - the goal is carried for reporting only - but
+    that was a property of the current code with no test behind it, so a later
+    refactor could splice the goal into the command and every existing gate
+    would stay green.
+
+    This drives the real entry point with a goal full of shell metacharacters
+    and asserts, over every command the process actually executes, that the goal
+    text appears nowhere; that the configured command ran verbatim; and that the
+    artifact written into each worktree is still the static strategy code rather
+    than anything derived from the goal.
+    """
+    marker = "PWNED_baize_goal_marker"
+    goal = f"x; echo {marker} > {tmp_path / 'pwned.txt'} #"
+    cmd = "git rev-parse --verify HEAD"
+    monkeypatch.setenv("BAIZE_SWARM_VERIFY_CMD", cmd)
+
+    from baize import swarm
+
+    seen: list = []
+    real_run = swarm.proc_mod.run
+
+    def spy(command, *a, **k):
+        seen.append(command)
+        return real_run(command, *a, **k)
+
+    monkeypatch.setattr(swarm.proc_mod, "run", spy)
+    res = run_parallel_swarm_speculation(goal, base_repo=str(REPO_ROOT))
+
+    assert seen, "nothing ran - the assertions below would be vacuous"
+    for command in seen:
+        text = _as_text(command)
+        assert marker not in text, f"the goal reached a command: {text!r}"
+        assert goal not in text, f"the goal reached a command: {text!r}"
+    assert any(isinstance(c, str) and c == cmd for c in seen), (
+        "the configured verify command did not run verbatim; saw "
+        f"{[c for c in seen if isinstance(c, str)]!r}")
+
+    assert not (tmp_path / "pwned.txt").exists(), "the goal was executed"
+
+    static = {s["branch_id"]: s["code"] for s in swarm.DEFAULT_STRATEGIES}
+    for b in res["branches"]:
+        assert b["generated_code"] == static[b["branch_id"]], (
+            f"{b['branch_id']}: the artifact content is no longer the static "
+            "strategy code - something derived from the goal was spliced in")
+        assert marker not in b["generated_code"]
+
+    assert res["goal"] == goal, "the goal must still be carried for reporting"
+    assert res["verified_branches"] == res["branches_count"], (
+        "the verify command should have passed in every real worktree; "
+        f"got {res['verified_branches']}/{res['branches_count']}")
+
+
+# ---------------------------------------------------------------------------
+# the goal is data, never shell input
+# ---------------------------------------------------------------------------
+
+def _as_text(command) -> str:
+    """Render either an argv list or a shell string as one string."""
+    if isinstance(command, (list, tuple)):
+        return " ".join(str(part) for part in command)
+    return str(command)
+
+
+def test_the_request_goal_cannot_reach_a_shell(monkeypatch, tmp_path):
+    """The verify command is shell-executed; the goal must never join it.
+
+    `_verify` runs `BAIZE_SWARM_VERIFY_CMD` with `shell=True`, and the goal
+    arrives from the caller (`POST /v30/swarm/speculate` reads `data["goal"]`).
+    Today nothing joins the two - the goal is carried for reporting only - but
+    that was a property of the current code with no test behind it, so a later
+    refactor could splice the goal into the command and every existing gate
+    would stay green.
+
+    This drives the real entry point with a goal full of shell metacharacters
+    and asserts, over every command the process actually executes, that the goal
+    text appears nowhere; that the configured command ran verbatim; and that the
+    artifact written into each worktree is still the static strategy code rather
+    than anything derived from the goal.
+    """
+    marker = "PWNED_baize_goal_marker"
+    goal = f"x; echo {marker} > {tmp_path / 'pwned.txt'} #"
+    cmd = "git rev-parse --verify HEAD"
+    monkeypatch.setenv("BAIZE_SWARM_VERIFY_CMD", cmd)
+
+    from baize import swarm
+
+    seen: list = []
+    real_run = swarm.proc_mod.run
+
+    def spy(command, *a, **k):
+        seen.append(command)
+        return real_run(command, *a, **k)
+
+    monkeypatch.setattr(swarm.proc_mod, "run", spy)
+    res = run_parallel_swarm_speculation(goal, base_repo=str(REPO_ROOT))
+
+    assert seen, "nothing ran - the assertions below would be vacuous"
+    for command in seen:
+        text = _as_text(command)
+        assert marker not in text, f"the goal reached a command: {text!r}"
+        assert goal not in text, f"the goal reached a command: {text!r}"
+    assert any(isinstance(c, str) and c == cmd for c in seen), (
+        "the configured verify command did not run verbatim; saw "
+        f"{[c for c in seen if isinstance(c, str)]!r}")
+
+    assert not (tmp_path / "pwned.txt").exists(), "the goal was executed"
+
+    static = {s["branch_id"]: s["code"] for s in swarm.DEFAULT_STRATEGIES}
+    for b in res["branches"]:
+        assert b["generated_code"] == static[b["branch_id"]], (
+            f"{b['branch_id']}: the artifact content is no longer the static "
+            "strategy code - something derived from the goal was spliced in")
+        assert marker not in b["generated_code"]
+
+    assert res["goal"] == goal, "the goal must still be carried for reporting"
+    assert res["verified_branches"] == res["branches_count"], (
+        "the verify command should have passed in every real worktree; "
+        f"got {res['verified_branches']}/{res['branches_count']}")

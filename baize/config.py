@@ -117,6 +117,11 @@ _DEFAULTS = {
     "BAIZE_ENABLE_SYNTHESIS_API": "0",       # "1" = enable the exec-backed /v30 endpoints
     "BAIZE_GIT_EXE": "",                     # serve.py: explicit git path; empty = search PATH
     # --- V37.1 swarm: real git-worktree speculation ---
+    # Executed with shell=True inside each branch's worktree, so it is a TRUSTED
+    # value: treat it as code the operator wrote, and never splice request data
+    # into it. The `goal` from POST /v30/swarm/speculate is carried for reporting
+    # only and is not joined to this command - pinned by
+    # tests/test_swarm_worktree.py::test_the_request_goal_cannot_reach_a_shell.
     "BAIZE_SWARM_VERIFY_CMD": "",            # shell command run inside each worktree; empty = no verification
     "BAIZE_SWARM_ARTIFACT": "baize_swarm_candidate.py",   # filename each branch writes into its worktree
     "BAIZE_SWARM_GIT_REF": "HEAD",           # commit the worktrees are checked out at

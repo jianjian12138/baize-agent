@@ -18,6 +18,20 @@ supplied by the caller (or the defaults below). ``risk_score`` is a heuristic
 weight, not an observation. Nothing here invents a test result: when no verify
 command is configured, ``verified`` is ``None`` - "not checked" - never ``True``.
 
+Trust boundary
+--------------
+``BAIZE_SWARM_VERIFY_CMD`` is executed with ``shell=True`` inside each branch's
+worktree, so it is a *trusted* value - operator-written code - and no request
+data is ever joined to it. The ``goal`` from ``POST /v30/swarm/speculate`` is
+carried for reporting only: it is not interpolated into the command, and it is
+not written into the worktree either (the artifact is the static strategy code).
+That property used to hold by accident, with nothing guarding it, so
+``tests/test_swarm_worktree.py::test_the_request_goal_cannot_reach_a_shell``
+pins it: it drives this module's real entry point with a goal full of shell
+metacharacters and asserts the goal appears in no command the process runs.
+Counter-proved by splicing the goal into the command - the assertions fire, and
+on this host the spliced payload really does execute.
+
 Degrading honestly
 ------------------
 If the base path is not a git repository with at least one commit, worktrees
