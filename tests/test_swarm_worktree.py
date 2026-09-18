@@ -147,7 +147,16 @@ def test_a_passing_verify_command_reports_true(monkeypatch):
     res = run_parallel_swarm_speculation("pytest: verify pass",
                                          base_repo=str(REPO_ROOT))
     for b in res["branches"]:
-        assert b["verified"] is True
+        # `_verify` records *why* a verify command failed - `error` carries the
+        # exit code plus a bounded output excerpt - but this assertion used to
+        # report a bare `assert False is True`, so an intermittent failure in a
+        # full-suite run stayed unattributable even though the reason had been
+        # captured. That is the whole point of keeping the excerpt: surface it.
+        assert b["verified"] is True, (
+            f"{b['branch_id']}: `{b['verify_command']}` -> "
+            f"exit={b['verify_exit_code']} status={b['status']} "
+            f"error={b['error']!r}"
+        )
         assert b["verify_exit_code"] == 0
     assert res["verified_branches"] == res["checked_branches"] > 0
 
