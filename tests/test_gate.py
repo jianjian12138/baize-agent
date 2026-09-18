@@ -332,3 +332,85 @@ def test_calibration_a_good_manifest_still_scores_runnable(tmp_path):
     rep = gate.run_gate(_manifest(tmp_path, ["baize/thing.py"]))
     assert rep["manifest_ok"] is True
     assert rep["quality"]["dimensions"]["runnable"] == 1.0
+
+
+# ------------------------------------------------- an unmeasured dimension
+#
+# `coverage_clarity` and `locatability` each contributed a bare 0.5 when they
+# could not be measured. A 0.5 is a *score*; what was missing was a *status*.
+# Because the score is a weighted average, one 0.5 out of six dimensions cannot
+# pull it under the threshold, so a missing measurement passed:
+#
+#   $ python -m baize gate --coverage-data D:/tmp/NOPE.coverage
+#   coverage : UNKNOWN (no data file D:/tmp/NOPE.coverage)
+#   quality  : 0.9 (threshold 0.8) PASS     <- "real coverage measured"
+#     - coverage_clarity: 0.5
+#
+# The dimension name and the docstring both promise a measurement, so PASS was a
+# claim about a subject nobody had looked at - the same defect as above, one
+# level down. `status` now carries the distinction the score cannot.
+
+
+def test_an_unmeasured_quality_dimension_is_not_a_pass():
+    """0.9 >= 0.8 is true and irrelevant: the bar was met on five dimensions
+    while the sixth was never evaluated."""
+    q = gate.check_quality(data_file="D:/tmp/NOPE_DOES_NOT_EXIST.coverage")
+
+    assert q["dimensions"]["coverage_clarity"] == 0.5
+    assert q["status"] == "unknown", "0.5 is partial credit, not a verdict"
+    assert q["unmeasured"] == ["coverage_clarity"]
+    assert q["pass"] is False, (
+        "`pass` must not be True while a dimension was not measured - a caller "
+        "reading only `pass` would report success for a file nobody read")
+
+
+def test_calibration_a_fully_measured_quality_gate_still_passes(monkeypatch):
+    """Calibration: `status` must be able to reach "pass", or the test above
+    would also pass for a gate that is simply always "unknown"."""
+    monkeypatch.setattr(gate, "check_coverage",
+                        lambda *a, **k: {"status": "pass", "total": 90.0,
+                                         "threshold": 85.0})
+    q = gate.check_quality()
+
+    assert q["unmeasured"] == []
+    assert q["status"] == "pass"
+    assert q["pass"] is True
+
+
+def test_pass_and_status_cannot_disagree():
+    """Two fields answering the same question must not answer differently."""
+    for data_file in (None, "D:/tmp/NOPE_DOES_NOT_EXIST.coverage"):
+        q = gate.check_quality(data_file=data_file)
+        assert q["pass"] is (q["status"] == "pass"), data_file
+
+
+def test_run_gate_reports_unknown_when_a_quality_dimension_was_not_measured(monkeypatch):
+    """`run_gate` must not collapse "not measured" into "fail" - and must not
+    let it through as "pass" either."""
+    monkeypatch.setattr(gate, "check_coverage",
+                        lambda *a, **k: {"status": "pass", "total": 90.0,
+                                         "threshold": 85.0})
+    monkeypatch.setattr(gate, "check_quality",
+                        lambda *a, **k: {"dimensions": {}, "score": 0.9,
+                                         "threshold": 0.8, "pass": False,
+                                         "status": "unknown",
+                                         "unmeasured": ["coverage_clarity"]})
+    rep = gate.run_gate()
+
+    assert rep["status"] == "unknown"
+    assert rep["overall"] is False
+
+
+def test_calibration_run_gate_still_reaches_pass(monkeypatch):
+    """Calibration: the same wiring must be able to produce "pass"."""
+    monkeypatch.setattr(gate, "check_coverage",
+                        lambda *a, **k: {"status": "pass", "total": 90.0,
+                                         "threshold": 85.0})
+    monkeypatch.setattr(gate, "check_quality",
+                        lambda *a, **k: {"dimensions": {}, "score": 0.9,
+                                         "threshold": 0.8, "pass": True,
+                                         "status": "pass", "unmeasured": []})
+    rep = gate.run_gate()
+
+    assert rep["status"] == "pass"
+    assert rep["overall"] is True

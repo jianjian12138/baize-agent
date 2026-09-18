@@ -306,6 +306,38 @@ def test_gate_reports_why_coverage_could_not_be_measured(monkeypatch, capsys):
     assert "no data file" in capsys.readouterr().out
 
 
+def test_gate_prints_a_quality_dimension_that_was_not_measured(monkeypatch, capsys):
+    """A dimension nobody measured is neither a pass nor a failure. Printing
+    PASS over it is how a missing measurement reads as a satisfied promise."""
+    import baize.gate as gate_mod
+    monkeypatch.setattr(gate_mod, "run_gate", lambda *a, **k: _gate_report(
+        total=None, threshold=85, status="unknown",
+        quality={"score": 0.9, "threshold": 0.8, "pass": False,
+                 "status": "unknown", "unmeasured": ["coverage_clarity"],
+                 "dimensions": {"coverage_clarity": 0.5, "composition": 1.0}}))
+    assert cli.cmd_gate(ns()) == 2
+    out = capsys.readouterr().out
+    assert "quality  : 0.9 (threshold 0.8) UNKNOWN" in out
+    assert "not measured: coverage_clarity" in out
+    assert "- coverage_clarity: 0.5   <- not measured" in out
+    # A dimension that *was* measured must not carry the marker.
+    assert "- composition: 1.0   <- not measured" not in out
+
+
+def test_gate_still_renders_quality_from_a_report_without_a_status(monkeypatch, capsys):
+    """Backward compatibility: a report built before `status` existed must not
+    start rendering as UNKNOWN, and a passing one must still read as PASS."""
+    import baize.gate as gate_mod
+    monkeypatch.setattr(gate_mod, "run_gate", lambda *a, **k: _gate_report(
+        total=90, threshold=85, status="pass",
+        quality={"score": 88, "threshold": 80, "pass": True,
+                 "dimensions": {"docs": 90}}))
+    assert cli.cmd_gate(ns()) == 0
+    out = capsys.readouterr().out
+    assert "quality  : 88 (threshold 80) PASS" in out
+    assert "not measured" not in out
+
+
 # ---------------------------------------------------------------------------
 # cmd_bench --public
 # ---------------------------------------------------------------------------

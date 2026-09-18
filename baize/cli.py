@@ -312,10 +312,18 @@ def cmd_gate(args) -> int:
     print(f"  coverage : {c['status'].upper()}{tail}")
     q = rep.get("quality", {})
     if q:
-        print(f"  quality  : {q['score']} (threshold {q['threshold']}) "
-              f"{'PASS' if q['pass'] else 'FAIL'}")
+        # Tri-state, like every other line here. A dimension nobody measured is
+        # neither a pass nor a failure, and printing PASS over it is exactly how
+        # a missing measurement reads as a satisfied promise. `status` is absent
+        # only in reports built by older callers, hence the fallback.
+        verdict = q.get("status", "pass" if q["pass"] else "fail").upper()
+        unmeasured = q.get("unmeasured") or []
+        print(f"  quality  : {q['score']} (threshold {q['threshold']}) {verdict}"
+              + (f"  [not measured: {', '.join(unmeasured)}]"
+                 if unmeasured else ""))
         for dim, val in q["dimensions"].items():
-            print(f"    - {dim}: {val}")
+            note = "   <- not measured" if dim in unmeasured else ""
+            print(f"    - {dim}: {val}{note}")
     print(f"  overall  : {rep['status'].upper()}")
     if rep["status"] == "fail":
         return 1

@@ -32,9 +32,15 @@
 7. `read_file` 超长文件截断并注明剩余行数；`list_dir` 最多列 200 项。
 8. V23.4/5/6 CLI 入口：`baize recon <goal> [--web]` 在规划前做方案侦察
    （本地技能库命中 + 可选外部中文生态搜索，外部默认关闭、需 `BAIZE_RECON_WEB=1`）；
-   `baize clarify <goal>` 触发需求澄清并落盘 `PRD.md`；`baize gate` 输出新增
-   quality 五维评分（runnable/coverage_clarity/composition/locatability/
-   maintainability），低于 `BAIZE_QUALITY_THRESHOLD` 整体 FAIL（拦截不交付）。
+   `baize clarify <goal>` 触发需求澄清并落盘 `PRD.md`；   `baize gate` 输出新增 quality 六维评分（runnable/coverage_clarity/
+   composition/loop_integrity/locatability/maintainability），低于
+   `BAIZE_QUALITY_THRESHOLD` 整体 FAIL（拦截不交付）。
+   未被测量的维度不计为通过：`status` 取 `pass` / `unknown` / `fail` 三态
+   （`pass` 定义为 `status == "pass"`），`unmeasured` 列出未被测量的维度名。
+   例如无 `.coverage` 时 coverage_clarity 为未测量，此时即使加权分仍在阈值
+   之上，`status` 也是 `unknown`，`run_gate` 把整体判为 `unknown`（退出码 2）
+   而不是 `pass`。历史行为（V25 归档记为「设计内」）是在这种情形下仍打印
+   `quality … PASS`，与同一份输出里的 `overall : UNKNOWN` 自相矛盾，已改。
 
 ## 边界与异常
 

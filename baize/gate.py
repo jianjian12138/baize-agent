@@ -389,9 +389,34 @@ def check_quality(cfg: dict | None = None,
 
     A dimension named after a check must be that check's answer about the *same*
     subject.
+
+    A dimension can also be **unmeasured** - neither passed nor failed. Two paths
+    below previously contributed a bare ``0.5`` in that case, which is a *score*
+    where a *status* was needed: because the score is a weighted average, one
+    0.5 out of six dimensions cannot pull it under the threshold, so a missing
+    measurement passed. Observed:
+
+        $ python -m baize gate --coverage-data D:/tmp/NOPE.coverage
+        coverage : UNKNOWN (no data file D:/tmp/NOPE.coverage)
+        quality  : 0.9 (threshold 0.8) PASS     <- "real coverage measured"
+          - coverage_clarity: 0.5
+
+    ``status`` now carries the distinction the score cannot, in the same
+    tri-state ``run_gate`` already uses (``pass`` / ``unknown`` / ``fail``), and
+    ``unmeasured`` names the dimensions responsible. ``pass`` is defined as
+    ``status == "pass"`` so a consumer reading only ``pass`` cannot be misled
+    into reporting success for a dimension nobody measured.
+
+    Two properties stated rather than hidden: ``unknown`` scores 0.5 while a
+    *measured* failure scores 0.0, so an unmeasured dimension is worth more than
+    a known-bad one; and ``runnable`` is measured only for evidence existence
+    and non-emptiness - the freshness caveat travels in ``notes``.
     """
     cfg = cfg or load_config()
     notes: list[str] = []
+    # Dimensions that were *not measured*, kept separate from their scores so the
+    # verdict can tell "this is fine" apart from "nobody looked".
+    unmeasured: list[str] = []
     # 1. runnable — manifest evidence actually exists / non-empty / fresh.
     man_ok, _ = check_manifest(
         manifest_path or cfg.get("BAIZE_MANIFEST", "baize.manifest.json"),
@@ -400,6 +425,8 @@ def check_quality(cfg: dict | None = None,
     cov = check_coverage(data_file, cfg=cfg)
     cov_score = {"pass": 1.0, "unknown": 0.5, "fail": 0.0}.get(
         cov.get("status"), 0.0)
+    if cov.get("status") == "unknown":
+        unmeasured.append("coverage_clarity")
     # 3. composition — kernel + modes actually assemble.
     comp = check_composition(cfg)
     comp_score = 1.0 if comp.get("status") == "pass" else 0.0
@@ -414,7 +441,10 @@ def check_quality(cfg: dict | None = None,
         miss = len(au.get("missing_description", []))
         locatability = max(0.0, 1.0 - miss / total)
     except Exception:
+        # Could not audit the index at all. 0.5 is partial credit; recording the
+        # dimension as unmeasured is what stops that 0.5 reading as a pass.
         locatability = 0.5
+        unmeasured.append("locatability")
     # 6. maintainability — static repo hygiene.
     root = Path(cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT)))
     has_tests = (root / "tests").is_dir()
@@ -433,8 +463,17 @@ def check_quality(cfg: dict | None = None,
                "loop_integrity": 0.15, "locatability": 0.15, "maintainability": 0.1}
     score = round(sum(dims[k] * w for k, w in weights.items()), 3)
     threshold = float(cfg.get("BAIZE_QUALITY_THRESHOLD", "0.8"))
+    # A failing score is a failure whatever else is unknown - the unknowns only
+    # matter once the score would otherwise have claimed success.
+    if score < threshold:
+        status = "fail"
+    elif unmeasured:
+        status = "unknown"
+    else:
+        status = "pass"
     return {"dimensions": dims, "score": score,
-            "threshold": threshold, "pass": score >= threshold,
+            "threshold": threshold, "pass": status == "pass",
+            "status": status, "unmeasured": unmeasured,
             "notes": notes}
 
 
@@ -454,10 +493,13 @@ def run_gate(manifest_path: str = "baize.manifest.json",
     quality = check_quality(cfg, manifest_path=manifest_path,
                             data_file=data_file, now=now)
     loop = check_loop_integrity()
+    # ``quality["status"]``, not ``not quality["pass"]``: an unmeasured quality
+    # dimension is "unknown", and collapsing it into "fail" would report a
+    # verdict where the honest answer is that nothing was judged.
     if (not man_ok or cov["status"] == "fail" or comp["status"] == "fail"
-            or not quality["pass"] or loop["status"] == "fail"):
+            or quality["status"] == "fail" or loop["status"] == "fail"):
         status = "fail"
-    elif cov["status"] == "unknown":
+    elif cov["status"] == "unknown" or quality["status"] == "unknown":
         status = "unknown"
     else:
         status = "pass"
@@ -470,7 +512,7 @@ def run_gate(manifest_path: str = "baize.manifest.json",
         "quality": quality,
         "loop_integrity": loop,
         "overall": (man_ok and cov["status"] == "pass"
-                    and comp["status"] == "pass" and quality["pass"]
+                    and comp["status"] == "pass" and quality["status"] == "pass"
                     and loop["status"] == "pass"),
         "status": status,
     }
