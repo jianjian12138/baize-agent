@@ -37,33 +37,68 @@ def _stale_data_file(tmp_path, name="old.coverage"):
     return p
 
 
+def _controlled_root(tmp_path):
+    """A tree whose newest source is *now* - built here, not inherited.
+
+    The freshness rule compares a data file against the newest source in a root,
+    and these tests used to hand it *this repository* while aging the data file
+    by a fixed 3600s. That premise expires: the comparison only comes out "stale"
+    while ``baize/`` or ``tests/`` was edited less than an hour ago. Observed with
+    no code change - three tests red at 2h14m after the last commit to ``baize/``
+    (newest source 8031s old), all three green again after a ``touch`` on one
+    source file. The probe was right both times; the tests were asking about the
+    checkout, not the code. Build the tree so the answer is known, and let the
+    ``mod.py`` assertion in each test prove *this* root is the one consulted.
+    """
+    root = tmp_path / "controlled_root"
+    (root / "baize").mkdir(parents=True, exist_ok=True)
+    (root / "baize" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    return root
+
+
 def test_calibration_the_stale_probe_sees_a_stale_file(tmp_path):
     """Without this, every refusal test below would pass on a probe that
     silently sees nothing."""
     from baize.gate import coverage_data_is_stale
 
-    reason = coverage_data_is_stale(_stale_data_file(tmp_path))
+    reason = coverage_data_is_stale(_stale_data_file(tmp_path),
+                                    _controlled_root(tmp_path))
     assert reason is not None, "probe failed to notice a 1h-old data file"
     assert "older tree" in reason
+    assert "mod.py" in reason, "the comparison named a file outside the root"
 
 
-def test_a_stale_data_file_is_unknown_not_fail(tmp_path):
+def test_a_stale_data_file_is_unknown_not_fail(tmp_path, monkeypatch):
+    from baize import gate
+
+    monkeypatch.setattr(gate, "ROOT", _controlled_root(tmp_path))
     rep = check_coverage(str(_stale_data_file(tmp_path)))
     assert rep["status"] == "unknown", (
         "a stale measurement must not be reported as a verdict")
     assert "cannot verify" in rep["reason"]
+    assert "mod.py" in rep["reason"], (
+        "refused for some reason other than staleness - if the controlled root "
+        "was not the one compared against, this test proves nothing")
     assert "total" not in rep, "no percentage may be reported from a stale file"
 
 
 def test_coverage_file_env_var_is_honoured(tmp_path, monkeypatch):
     """`coverage run` honours COVERAGE_FILE, so the gate must too - otherwise it
     measures a different, older file than the run it is checking."""
+    from baize import gate
+
+    monkeypatch.setattr(gate, "ROOT", _controlled_root(tmp_path))
     stale = _stale_data_file(tmp_path, "redirected.coverage")
     monkeypatch.setenv("COVERAGE_FILE", str(stale))
 
     rep = check_coverage()
     assert rep["status"] == "unknown"
     assert "redirected.coverage" in rep["reason"]
+    # Without a controlled root this passed for the wrong reason: the stub is not
+    # a real coverage database, so "Couldn't use data file 'redirected.coverage'"
+    # also contains the name. Requiring the staleness wording is what makes the
+    # env var the thing under test rather than a file-format accident.
+    assert "older tree" in rep["reason"]
 
 
 def test_explicit_argument_beats_the_env_var(tmp_path, monkeypatch):

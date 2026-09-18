@@ -246,6 +246,27 @@ def collected_count() -> int:
     return _COLLECTED_MEMO[0]
 
 
+def tracked_file_count() -> int:
+    """Files git actually tracks, reusing the hygiene gate's own helper.
+
+    This module otherwise avoids importing from the repository - see
+    ``read_version``, which parses a file rather than importing the package, so
+    that a gate is never fooled by import side effects. The exception here is the
+    opposite concern: **two implementations of one number drift**, and a count
+    claim is precisely where that drift would go unnoticed. ``check_hygiene``
+    already prints this number, so reusing its function makes it impossible for
+    the gate output and the tutorial transcript to disagree about it. It is a
+    script in this directory rather than part of the ``baize`` package, so no
+    package import side effects are executed.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import check_hygiene  # noqa: E402 - path set above
+
+    return len(check_hygiene.tracked_files())
+
+
 def _run_pytest(args: list[str]) -> str:
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", *args],
@@ -510,6 +531,52 @@ def count_claims() -> list[CountClaim]:
             re.compile(r"Prometheus, (\d+) tests collected"),
             collected_count,
             "pytest tests/ --collect-only",
+        ),
+        # The same two transcripts also print the tracked-file count, and that
+        # number was ungated - so it had drifted: both said 342 while the tree
+        # tracked 344. Tutorial 09 makes the contradiction visible in its own
+        # prose ("用例数与跟踪文件数每次提交都会变") three lines below a
+        # transcript that hardcoded it, and nothing was checking. The count is a
+        # property of the commit, so it is gateable the same way the collected
+        # count is.
+        #
+        # The coverage percentage on the next line of those transcripts is
+        # deliberately NOT gated: it is not a property of the commit. The same
+        # commit measured 86.9% in a working tree and 86.8% in a fresh clone,
+        # because the presence of a gitignored .env moves six lines in serve.py
+        # and cli.py. A pinned number there would be wrong on one of the two, so
+        # the transcripts state the contract (>= 85%) instead of a measurement.
+        CountClaim(
+            "docs/tutorials/02-5分钟装好环境.md",
+            "tracked files (quoted gate transcript)",
+            re.compile(r"HYGIENE GATE PASSED: (\d+) tracked files"),
+            tracked_file_count,
+            "git ls-files, via scripts/check_hygiene.tracked_files()",
+        ),
+        CountClaim(
+            "docs/tutorials/09-部署到生产.md",
+            "tracked files (quoted gate transcript)",
+            re.compile(r"HYGIENE GATE PASSED: (\d+) tracked files"),
+            tracked_file_count,
+            "git ls-files, via scripts/check_hygiene.tracked_files()",
+        ),
+        # The transcripts also print how many count claims were verified - a
+        # number that is derived from *this list*, so it moved the moment two
+        # claims were added and nothing would have noticed. Gating it means the
+        # tutorial cannot advertise a claim count the script does not have.
+        CountClaim(
+            "docs/tutorials/02-5分钟装好环境.md",
+            "count claims verified (quoted gate transcript)",
+            re.compile(r"(\d+) count claims verified"),
+            lambda: len(count_claims()),
+            "len(count_claims()) in this file",
+        ),
+        CountClaim(
+            "docs/tutorials/09-部署到生产.md",
+            "count claims verified (quoted gate transcript)",
+            re.compile(r"(\d+) count claims verified"),
+            lambda: len(count_claims()),
+            "len(count_claims()) in this file",
         ),
     ]
 

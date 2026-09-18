@@ -52,6 +52,27 @@ def _age(path: Path, seconds: float) -> None:
     os.utime(path, (old, old))
 
 
+def _controlled_root(tmp_path: Path, *, source_age: float = 0.0) -> Path:
+    """A tree whose newest source has a *known* age - built, not inherited.
+
+    The freshness rule compares a data file against the newest source of a root.
+    A test that hands it *this repository* while aging the data file by a fixed
+    number of seconds only reads as "stale" while this repository was edited less
+    than that number of seconds ago. Observed with no code change: three tests
+    red at 2h14m after the last commit to ``baize/`` (newest source 8031s old),
+    all three green again after a ``touch`` on one source file. Build the tree
+    instead of inheriting it, and let the tests assert on ``mod.py`` so that
+    falling back to the real root cannot pass silently.
+    """
+    root = tmp_path / "controlled_root"
+    (root / "baize").mkdir(parents=True, exist_ok=True)
+    src = root / "baize" / "mod.py"
+    src.write_text("x = 1\n", encoding="utf-8")
+    if source_age:
+        _age(src, source_age)
+    return root
+
+
 def test_explicit_argument_wins():
     assert coverage_gate.resolve_data_file(
         ["gate.py", "custom.dat"], {"COVERAGE_FILE": "from-env.dat"}
@@ -170,9 +191,16 @@ def test_nothing_to_compare_against_does_not_block(tmp_path):
     assert coverage_gate.staleness(data_file, empty) is None
 
 
-def test_a_stale_data_file_is_refused_not_measured(tmp_path, capsys):
+def test_a_stale_data_file_is_refused_not_measured(tmp_path, capsys, monkeypatch):
     """The bug this pins: a stale file used to be measured against the current
-    tree and reported as a confident pass or fail."""
+    tree and reported as a confident pass or fail.
+
+    The root is built here on purpose - see
+    ``test_a_data_file_newer_than_its_own_tree_is_still_measured`` for what
+    happens when this comparison is aimed at the checkout instead.
+    """
+    monkeypatch.setattr(coverage_gate, "ROOT", _controlled_root(tmp_path))
+
     data_file = _real_data_file(tmp_path)
     _age(data_file, 3600)
 
@@ -180,13 +208,19 @@ def test_a_stale_data_file_is_refused_not_measured(tmp_path, capsys):
     captured = capsys.readouterr()
     assert rc == 2, "a stale data file must be cannot-verify, not a verdict"
     assert "cannot verify" in captured.err
+    assert "mod.py" in captured.err, (
+        "the refusal named a file outside the controlled root, so it was not "
+        "staleness that was detected")
     # And it must not have printed a verdict it cannot support.
     assert "PASSED" not in captured.out
     assert "FAILED" not in captured.out
 
 
-def test_allow_stale_measures_the_file_anyway(tmp_path, capsys):
+def test_allow_stale_measures_the_file_anyway(tmp_path, capsys, monkeypatch):
     """--allow-stale is the caller asserting the file does describe the tree."""
+    # Same scenario as the refusal above, so the pair differs only in the flag.
+    monkeypatch.setattr(coverage_gate, "ROOT", _controlled_root(tmp_path))
+
     data_file = _real_data_file(tmp_path)
     _age(data_file, 3600)
 
@@ -196,15 +230,45 @@ def test_allow_stale_measures_the_file_anyway(tmp_path, capsys):
     assert "not checked" in out
 
 
-def test_a_fresh_data_file_still_measures(tmp_path, capsys):
+def test_a_fresh_data_file_still_measures(tmp_path, capsys, monkeypatch):
     """The guard must not break the normal path: coverage writes its data after
     reading the sources, so the file is newest and the gate proceeds."""
+    monkeypatch.setattr(coverage_gate, "ROOT", _controlled_root(tmp_path))
+
     data_file = _real_data_file(tmp_path)
 
     rc = coverage_gate.main(["gate.py", str(data_file)])
     out = capsys.readouterr().out
     assert "freshness : data file is newer than the newest source file" in out
     assert rc in (0, 1)
+
+
+def test_a_data_file_newer_than_its_own_tree_is_still_measured(
+        tmp_path, capsys, monkeypatch):
+    """The other half of the rule, in the configuration a real defect drifted into.
+
+    The refusal test above used to compare a 1h-old data file against *this
+    repository's* newest source. That premise expires: the comparison only comes
+    out "stale" while ``baize/`` or ``tests/`` was edited less than an hour ago.
+    Measured, with no code change: three tests red at 2h14m after the last commit
+    to ``baize/``, all three green again after a ``touch`` on one source file. The
+    probe answered correctly both times - the tests were asking about the
+    checkout. So: a data file newer than the newest source of *its own* root must
+    be measured. Refusing it here would be a false alarm, and that is exactly the
+    state those tests decayed into.
+    """
+    monkeypatch.setattr(
+        coverage_gate, "ROOT", _controlled_root(tmp_path, source_age=3 * 3600))
+
+    data_file = _real_data_file(tmp_path)
+    _age(data_file, 3600)
+
+    rc = coverage_gate.main(["gate.py", str(data_file)])
+    out = capsys.readouterr().out
+    assert rc in (0, 1), (
+        "a data file newer than the newest source of its own root must be "
+        "measured, not refused")
+    assert "is newer than the newest source file" in out
 
 
 def test_the_freshness_line_does_not_claim_a_check_that_never_ran(
