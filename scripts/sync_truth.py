@@ -491,6 +491,26 @@ def count_claims() -> list[CountClaim]:
             collected_count,
             "pytest tests/ --collect-only",
         ),
+        # The same "N tests collected" number appears in three tutorials, but only
+        # tutorial 01's row was gated - so 02 and 09 carried a stale count through
+        # every release that grew the suite, and the gate stayed green. Gate all
+        # three. The two quoted gate transcripts below are check-only for the same
+        # reason as the row above: rewriting a transcript is not this script's job,
+        # reporting that it drifted is.
+        CountClaim(
+            "docs/tutorials/02-5分钟装好环境.md",
+            "test cases collected (quoted gate transcript)",
+            re.compile(r"Prometheus, (\d+) tests collected"),
+            collected_count,
+            "pytest tests/ --collect-only",
+        ),
+        CountClaim(
+            "docs/tutorials/09-部署到生产.md",
+            "test cases collected (quoted gate transcript)",
+            re.compile(r"Prometheus, (\d+) tests collected"),
+            collected_count,
+            "pytest tests/ --collect-only",
+        ),
     ]
 
 

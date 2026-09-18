@@ -142,9 +142,18 @@ class BenchmarkCompetitorTracker:
         for comp in BENCHMARK_COMPETITORS[:limit]:
             repo = comp["repo"]
             commit_url = f"https://api.github.com/repos/{repo}/commits?per_page=1"
+            # These three are *placeholders*, not findings. They used to be
+            # indistinguishable from real data, so the daily report printed
+            # "main" / today's date / "持续演进与功能迭代" in a column titled
+            # "最新 Commit / 动态" - i.e. it asserted a competitor's latest commit
+            # that had never been read. The values stay (callers and the report
+            # layout depend on them), but `fetched` records whether anything was
+            # actually retrieved, and `fetch_error` says why not.
             latest_commit_msg = "持续演进与功能迭代"
             latest_commit_date = str(datetime.date.today())
             latest_sha = "main"
+            fetched = False
+            fetch_error = ""
 
             try:
                 req = urllib.request.Request(commit_url, headers=headers)
@@ -156,8 +165,12 @@ class BenchmarkCompetitorTracker:
                         commit_info = c.get("commit", {})
                         latest_commit_msg = commit_info.get("message", "").splitlines()[0] if commit_info.get("message") else "Update"
                         latest_commit_date = commit_info.get("author", {}).get("date", "")[:10]
-            except Exception:
-                pass
+                        fetched = True
+            except Exception as exc:
+                # Keep the reason. "We could not look" and "there is nothing to
+                # see" must not render the same way - a 403 from the rate limiter
+                # is not evidence that the competitor stopped committing.
+                fetch_error = f"{type(exc).__name__}: {exc}"
 
             results.append({
                 "id": comp["id"],
@@ -167,6 +180,8 @@ class BenchmarkCompetitorTracker:
                 "latest_sha": latest_sha,
                 "latest_commit_date": latest_commit_date,
                 "latest_commit_msg": latest_commit_msg[:55] + ("..." if len(latest_commit_msg) > 55 else ""),
+                "fetched": fetched,
+                "fetch_error": fetch_error,
                 "focus": comp["focus"],
                 "baize_advantage": comp["baize_advantage"],
                 "transcendence_strategy": comp["transcendence_strategy"],
@@ -229,11 +244,28 @@ class LuminariesIntelTracker:
         return cls.LUMINARIES_INSIGHTS
 
 
+def _cell(text: str) -> str:
+    """Make arbitrary text safe inside a Markdown table cell."""
+    return " ".join(str(text).split()).replace("|", "/")
+
+
 def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str, str]:
     """Synthesize GitHub repos + luminary insights into (1) Daily Intel Report and (2) Actionable Upgrade RFC."""
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     competitors = BenchmarkCompetitorTracker.fetch_competitor_latest_activity(10)
     insights = LuminariesIntelTracker.get_latest_insights()
+    # How much of the "latest commit" column is real. Without this line the
+    # reader cannot tell a fetched row from a placeholder row, and the report
+    # reads as a complete survey when it may be a complete outage.
+    fetched_n = sum(1 for c in competitors if c.get("fetched"))
+    total_n = len(competitors)
+    if fetched_n == total_n and total_n:
+        integrity = (f"> **数据完整性**：{fetched_n}/{total_n} 个竞品均成功读取 GitHub API，"
+                     f"下表 Commit 列来自真实响应。")
+    else:
+        integrity = (f"> **数据完整性**：{total_n} 个竞品中仅 **{fetched_n} 个**成功读取 GitHub API。"
+                     f"标注「未获取」的行是**没有查到**，不是「没有变更」——"
+                     f"把未获取读成竞品停止更新是错的。")
 
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -261,9 +293,15 @@ def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str
         msg = c["latest_commit_msg"]
         focus = c["focus"]
         adv = c["baize_advantage"]
-        lines_intel.append(f"| **{name}** | **[{repo}]({url})** | `{sha}` ({date})<br>*{msg}* | {focus} | {adv} |")
+        if c.get("fetched"):
+            activity = f"`{sha}` ({date})<br>*{msg}*"
+        else:
+            activity = f"⚠️ **未获取**：{_cell(c.get('fetch_error') or 'no commit data returned')}"
+        lines_intel.append(f"| **{name}** | **[{repo}]({url})** | {activity} | {focus} | {adv} |")
 
     lines_intel.extend([
+        "",
+        integrity,
         "",
         "---",
         "",
@@ -302,13 +340,15 @@ def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str
     lines_rfc = [
         f"# 🛠️ 白泽智能体可升级借鉴功能方案 RFC ({today_str})",
         "",
-        "> **文档定位**：专门提炼 **Hermes、DeepSeek、OpenHands、Codex、Claude Code、Pi、Aider、Cline、MetaGPT** 核心标杆竞品中的**技术亮点、最新代码变更与白泽超越方案**。遵循『吸其精粹、以我为主、去伪存真』原则，全部规划为纯 Python 标准库实现！",
+        "> **文档定位**：专门提炼 **Hermes、DeepSeek、OpenHands、Codex、Claude Code、Pi、Aider、Cline、MetaGPT** 核心标杆竞品中的**技术亮点与白泽超越方案**。遵循『吸其精粹、以我为主、去伪存真』原则，全部规划为纯 Python 标准库实现！",
+        "",
+        "> **本表的数据来源**：下表的「竞品核心亮点」取自 `BENCHMARK_COMPETITORS` 静态能力矩阵，**不是**当日 GitHub Commit 差异；当日 Commit 数据在日报的竞品表里，并逐行标注是否真的取到。",
         "",
         "---",
         "",
         "## 🎯 一、核心标杆竞品可升级借鉴功能清单与改造对照表",
         "",
-        "| 标杆竞品 | 竞品核心亮点与最新变更 | 白泽纯标准库超越方案 | 拟落地目标文件 | 优先级 |",
+        "| 标杆竞品 | 竞品核心亮点（静态能力矩阵） | 白泽纯标准库超越方案 | 拟落地目标文件 | 优先级 |",
         "| :--- | :--- | :--- | :--- | :---: |",
     ]
 
