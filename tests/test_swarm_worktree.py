@@ -164,13 +164,28 @@ def test_a_passing_verify_command_reports_true(monkeypatch):
 
 
 def test_a_failing_verify_command_reports_false(monkeypatch):
-    """A non-zero exit must produce verified=False, not a silent pass."""
+    """A non-zero exit must produce verified=False, not a silent pass.
+
+    The assertion carries the whole branch record, because there is a second way
+    to reach a non-`False` value that is not a silent pass: `verified=None`
+    means the worktree was not a usable repository *before* the command ran, so
+    the command was never run and there is no exit code about the candidate.
+    That is the honest answer for that situation, and this assertion has to say
+    which one happened or the next reader cannot tell "the code regressed" from
+    "the worktree was taken away" - which is exactly the ambiguity that made the
+    original intermittent failure expensive to chase.
+    """
     monkeypatch.setenv("BAIZE_SWARM_VERIFY_CMD",
                        "git rev-parse --verify refs/heads/pytest-no-such-ref")
     res = run_parallel_swarm_speculation("pytest: verify fail",
                                          base_repo=str(REPO_ROOT))
     for b in res["branches"]:
-        assert b["verified"] is False
+        assert b["verified"] is False, (
+            f"{b['branch_id']}: `{b['verify_command']}` -> "
+            f"exit={b['verify_exit_code']} status={b['status']} "
+            f"isolation={b['isolation']} path={b['isolation_path']} "
+            f"error={b['error']!r}"
+        )
         assert b["verify_exit_code"] != 0
     assert res["verified_branches"] == 0
     assert res["checked_branches"] > 0
@@ -197,18 +212,31 @@ class _StubResult:
 class _StubSandbox:
     """Models the sandbox interface `_verify` depends on.
 
-    `is_usable` is part of that interface now: `_verify` asks it before turning a
-    non-zero exit code into a verdict about the candidate. A stub without it would
-    not intercept - which is the failure mode to prefer, since it fails loudly.
+    `is_usable` is part of that interface now: `_verify` asks it *before* running
+    the command, so that a non-zero exit code is never read as a verdict about a
+    candidate whose repository was already gone. A stub without it would not
+    intercept - which is the failure mode to prefer, since it fails loudly.
+
+    `usable` may be a list, in which case successive calls consume it (the last
+    value sticks). That is what lets a test model "usable when the command ran,
+    gone afterwards" without a real worktree.
     """
 
     def __init__(self, path, degraded=False, reason=None, usable=True):
         self.path = path
         self.degraded = degraded
         self.reason = reason
-        self._usable = usable
+        self._usable_seq = list(usable) if isinstance(usable, (list, tuple)) else None
+        self._usable = self._usable_seq[0] if self._usable_seq else usable
 
     def is_usable(self):
+        if self._usable_seq is not None:
+            # Read the current value first, *then* advance: advancing before
+            # reading makes the first call return the second value, which is
+            # exactly backwards for "usable when the command ran, gone later".
+            self._usable = self._usable_seq[0]
+            if len(self._usable_seq) > 1:
+                self._usable_seq.pop(0)
         return self._usable
 
 
@@ -247,23 +275,48 @@ def test_a_passing_verify_command_records_no_error(monkeypatch, tmp_path):
     assert branch.error is None
 
 
-def test_a_verify_that_failed_in_a_vanished_worktree_is_not_a_verdict(
+def test_a_verify_that_cannot_run_in_a_vanished_worktree_is_not_a_verdict(
         monkeypatch, tmp_path):
-    """A non-zero exit only judges the candidate if the sandbox still existed.
+    """No usable repository before the command means the command does not run.
 
     Observed in a full-suite run: a branch whose `isolation` was recorded as
-    `git-worktree` failed with `fatal: not a git repository: (NULL)` / exit 128.
+    `git-worktree` reported `fatal: not a git repository: (NULL)` / exit 128.
     Recorded as `verified=False` that reads as "the candidate failed
     verification" - a verdict about a candidate that was never tested.
+
+    The check is a *precondition*, so there is no exit code to report: `None`,
+    not 128. Carrying 128 here would claim a run that never happened.
     """
     branch = _verify_with(
         monkeypatch, tmp_path,
         _StubResult(returncode=128, stderr="fatal: not a git repository: (NULL)\n"),
         sandbox=_StubSandbox(tmp_path, usable=False))
     assert branch.verified is None, "an infrastructure failure is NOT a failed candidate"
-    assert branch.verify_exit_code == 128
+    assert branch.verify_exit_code is None, "the command never ran, so it has no exit code"
     assert "worktree" in branch.error
-    assert "not a git repository" in branch.error
+
+
+def test_a_failure_that_already_happened_is_not_erased_by_a_later_teardown(
+        monkeypatch, tmp_path):
+    """A post-hoc check must not be able to launder a failing candidate.
+
+    Regression guard for a defect introduced while fixing the one above:
+    `is_usable()` was first evaluated *after* the command, so a branch whose
+    verify command correctly failed (`fatal: Needed a single revision`, exit
+    128) came back as `verified=None` - because its worktree was taken away a
+    moment after the command had produced its exit code. Reproduced 4/4 in a
+    clone run. "Not checked" is the value for a command that could not speak;
+    it is not a place to put a failure out of sight.
+    """
+    branch = _verify_with(
+        monkeypatch, tmp_path,
+        _StubResult(returncode=128, stderr="fatal: Needed a single revision\n"),
+        sandbox=_StubSandbox(tmp_path, usable=[True, False]))
+    assert branch.verified is False, (
+        "the command ran and failed; the worktree's later removal is not a reason "
+        f"to erase that (error={branch.error!r})")
+    assert branch.verify_exit_code == 128
+    assert "Needed a single revision" in branch.error
 
 
 def test_calibration_a_real_failure_in_a_live_worktree_is_still_false(

@@ -487,6 +487,33 @@ def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
                         f"directory ({sandbox.reason or 'reason not recorded'}), "
                         "so a verify command there would not test the candidate")
         return
+    if not sandbox.is_usable():
+        # A non-zero exit code is a verdict about the *candidate* only if the
+        # command had a usable repository to speak for. This is a *precondition*,
+        # checked before the command runs, and not a post-hoc check on the way
+        # out. Checking afterwards looks equivalent and is not: a worktree that
+        # is taken away *after* the command has already produced its exit code
+        # does not make that exit code meaningless, and treating it as if it did
+        # turns a real verdict into "not checked". Observed, reproducibly, in a
+        # clone run: a branch whose verify command correctly failed with
+        # `fatal: Needed a single revision` (exit 128) was reported as
+        # `verified=None` - which hides a failing candidate instead of
+        # describing it.
+        #
+        # What takes a live worktree away mid-run is *not* fully identified. A
+        # repository-wide `git worktree prune` is one measured cause. An earlier
+        # attribution in this comment - "a sibling branch's cleanup removed it" -
+        # is not supported and has been withdrawn: `git worktree remove --force
+        # A` leaves live siblings B and C usable in 3 of 3 rounds, and the
+        # current `cleanup()` removes only its own path. The point of checking
+        # first is that this branch does not need to know the cause to stay
+        # honest.
+        branch.verified = None
+        branch.error = ("not verified: the worktree was not a usable git "
+                        "repository before the verify command ran, so the command "
+                        "was not run and there is no exit code to read"
+                        + (f" ({sandbox.reason})" if sandbox.reason else ""))
+        return
     res = proc_mod.run(cmd, shell=True, timeout=300, cwd=str(sandbox.path))
     if res.timed_out:
         branch.verified = False
@@ -497,22 +524,6 @@ def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
     branch.verify_exit_code = res.returncode
     branch.verified = res.returncode == 0
     if not branch.verified:
-        # A non-zero exit is a verdict about the *candidate* only if the sandbox
-        # was still a usable repository while the command ran. Observed: a branch
-        # whose `isolation` was recorded as `git-worktree` (i.e. not degraded)
-        # failed with `fatal: not a git repository: (NULL)` / exit 128 - the
-        # worktree had been invalidated underneath it. Recorded as `False`, that
-        # reads as "the candidate failed verification": a verdict about a
-        # candidate that was never tested, which is the one thing this module's
-        # tri-state exists to prevent. Re-check the mechanism, not the message.
-        if not sandbox.is_usable():
-            branch.verified = None
-            branch.error = (
-                "not verified: the worktree was no longer a usable git "
-                "repository when the verify command ran, so its exit code says "
-                "nothing about the candidate (exit "
-                f"{res.returncode}: " + _verify_output_excerpt(res) + ")")
-            return
         # Keep the reason. A bare exit code is not a diagnosis.
         branch.error = (f"verify command exited {res.returncode}: "
                         + _verify_output_excerpt(res))
