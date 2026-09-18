@@ -7,7 +7,7 @@
 <br/>
 
 [![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-1321%2F1324%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-1329%2F1332%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)

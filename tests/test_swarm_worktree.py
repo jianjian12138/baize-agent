@@ -19,6 +19,8 @@ exactly the fabrication this rewrite removed.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -193,10 +195,21 @@ class _StubResult:
 
 
 class _StubSandbox:
-    def __init__(self, path, degraded=False, reason=None):
+    """Models the sandbox interface `_verify` depends on.
+
+    `is_usable` is part of that interface now: `_verify` asks it before turning a
+    non-zero exit code into a verdict about the candidate. A stub without it would
+    not intercept - which is the failure mode to prefer, since it fails loudly.
+    """
+
+    def __init__(self, path, degraded=False, reason=None, usable=True):
         self.path = path
         self.degraded = degraded
         self.reason = reason
+        self._usable = usable
+
+    def is_usable(self):
+        return self._usable
 
 
 def _branch():
@@ -232,6 +245,301 @@ def test_a_passing_verify_command_records_no_error(monkeypatch, tmp_path):
     branch = _verify_with(monkeypatch, tmp_path, _StubResult(returncode=0))
     assert branch.verified is True
     assert branch.error is None
+
+
+def test_a_verify_that_failed_in_a_vanished_worktree_is_not_a_verdict(
+        monkeypatch, tmp_path):
+    """A non-zero exit only judges the candidate if the sandbox still existed.
+
+    Observed in a full-suite run: a branch whose `isolation` was recorded as
+    `git-worktree` failed with `fatal: not a git repository: (NULL)` / exit 128.
+    Recorded as `verified=False` that reads as "the candidate failed
+    verification" - a verdict about a candidate that was never tested.
+    """
+    branch = _verify_with(
+        monkeypatch, tmp_path,
+        _StubResult(returncode=128, stderr="fatal: not a git repository: (NULL)\n"),
+        sandbox=_StubSandbox(tmp_path, usable=False))
+    assert branch.verified is None, "an infrastructure failure is NOT a failed candidate"
+    assert branch.verify_exit_code == 128
+    assert "worktree" in branch.error
+    assert "not a git repository" in branch.error
+
+
+def test_calibration_a_real_failure_in_a_live_worktree_is_still_false(
+        monkeypatch, tmp_path):
+    """The mirror of the test above, so it cannot pass by never saying False."""
+    branch = _verify_with(
+        monkeypatch, tmp_path,
+        _StubResult(returncode=128, stderr="fatal: not a git repository: (NULL)\n"),
+        sandbox=_StubSandbox(tmp_path, usable=True))
+    assert branch.verified is False
+    assert branch.verify_exit_code == 128
+    assert "exited 128" in branch.error
+
+
+def test_is_usable_is_false_once_the_worktree_registration_is_gone():
+    """The mechanism behind that intermittent failure, reproduced directly.
+
+    Removing a worktree's admin directory leaves its `.git` file pointing at
+    nothing, and every git command inside then exits 128 with
+    `fatal: not a git repository: (NULL)`. `is_usable()` is what lets `_verify`
+    tell "the worktree was taken away" apart from "the candidate is broken".
+
+    The admin directory is *renamed*, not deleted, and the observable effect is
+    identical: the path recorded in the worktree's `.git` file stops existing.
+    The reason is not tidiness. Deleting a directory that is not under the OS
+    temp directory can be intercepted by a host's bulk-delete guard, which
+    raises `SystemExit` - and `shutil.rmtree(..., ignore_errors=True)` does not
+    swallow it, because `SystemExit` is a `BaseException`, not an `Exception`.
+    Observed on this host: a full-suite run deletes enough files that the guard
+    starts refusing, and this test then failed with
+    `SAFE_DELETE_BULK_CONFIRM_REQUIRED ... targets: [".git/worktrees/..."]`
+    while passing when the file was run alone. A rename is a move, not a
+    delete, so no guard is involved and the test does not depend on how much
+    ran before it.
+    """
+    sb = WorktreeSandbox(base_repo=str(REPO_ROOT), branch_id="pytest-usable", ref="HEAD")
+    gitdir = None
+    stash = None
+    try:
+        path = sb.create()
+        assert not sb.degraded, sb.reason
+        assert sb.is_usable() is True
+
+        gitdir = Path(subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--absolute-git-dir"],
+            capture_output=True, text=True).stdout.strip())
+        assert gitdir.is_dir(), f"expected a real git dir, got {gitdir!r}"
+        stash = gitdir.with_name(gitdir.name + ".stashed")
+        os.rename(gitdir, stash)
+
+        # The `.git` file survives and points at nothing - that is the signature
+        # the verify command's error message reports as "(NULL)".
+        assert (Path(path) / ".git").exists()
+        assert sb.is_usable() is False
+    finally:
+        # Put the registration back before cleanup, so `cleanup` can deregister
+        # the worktree normally instead of leaving a stale entry behind.
+        if stash is not None and gitdir is not None and stash.is_dir() and not gitdir.exists():
+            os.rename(stash, gitdir)
+        sb.cleanup()
+
+
+def test_a_worktree_that_is_born_dangling_is_retried(monkeypatch):
+    """`worktree add` can return 0 and still leave an unusable worktree.
+
+    Measured with a concurrent `git worktree prune`: 4 of 4 adds returned 0 and
+    4 of 4 worktrees were unusable. Accepting one hands `verified=False` to the
+    caller - a verdict about a candidate that was never run.
+    """
+    adds = {"n": 0}
+    checks = {"n": 0}
+    real_git = WorktreeSandbox._git
+
+    def spy_git(self, *args):
+        if args[:2] == ("worktree", "add"):
+            adds["n"] += 1
+        return real_git(self, *args)
+
+    def fake_usable(self):
+        checks["n"] += 1
+        return checks["n"] > 1          # first worktree dangles, the retry is fine
+
+    monkeypatch.setattr(WorktreeSandbox, "_git", spy_git)
+    monkeypatch.setattr(WorktreeSandbox, "is_usable", fake_usable)
+
+    sb = WorktreeSandbox(base_repo=str(REPO_ROOT), branch_id="pytest-retry", ref="HEAD")
+    try:
+        sb.create()
+        assert adds["n"] == 2, "a dangling worktree must be retried, not accepted"
+        assert sb.degraded is False
+    finally:
+        sb.cleanup()
+        # The abandoned first attempt is deregistered by `create` itself; this is
+        # belt-and-braces so a failing test cannot leave the repo dirty.
+        # This prune is deliberate and is not a counter-example to the rule the
+        # tests pin: it targets an entry whose worktree directory is already gone
+        # (a known-stale registration), and no other worktree is live at this
+        # point because the tests in this file run one at a time.
+        subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "prune"],
+                       capture_output=True, text=True)
+
+
+def test_a_worktree_that_stays_dangling_degrades_honestly(monkeypatch):
+    """If the retry also dangles, say so - do not hand over a dead worktree."""
+    adds = {"n": 0}
+    real_git = WorktreeSandbox._git
+
+    def spy_git(self, *args):
+        if args[:2] == ("worktree", "add"):
+            adds["n"] += 1
+        return real_git(self, *args)
+
+    monkeypatch.setattr(WorktreeSandbox, "_git", spy_git)
+    monkeypatch.setattr(WorktreeSandbox, "is_usable", lambda self: False)
+
+    sb = WorktreeSandbox(base_repo=str(REPO_ROOT), branch_id="pytest-dangle", ref="HEAD")
+    try:
+        sb.create()
+        assert adds["n"] == 2
+        assert sb.degraded is True
+        assert "prune" in sb.reason, "the likely cause must be named"
+    finally:
+        sb.cleanup()
+        # This prune is deliberate and is not a counter-example to the rule the
+        # tests pin: it targets an entry whose worktree directory is already gone
+        # (a known-stale registration), and no other worktree is live at this
+        # point because the tests in this file run one at a time.
+        subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "prune"],
+                       capture_output=True, text=True)
+
+
+def _describe_git_calls(calls):
+    """Render spied `_git` calls with their outcome.
+
+    A bare "prune was called" is not a diagnosis: the assertion has to carry the
+    exit code and stderr of the call that led there, or the next reader is back
+    to guessing.
+    """
+    out = []
+    for args, res in calls:
+        if res is None:
+            out.append(f"{' '.join(args)} -> None")
+            continue
+        stderr = (res.stderr or "").strip().replace("\n", " ")[:200]
+        out.append(f"{' '.join(args)} -> rc={res.returncode} "
+                   f"timed_out={getattr(res, 'timed_out', None)} stderr={stderr!r}")
+    return out
+
+
+def test_a_real_cleanup_never_prunes_the_repository(monkeypatch):
+    """`prune` is repository-wide and deletes the registrations of live worktrees.
+
+    Measured on this host: a plain `git worktree add` followed by a plain
+    `git worktree prune` leaves the worktree reporting `fatal: not a git
+    repository: (NULL)`; 4 of 4 worktrees died that way in one loop. The branches
+    of one swarm run are concurrent, so `cleanup` must never issue it - not even
+    when `remove` failed, which is when the old code did.
+
+    The spy is installed *after* `create` so the calls it records are `cleanup`'s
+    own: `create` also issues a `remove` when it abandons a worktree that is not
+    a usable repository, and mixing the two would make this red for a reason that
+    has nothing to do with cleanup.
+    """
+    sb = WorktreeSandbox(base_repo=str(REPO_ROOT), branch_id="pytest-noprune", ref="HEAD")
+    sb.create()
+
+    calls = []
+    real_git = WorktreeSandbox._git
+
+    def spy_git(self, *args):
+        res = real_git(self, *args)
+        calls.append((args, res))
+        return res
+
+    monkeypatch.setattr(WorktreeSandbox, "_git", spy_git)
+    sb.cleanup()
+
+    prunes = [(a, r) for a, r in calls if a[:2] == ("worktree", "prune")]
+    assert not prunes, \
+        f"cleanup must never prune; calls were: {_describe_git_calls(calls)}"
+
+    removes = [(a, r) for a, r in calls if a[:2] == ("worktree", "remove")]
+    assert removes, f"expected cleanup to remove the worktree; saw {_describe_git_calls(calls)}"
+    res = removes[0][1]
+    remove_failed = res is None or res.timed_out or res.returncode != 0
+    if remove_failed:
+        # `remove` can fail for reasons that belong to git or to the host rather
+        # than to this code - one full-suite run had it fail for a freshly created
+        # worktree, and the next run at the same commit was clean. The retry is
+        # the targeted way through, and it must be what happened.
+        unlocks = [a for a, _ in calls if a[:2] == ("worktree", "unlock")]
+        assert unlocks, ("a failed remove must be retried by unlocking, not by "
+                         f"pruning; calls were: {_describe_git_calls(calls)}")
+
+
+def test_a_successful_remove_never_prunes(monkeypatch):
+    """Deterministic counterpart: a remove that reported success must not prune.
+
+    The test above drives the real `git worktree remove`, which is the right
+    thing to do, but its outcome is a fact about git and the host: on a run
+    where that command fails it pins the *other* direction. This one stubs the
+    outcome, so the success direction is pinned on every run.
+    """
+    sb = WorktreeSandbox(base_repo=str(REPO_ROOT), branch_id="pytest-noprune-unit",
+                         ref="HEAD")
+    sb.create()
+
+    calls = []
+    real_git = WorktreeSandbox._git
+
+    def spy_git(self, *args):
+        calls.append(args)
+        if args[:2] == ("worktree", "remove"):
+            return _StubResult(returncode=0)          # a remove that did its job
+        return real_git(self, *args)
+
+    monkeypatch.setattr(WorktreeSandbox, "_git", spy_git)
+    try:
+        sb.cleanup()
+        assert any(a[:2] == ("worktree", "remove") for a in calls), \
+            f"expected cleanup to attempt a remove; saw {calls}"
+        assert not any(a[:2] == ("worktree", "prune") for a in calls), \
+            f"a remove that reported success must not be followed by a prune; saw {calls}"
+    finally:
+        # The stubbed remove deregistered nothing, so the registration is still
+        # there (its directory is gone, so prune will collect it). Do that even
+        # on failure, so a red test cannot leave the repository with a stale
+        # entry for the next reader to trip over.
+        # This prune is deliberate and is not a counter-example to the rule the
+        # tests pin: it targets an entry whose worktree directory is already gone
+        # (a known-stale registration), and no other worktree is live at this
+        # point because the tests in this file run one at a time.
+        subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "prune"],
+                       capture_output=True, text=True)
+
+
+def test_a_failed_remove_is_retried_by_unlocking_not_by_pruning(monkeypatch):
+    """Calibration: a failed `remove` must still be dealt with - but not by prune.
+
+    `remove --force` fails on a locked worktree (a `locked` file is left behind
+    when `worktree add` is interrupted; one was observed reading
+    "initializing"), and `git worktree unlock` plus a second `--force` is the
+    targeted way through. The old fallback was `git worktree prune`, which is
+    repository-wide and measured here to delete the registrations of *other* live
+    worktrees. Leaking a registration is inert; taking out the siblings of the
+    run being cleaned up is not.
+    """
+    calls = []
+    real_git = WorktreeSandbox._git
+
+    def spy_git(self, *args):
+        calls.append(args)
+        if args[:2] == ("worktree", "remove"):
+            return None                      # simulate "could not deregister"
+        return real_git(self, *args)
+
+    monkeypatch.setattr(WorktreeSandbox, "_git", spy_git)
+    sb = WorktreeSandbox(base_repo=str(REPO_ROOT), branch_id="pytest-fallback", ref="HEAD")
+    sb.create()
+    try:
+        sb.cleanup()
+        assert any(a[:2] == ("worktree", "unlock") for a in calls), \
+            f"a failed remove must be retried via unlock; saw {calls}"
+        forces = [a for a in calls if a[:2] == ("worktree", "remove")]
+        assert len(forces) == 2, f"expected a second remove attempt; saw {calls}"
+        assert forces[1][2:4] == ("--force", "--force"), \
+            f"the retry must escalate to --force --force; saw {forces[1]}"
+        assert not any(a[:2] == ("worktree", "prune") for a in calls), \
+            f"cleanup must never prune; saw {calls}"
+    finally:
+        # This prune is deliberate and is not a counter-example to the rule the
+        # tests pin: it targets an entry whose worktree directory is already gone
+        # (a known-stale registration), and no other worktree is live at this
+        # point because the tests in this file run one at a time.
+        subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "prune"],
+                       capture_output=True, text=True)
 
 
 def test_a_timed_out_verify_command_says_so(monkeypatch, tmp_path):

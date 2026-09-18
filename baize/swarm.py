@@ -72,6 +72,16 @@ GIT_TIMEOUT = 60
 #: exists". Branches run in parallel threads (see _run_all_async), so every git
 #: call is serialized through this. The verify command - the slow part - is
 #: deliberately NOT under the lock.
+#:
+#: Scope, stated because the earlier wording ("every git call is serialized")
+#: read as more than it is: this is a `threading.Lock`, so it serializes the git
+#: calls of *this process* and nothing else. `.git/worktrees` is shared by every
+#: process that touches the repository, and nothing here takes a cross-process
+#: file lock (no `O_EXCL`, `flock`, `msvcrt` or `filelock` anywhere under
+#: baize/). A `git worktree prune` from another process is therefore outside this
+#: lock's reach - and it is not harmless: measured on this host, `prune` deletes
+#: the registrations of *live* worktrees, leaving each one reporting
+#: `fatal: not a git repository: (NULL)` for every git command.
 _GIT_LOCK = threading.Lock()
 
 
@@ -139,10 +149,14 @@ class CandidateBranch:
 class WorktreeSandbox:
     """A real ``git worktree``, with an honest scratch-directory fallback.
 
-    ``create()`` returns the path to use and sets :attr:`degraded`. ``cleanup()``
-    always runs ``git worktree remove --force`` followed by ``git worktree
-    prune``, so a failed run cannot leave a dangling worktree registration in the
-    user's repository.
+    ``create()`` returns the path to use and sets :attr:`degraded`; it checks
+    that the worktree is a usable repository before handing it over, because
+    ``git worktree add`` can return 0 and still leave one that is not.
+    ``cleanup()`` runs ``git worktree remove --force``, retrying with ``unlock``
+    plus a second ``--force`` when that fails. It deliberately does *not* run
+    ``git worktree prune``: ``prune`` is repository-wide and, measured on this
+    host, deletes the registrations of other *live* worktrees, so a fallback
+    prune would break the sibling branches of the run it is cleaning up after.
     """
 
     def __init__(self, base_repo: str = ".", branch_id: str = "branch_1",
@@ -185,16 +199,53 @@ class WorktreeSandbox:
             self.path = Path(tempfile.mkdtemp(prefix=f"baize_wt_{self.branch_id}_"))
             return self.path
 
-        target = Path(tempfile.mkdtemp(prefix=f"baize_wt_{self.branch_id}_"))
-        # mkdtemp created the directory; `git worktree add` wants to create it.
-        target.rmdir()
-        res = self._git("worktree", "add", "--detach", str(target), self.ref)
-        if res is None or res.timed_out or res.returncode != 0:
-            self.degraded = True
-            self.reason = ((res.stderr.strip() if res else "") or "git worktree add failed")
-            self.path = Path(tempfile.mkdtemp(prefix=f"baize_wt_{self.branch_id}_"))
-            return self.path
-        self.path = target
+        # Two attempts: `worktree add` can return 0 and still leave a worktree
+        # that is not a repository. Measured on this host, a `git worktree prune`
+        # deletes the registration of a *live* worktree, and that worktree then
+        # reports `fatal: not a git repository: (NULL)` for every git command -
+        # including the verify command, whose non-zero exit would otherwise be
+        # recorded as `verified=False`, a verdict about a candidate that was
+        # never run. Retrying is cheap; handing a dead worktree to the verify
+        # step is not.
+        #
+        # The ordering story - "the registration is written before the `.git`
+        # file, so a prune lands in the window between them" - was my first
+        # explanation and it is not supported: `add` writes its `locked` file
+        # first (measured, ~200ms in) and removes it only at the end, so the
+        # entry is locked for the whole add; and the effect reproduces with no
+        # add in flight at all, from a plain `add` followed by a plain `prune`.
+        # What is established is the consequence, which is all this retry needs.
+        for _attempt in (1, 2):
+            target = Path(tempfile.mkdtemp(prefix=f"baize_wt_{self.branch_id}_"))
+            # mkdtemp created the directory; `git worktree add` wants to create it.
+            target.rmdir()
+            res = self._git("worktree", "add", "--detach", str(target), self.ref)
+            if res is None or res.timed_out or res.returncode != 0:
+                self.degraded = True
+                self.reason = ((res.stderr.strip() if res else "")
+                               or "git worktree add failed")
+                self.path = Path(tempfile.mkdtemp(prefix=f"baize_wt_{self.branch_id}_"))
+                return self.path
+            self.path = target
+            if self.is_usable():
+                return target
+            self.reason = (
+                "worktree add returned 0 but the worktree is not a usable git "
+                "repository - every git command inside it fails with `not a git "
+                "repository`, and a `git worktree prune` against this repository "
+                "is one cause (measured here to delete the registration of a live "
+                "worktree, without reporting that it did)")
+            logger.warning("swarm %s: %s; retrying", self.branch_id, self.reason)
+            # Deregister the worktree being abandoned. In the real failure the
+            # registration is already gone - that is *why* it is dangling - so
+            # this normally fails. It is a targeted `remove` rather than the
+            # repo-wide `prune`, which is measured to delete the registrations of
+            # other live worktrees.
+            self._git("worktree", "remove", "--force", str(target))
+            shutil.rmtree(target, ignore_errors=True)
+
+        self.degraded = True
+        self.path = Path(tempfile.mkdtemp(prefix=f"baize_wt_{self.branch_id}_"))
         return self.path
 
     def cleanup(self) -> None:
@@ -203,10 +254,23 @@ class WorktreeSandbox:
         if self.degraded:
             shutil.rmtree(self.path, ignore_errors=True)
         else:
-            # --force: the branch may have written files. Then prune so no dangling
-            # registration survives in .git/worktrees/.
-            self._git("worktree", "remove", "--force", str(self.path))
-            self._git("worktree", "prune")
+            # --force: the branch may have written files. `remove` deregisters the
+            # worktree, which is the whole job.
+            res = self._git("worktree", "remove", "--force", str(self.path))
+            if res is None or res.timed_out or res.returncode != 0:
+                # A locked worktree is one reason `remove` fails; `unlock` plus a
+                # second `--force` is the targeted way through it. Do NOT fall
+                # back to `prune`: it is repository-wide, and it deletes the
+                # registrations of *other* live worktrees - measured on this host,
+                # including 4 of 4 worktrees in one loop, each left reporting
+                # `fatal: not a git repository: (NULL)`. The branches of one swarm
+                # run are concurrent, so that fallback would take out the siblings
+                # of the run it is cleaning up after, and their verify would come
+                # back as `verified=None` rather than as a tested candidate. A
+                # registration left behind is inert by comparison, and the warning
+                # below reports it.
+                self._git("worktree", "unlock", str(self.path))
+                self._git("worktree", "remove", "--force", "--force", str(self.path))
             if self.path.exists():
                 shutil.rmtree(self.path, ignore_errors=True)
         if self.path.exists():
@@ -250,6 +314,21 @@ class WorktreeSandbox:
         with _GIT_LOCK:
             return proc_mod.run([exe, "-C", str(self.path), *args],
                                 timeout=GIT_TIMEOUT)
+
+    def is_usable(self) -> bool:
+        """Is this sandbox still a git repository that a verify command can speak for?
+
+        ``create()`` recorded the isolation once; this re-checks it *now*. A
+        worktree can be invalidated after it was created - observed as a dangling
+        ``.git`` file whose target admin directory is gone, which makes every git
+        command inside it exit 128 with ``fatal: not a git repository: (NULL)``.
+        That is a fact about the worktree, not about the candidate, so a failing
+        verify command must not be reported as a failed candidate.
+        """
+        if self.path is None or self.degraded:
+            return False
+        res = self._git_here("rev-parse", "--git-dir")
+        return res is not None and not res.timed_out and res.returncode == 0
 
 
 class GitWorktreeSandbox(WorktreeSandbox):
@@ -418,6 +497,22 @@ def _verify(branch: CandidateBranch, sandbox: WorktreeSandbox) -> None:
     branch.verify_exit_code = res.returncode
     branch.verified = res.returncode == 0
     if not branch.verified:
+        # A non-zero exit is a verdict about the *candidate* only if the sandbox
+        # was still a usable repository while the command ran. Observed: a branch
+        # whose `isolation` was recorded as `git-worktree` (i.e. not degraded)
+        # failed with `fatal: not a git repository: (NULL)` / exit 128 - the
+        # worktree had been invalidated underneath it. Recorded as `False`, that
+        # reads as "the candidate failed verification": a verdict about a
+        # candidate that was never tested, which is the one thing this module's
+        # tri-state exists to prevent. Re-check the mechanism, not the message.
+        if not sandbox.is_usable():
+            branch.verified = None
+            branch.error = (
+                "not verified: the worktree was no longer a usable git "
+                "repository when the verify command ran, so its exit code says "
+                "nothing about the candidate (exit "
+                f"{res.returncode}: " + _verify_output_excerpt(res) + ")")
+            return
         # Keep the reason. A bare exit code is not a diagnosis.
         branch.error = (f"verify command exited {res.returncode}: "
                         + _verify_output_excerpt(res))
