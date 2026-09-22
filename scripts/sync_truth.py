@@ -122,7 +122,17 @@ class Labels:
         return f"badge/version-V{self.version}--{self.codename}-orange"
 
     def tests_badge(self, passed: int, total: int) -> str:
-        pct = round(passed * 100 / total) if total else 0
+        # Floor, not round. ``round(1351 * 100 / 1354) == 100``, so a suite with
+        # three skipped cases rendered "1351/1354 passed (100%)" - the badge
+        # claiming a rounder result than the fraction printed beside it. This is
+        # not a cosmetic complaint: ``measure_tests`` documents the invariant
+        # "the badge never claims more green than was actually observed", and
+        # that is a claim about this arithmetic. ``round`` broke it; ``//`` holds
+        # it, and makes ``pct == 100`` mean "every collected case passed", which
+        # is what brightgreen should mean. Skips vary by runner (a host with
+        # docker skips fewer), so the colour varies with them - the same reason
+        # the passed count is deliberately not gated in CI.
+        pct = passed * 100 // total if total else 0
         if pct == 100:
             color = "brightgreen"
         elif pct >= 95:
@@ -161,8 +171,17 @@ TESTS_BADGE = Surface("tests badge", re.compile(r'badge/tests-[^?\s"]*'),
                       lambda l, p, t: l.tests_badge(p, t))
 PROTOCOL_TITLE = Surface("protocol title", re.compile(r"操作协议 V\d+\.\d+\.\d+"),
                          lambda l, p, t: f"操作协议 V{l.version}")
-# A bare "V33.0.0" with no codename, as the older doc titles use. Only safe on a
-# file where *every* V-label is the release - verify before adding a new file.
+# A bare "V33.0.0" with no codename, as the older doc titles use. Safe on a file
+# where every *release* label is the release and any other V-label is a
+# provenance marker - "V17 归档" says what legacy/ holds, "(V19)" says when a
+# config block was introduced. Both kinds really do appear in files pinned with
+# this surface, so the precondition is "no stale label in a current-state
+# position", not "no other V-label at all"; the two markers are listed in
+# tests/test_doc_claims.py::KNOWN_PROVENANCE_MARKERS, which fails when a third
+# appears. That test exists because "(Baize Agent V33)" in docs/benchmarks.md's
+# table header was a stale *release* label, min_hits counted the correct title
+# instead, and a bare "V33" does not match this pattern anyway - so every check
+# in this file passed while the header was five releases out of date.
 VERSION_ONLY = Surface("version only", re.compile(r"V\d+\.\d+\.\d+"),
                        lambda l, p, t: f"V{l.version}")
 
@@ -178,7 +197,14 @@ SURFACES: dict[str, list[tuple[Surface, int]]] = {
     # claiming V33.0.0 five releases after the fact - found by
     # skills/repo-truth-and-hygiene/scripts/audit_repo_truth.py [2].
     "START-HERE.md": [(VERSION_ONLY, 1)],
-    "docs/benchmarks.md": [(VERSION_ONLY, 1)],
+    # Two V-labels, and both must be the release. The table header used to read
+    # "(Baize Agent V33)" five releases after the fact while the title on line 1
+    # was correct - and this entry said min_hits=1, so the gate counted the one
+    # correct label and passed. A bare "V33" does not match VERSION_ONLY's
+    # pattern either (it requires X.Y.Z), so the stale label was invisible to
+    # every check in this file. Fixed to the release, and the count raised to 2
+    # so that dropping either label is now a hard failure rather than a no-op.
+    "docs/benchmarks.md": [(VERSION_ONLY, 2)],
     # Found by an audit sweep for V-literals outside the gate: these three had
     # drifted to V25.0.0 / V33.0.0 while the release was V37.0.0, i.e. two of
     # them were four releases stale. Each file has exactly ONE V-label and it is
@@ -577,6 +603,18 @@ def count_claims() -> list[CountClaim]:
             re.compile(r"(\d+) count claims verified"),
             lambda: len(count_claims()),
             "len(count_claims()) in this file",
+        ),
+        # docs/benchmarks.md advertised "593 项真实测试 100% 通过 (0 Failed)" in a
+        # current-capability table - the suite had 593 cases at V33 and 1354 by
+        # V37, so the number had been wrong for at least four releases. Nothing
+        # looked at it: sync_truth pinned this file's version label and no
+        # count. Only the collected count is gated, for the reason given above.
+        CountClaim(
+            "docs/benchmarks.md",
+            "test cases collected",
+            re.compile(r"全量测试 (\d+) 项收集"),
+            collected_count,
+            "pytest tests/ --collect-only",
         ),
     ]
 

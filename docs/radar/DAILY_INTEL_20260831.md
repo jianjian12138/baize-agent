@@ -23,7 +23,7 @@
 
 ## 🧠 二、全球 AI 顶级思想领袖架构洞见与白泽践行
 
-> **来源说明**：本节 5 条来自仓库内的**手写常量**（`baize/intelligence_radar.py` 里的 `LUMINARIES_INSIGHTS`），**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；请勿把上面的人名读成「某某近期说过这句话」。
+> **来源说明**：本节 5 条来自仓库内的**手写常量**（`baize/intelligence_radar.py` 里的 `LUMINARIES_INSIGHTS`），**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；请勿把上面的人名读成「某某近期说过这句话」。本节「白泽对齐与吸收」里的数字同样是手写表述，**未经测量**。
 
 ### 👤 Andrej Karpathy (卡帕西) · *Former Tesla AI Director / OpenAI Co-founder*
 - **核心思想**：`LLM as an Operating System Kernel (大模型即操作系统内核)`
@@ -48,7 +48,7 @@
 ### 👤 杨植麟 (Zhilin Yang) · *Moonshot AI (月之暗面 / Kimi) Founder*
 - **核心思想**：`Ultra Long-Context Fidelity & Attention Invariant Anchoring (超长上下文无损与注意力不变量)`
 - **思想概述（白泽团队手写整理，无出处）**：在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。
-- **白泽对齐与吸收**：✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（节省 70% Token），消灭了长程漂移！
+- **白泽对齐与吸收**：✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（Token 压缩比按调用实测，非固定比例），消灭了长程漂移！
 
 ---
 

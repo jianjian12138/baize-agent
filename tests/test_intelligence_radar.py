@@ -21,6 +21,7 @@ from unittest import mock
 from baize.intelligence_radar import (
     BENCHMARK_COMPETITORS,
     LUMINARIES_PROVENANCE,
+    RADAR_ADVANTAGE_PROVENANCE,
     BenchmarkCompetitorTracker,
     GitHubAgentRadar,
     LuminariesIntelTracker,
@@ -285,6 +286,7 @@ LUMINARIES_HEADING = "## 🧠 二、全球 AI 顶级思想领袖架构洞见与�
 SECTION_THREE_HEADING = "## 🛠️ 三、"
 MISSION_MARK = "**雷达使命**"
 MISSION_FALSE_CLAIM = "大佬前沿思想"
+ADVANTAGE_COLUMN_MARK = "白泽压倒性优势"
 
 
 def _reports_with_a_false_mission_line(directory: Path) -> list[str]:
@@ -325,6 +327,30 @@ def _files_with_unattributed_epigraphs(root: Path) -> list[str]:
                 bad.append(str(path.relative_to(root)).replace("\\", "/"))
                 break
     return bad
+
+
+def _reports_missing_advantage_provenance(directory: Path) -> list[str]:
+    """Reports whose "白泽压倒性优势" column carries no note saying what it is.
+
+    That column is filled from ``BENCHMARK_COMPETITORS``, a hand-written
+    constant, and it holds numbers no run produced: "响应速度快 10 倍", "<5ms",
+    "100% 全量索引" - and until this round "Token 节省 70%", which the one
+    measurement available (``scripts/measure_slicing.py``) contradicts outright:
+    its measured lower bound is 0%. The table's other note covers the Commit
+    column only, so a reader had no way to tell a fetched cell from a written
+    one, and a number in a table reads as a measurement wherever it sits.
+
+    Scope is files carrying the column, the same boundary rule as the other
+    probes: ``UPGRADE_RFC_LATEST.md`` is a different document with no such column.
+    """
+    missing = []
+    for path in sorted(directory.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if ADVANTAGE_COLUMN_MARK not in text:
+            continue
+        if RADAR_ADVANTAGE_PROVENANCE not in text:
+            missing.append(path.name)
+    return missing
 
 
 def _reports_missing_luminaries_origin(directory: Path) -> list[str]:
@@ -558,6 +584,54 @@ class TestCommittedRadarReports(unittest.TestCase):
             self.assertEqual(line, fresh,
                              f"{path.name}: mission line is not the renderer's")
         self.assertTrue(checked, "no report had a mission line - vacuous")
+
+
+    # ------------------------------------------- the advantage column's note
+
+    def test_the_advantage_provenance_probe_can_fail(self):
+        """Calibration."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "DAILY_INTEL_20990301.md").write_text(
+                f"| 标杆竞品 | {ADVANTAGE_COLUMN_MARK} |\n"
+                f"| --- | --- |\n"
+                f"| Hermes | 白泽在 Windows 上响应速度快 10 倍！ |\n",
+                encoding="utf-8")
+            self.assertEqual(_reports_missing_advantage_provenance(d),
+                             ["DAILY_INTEL_20990301.md"])
+
+    def test_the_advantage_provenance_probe_ignores_a_report_without_the_column(self):
+        """Boundary: the RFC document has no advantage column."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "UPGRADE_RFC_LATEST.md").write_text(
+                "## 🛠️ 静态能力矩阵\n\n| a | b |\n", encoding="utf-8")
+            self.assertEqual(_reports_missing_advantage_provenance(d), [])
+
+    def test_no_committed_report_states_an_unmeasured_advantage(self):
+        reports = sorted(RADAR_DIR.glob("*.md"))
+        self.assertTrue(reports, "no reports found - this test would be vacuous")
+        self.assertEqual(
+            _reports_missing_advantage_provenance(RADAR_DIR), [],
+            "these reports carry the 白泽压倒性优势 column without saying that "
+            "it is hand-written product copy rather than a measurement")
+
+    def test_no_committed_report_claims_a_token_saving_percentage(self):
+        """The one figure in that column a measurement contradicts.
+
+        `Token 节省 70%` sat beside a real measurement mechanism whose lower
+        bound is 0%, so it was not merely unsourced - it was wrong for a
+        measurable share of inputs. It is now a pointer at the measurement.
+        """
+        offenders = []
+        for path in sorted(RADAR_DIR.glob("*.md")):
+            for i, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+                if "节省 70%" in line or "压缩 70%" in line:
+                    offenders.append(f"{path.name}:{i}")
+        self.assertEqual(
+            offenders, [],
+            "these lines state a fixed token-saving percentage; the ratio is "
+            "computed per call and measures 0% on a module with nothing to prune")
 
 
 class TestAttributedProse(unittest.TestCase):

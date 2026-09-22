@@ -6,7 +6,7 @@
 
 ## 一、主流 Agent 综合能力对比矩阵
 
-| 能力维度 | **白泽引擎 (Baize Agent V33)** | **Hermes-Agent** | **Pi-Agent** | **Codex / DeepSeek** |
+| 能力维度 | **白泽引擎 (Baize Agent V37.0.0)** | **Hermes-Agent** | **Pi-Agent** | **Codex / DeepSeek** |
 |---|:---:|:---:|:---:|
 | **运行时依赖** | **0 (纯 Python 标准库)** | 需要外部 pip 依赖 | 需要 npm / pip 依赖 | 需要专有闭源生态 |
 | **部署与隔离** | **极佳 (单目录即拷即跑，断网可用)** | 较难 (需安装依赖) | 较难 | 难 (依赖云端) |
@@ -22,7 +22,7 @@
 | **技能自进化** | **`save_skill` / `SkillHarvester` 自动编译** | 自进化技能 | 手动沉淀 | 手动沉淀 |
 | **CLI 交互体验** | **@文件注入 / 多行块 / /cost / /trace / 历史持久** | 丰富 CLI | 基础 CLI | 专有 CLI |
 | **会话持久化** | **Append-only JSONL + Fork / Rewind 时间旅行** | JSONL | JSONL + checkpoint | 云端持久化 |
-| **自动化测试覆盖**| **593 项真实测试 100% 通过 (0 Failed)** | 部分 | 部分 | 黑盒闭源 |
+| **自动化测试覆盖**| **全量测试 1368 项收集（通过 / 失败 / 跳过见 `python -m pytest -q` 末行）** | 部分 | 部分 | 黑盒闭源 |
 
 ---
 

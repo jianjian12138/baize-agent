@@ -7,7 +7,7 @@
 <br/>
 
 [![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-1351%2F1354%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-1365%2F1368%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -41,7 +41,7 @@
 | **🪟 Windows Native First-Class** | Eliminates CMD syntax crashes, GBK corruptions, and 200ms cold-start delays on Windows. | **Persistent PowerShell REPL Session (<5ms latency)** + 15+ POSIX stream shims (`awk`, `wc -l`, `sort -u`) + UTF-8 pipeline. |
 | **🛡️ NO FAKE DONE Physical Gate** | Prevents AI hallucinated "I have fixed it" without running real tests. | Enforces physical execution verification + AST mutation testing (kill rate measured against a fixed probe corpus, not a fixed 100%) + quorum arbitration over caller-supplied verdicts (`BFT-DIGEST-***` is a reproducible content digest, **not** a signature). |
 | **🌲 Polyglot Symbol Graph** | Cross-file semantic symbol indexing across large multi-language repos. | AST & grammar indexers for **Python, TypeScript/JS, Rust, Go, Java** with call hierarchies. |
-| **🧠 AST Context Slicing** | Huge token waste and LLM context window blowups. | Prunes non-target function bodies into type stubs, **reducing LLM prompt tokens by 50% ~ 70%**. |
+| **🧠 AST Context Slicing** | Huge token waste and LLM context window blowups. | Prunes non-target function bodies into type stubs. The ratio is **measured per call by `slice_code_context`** (reproduce with `python scripts/measure_slicing.py`) - **not a fixed saving**; it is **0%** when a module has nothing prunable. |
 | **⚡ Asyncio Swarm Speculation** | Slow trial-and-error sequential code generation. | Explores 3 candidate strategies concurrently in **real git worktrees**: each branch writes its candidate into its own worktree, `churn_lines` is measured with `git diff --numstat`, and `BAIZE_SWARM_VERIFY_CMD` can be run to verify. **With no verify command configured, `verified` is `null` (not checked) - it is never reported as passing.** |
 | **🔌 Anthropic MCP Standard** | Clunky custom tool ecosystems. | Official **JSON-RPC 2.0 MCP Client** to seamlessly mount SQLite, GitHub, Puppeteer, and custom tools. |
 | **🖥️ Universal Desktop Studio** | Context switching between CLI and browser. | 11 core modules: Live SSE Streaming, Monaco Diff, Visual DAG Canvas, Memory, Models, Chaos Arena. |
@@ -102,7 +102,7 @@ Open **`http://127.0.0.1:8787`** to experience the full Obsidian-styled dark des
                   │ (simulated, no worktree) │  (Python/TS/Rust/Go/Java)   │
                   ├──────────────────────────┼─────────────────────────────┤
                   │ 🧠 AST Context Slicer    │  🛡️ Verdict Quorum Arena     │
-                  │ (50%-70% Token Savings)  │  (digest, not a signature)  │
+                  │ (measured on each call)  │  (digest, not a signature)  │
                   ├──────────────────────────┼─────────────────────────────┤
                   │ 🪟 Persistent PowerShell │  🔌 Anthropic MCP Standard  │
                   │ (Sub-5ms REPL + Shims)   │  (JSON-RPC 2.0 Ecosystem)   │

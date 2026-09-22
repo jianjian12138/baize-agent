@@ -49,7 +49,7 @@ BENCHMARK_COMPETITORS = [
         "repo": "deepseek-ai/DeepSeek-Coder",
         "url": "https://github.com/deepseek-ai/DeepSeek-Coder",
         "focus": "超长上下文推理链、强化学习因果重构与极限推理成本",
-        "baize_advantage": "白泽首发支持 DeepSeek V3/R1 思维链结构化强制 (<thinking>) 与 AST 语义剪枝（Token 节省 70%）。",
+        "baize_advantage": "白泽首发支持 DeepSeek V3/R1 思维链结构化强制 (<thinking>) 与 AST 语义剪枝（Token 压缩比按调用实测，非固定比例）。",
         "transcendence_strategy": "动态将 DeepSeek R1 深度推演与白泽 Swarm 异步并发推演结合，决出最优代码时间线。"
     },
     {
@@ -286,7 +286,7 @@ class LuminariesIntelTracker:
             "role": "Moonshot AI (月之暗面 / Kimi) Founder",
             "core_philosophy": "Ultra Long-Context Fidelity & Attention Invariant Anchoring (超长上下文无损与注意力不变量)",
             "insight_summary": "在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。",
-            "baize_alignment": "✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（节省 70% Token），消灭了长程漂移！"
+            "baize_alignment": "✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（Token 压缩比按调用实测，非固定比例），消灭了长程漂移！"
         }
     ]
 
@@ -312,6 +312,21 @@ LUMINARIES_PROVENANCE = (
     "**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。"
     "这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；"
     "请勿把上面的人名读成「某某近期说过这句话」。"
+    "本节「白泽对齐与吸收」里的数字同样是手写表述，**未经测量**。"
+)
+
+# Section one's last column is headed "白泽压倒性优势" and carries numbers no run
+# produced: "响应速度快 10 倍" (10x faster than what, measured how?),
+# "100% 全量索引", "<5ms". The table's other note (`integrity`) covers the Commit
+# column only, so a reader had no way to tell a fetched cell from a hand-written
+# one - and a number in a table is read as a measurement whatever column it is in.
+# Same treatment as the mission line: the claims stay (they are product copy, not
+# an error to delete), the reader is told what they are.
+RADAR_ADVANTAGE_PROVENANCE = (
+    "> **「白泽压倒性优势」列的来源**：该列取自 `BENCHMARK_COMPETITORS` 的**手写产品表述**，"
+    "**不是实测值**。其中的倍数、毫秒数与百分比（「快 10 倍」「<5ms」「100% 全量索引」）"
+    "**没有对照实验**，请读作宣传语而非测量结果。可核的只有两项："
+    "零依赖（`scripts/check_zero_deps.py`）与 MCP 协议兼容性（测试）。"
 )
 
 # The mission line used to end with "与全球顶尖 AI 大佬前沿思想", i.e. it claimed the
@@ -380,6 +395,8 @@ def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str
     lines_intel.extend([
         "",
         integrity,
+        "",
+        RADAR_ADVANTAGE_PROVENANCE,
         "",
         "---",
         "",

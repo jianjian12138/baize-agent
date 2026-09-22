@@ -1,8 +1,26 @@
 """AST Semantic Context Slicing & Token Compressor (V35.0.0 Industrial).
 
 Pure Python standard library — zero third-party dependencies.
-Reduces LLM input token consumption by 50%-75% by preserving full implementation
-for the target focus symbol while converting non-relevant functions into AST type-signature stubs.
+
+Prunes non-relevant function bodies into AST type-signature stubs, keeping the
+full implementation only for the focus symbol. The saving is computed per call
+and returned as ``compression_ratio`` — it is not a constant this module can
+promise. Run ``scripts/measure_slicing.py`` to see the distribution for a given
+tree.
+
+Two properties are worth stating as properties rather than as a range, because
+they hold for every input:
+
+* the lower bound is 0% — a module whose functions all match the focus symbol
+  is left untouched, so nothing is saved;
+* the ratio depends on how much of the module is unrelated to the focus symbol,
+  which is a property of the *caller's* code, not of this module.
+
+This docstring used to claim a flat "50%-75%". No run produced that range: the
+measured lower bound is 0% and the upper bound was 90.7%. The number is removed
+rather than corrected — any fixed range is wrong for some input, and a range in
+a docstring reads as a guarantee. The measured figures for this tree live in the
+audit report, which is dated; a number here would drift silently.
 """
 from __future__ import annotations
 

@@ -7,7 +7,7 @@
 <br/>
 
 [![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-1351%2F1354%20passed%20(100%25)-brightgreen?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-1365%2F1368%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -41,7 +41,7 @@
 | **🪟 Windows 原生第一等公民** | 主流 Agent 在 Win 下 CMD 语法崩溃、GBK 乱码、200ms 冷启动延迟。 | **常驻 PowerShell REPL 进程池 (<5ms 延迟)** + 15+ POSIX 复合管道模拟 (`awk`, `wc -l`, `sort -u`) + 全链路 UTF-8 隔离。 |
 | **🛡️ NO FAKE DONE 真实物理防伪** | 传统 Agent 易产生“我已修复但实际未跑通测试”的幻觉。 | 强制物理运行凭证 + AST 变异测试网（击杀率由探针实测得出，**不是固定 100%**）+ 评审票数门槛仲裁（`BFT-DIGEST-***` 为可复现内容摘要，**不是签名**）。 |
 | **🌲 多语言代码符号依赖图谱** | 无法精准跨文件理解大型代码库调用关系。 | 原生支持 **Python、TypeScript/JS、Rust、Go、Java** 5 大语言符号索引与调用链追踪。 |
-| **🧠 AST 语义级上下文剪枝** | 大型代码库上下文占用过高导致 Token 浪费与幻觉。 | 智能将非关键函数体剪枝为 `...` 类型存根，**大模型 Token 消耗直降 50% ~ 70%**。 |
+| **🧠 AST 语义级上下文剪枝** | 大型代码库上下文占用过高导致 Token 浪费与幻觉。 | 智能将非关键函数体剪枝为 `...` 类型存根。压缩比**由 `slice_code_context` 每次调用实测得出**（`python scripts/measure_slicing.py` 可复现）——**不是固定比例**；当模块内没有可剪枝函数时为 **0%**。 |
 | **⚡ Asyncio Swarm 并发影子推演** | 传统串行试错生成极慢。 | 3 条策略路线在 asyncio 并发下推演，并按预设风险分选举最优时间线。**⚠️ 当前为确定性模拟**：不创建 git worktree、不运行任何测试，`generated_code` 为按 `branch_id` 预设的常量。 |
 | **🔌 官方标准 Anthropic MCP 协议** | 各家 Agent 工具生态碎片化。 | 标准 **JSON-RPC 2.0 MCP 客户端**，一键连通全球开源 SQLite, GitHub, Puppeteer 工具生态。 |
 | **🖥️ 暗黑工业级桌面工作台 (Studio)** | 开发者需在多个终端与网页间频繁切换。 | 内置 11 大核心功能模块（流式对话、Monaco Diff、DAG 控制台、代码图谱、达尔文工具市场、因果自愈）。 |
@@ -102,7 +102,7 @@ python -m baize serve --port 8787
                   │ (确定性模拟,非真实隔离)  │  (Python/TS/Rust/Go/Java)   │
                   ├──────────────────────────┼─────────────────────────────┤
                   │ 🧠 AST 语义上下文剪枝器  │  🛡️ 评审票数门槛仲裁         │
-                  │ (Token 消耗直降 50%-70%) │  (无票即无裁决 / 摘要非签名)│
+                  │ (Token 压缩比按调用实测) │  (无票即无裁决 / 摘要非签名)│
                   ├──────────────────────────┼─────────────────────────────┤
                   │ 🪟 常驻 PowerShell 进程池 │  🔌 官方标准 Anthropic MCP   │
                   │ (<5ms 延迟 + 复合管道垫片)│  (JSON-RPC 2.0 开放工具生态) │

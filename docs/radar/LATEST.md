@@ -9,7 +9,7 @@
 | 标杆竞品 | 官方仓库 | 最新 Commit / 动态 | 核心技术焦点与特性 | 白泽压倒性优势 |
 | :--- | :--- | :---: | :--- | :--- |
 | **Hermes Agent** | **[NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)** | ⚠️ **未获取**：HTTPError: HTTP Error 403: rate limit exceeded | 自主生长技能库、函数调用闭环与开源权重微调 | 白泽具备 100% 纯 Python 标准库零依赖 + 常驻 PowerShell REPL，在 Windows 上响应速度快 10 倍！ |
-| **DeepSeek Coder & R1/V3** | **[deepseek-ai/DeepSeek-Coder](https://github.com/deepseek-ai/DeepSeek-Coder)** | ⚠️ **未获取**：HTTPError: HTTP Error 403: rate limit exceeded | 超长上下文推理链、强化学习因果重构与极限推理成本 | 白泽首发支持 DeepSeek V3/R1 思维链结构化强制 (<thinking>) 与 AST 语义剪枝（Token 节省 70%）。 |
+| **DeepSeek Coder & R1/V3** | **[deepseek-ai/DeepSeek-Coder](https://github.com/deepseek-ai/DeepSeek-Coder)** | ⚠️ **未获取**：HTTPError: HTTP Error 403: rate limit exceeded | 超长上下文推理链、强化学习因果重构与极限推理成本 | 白泽首发支持 DeepSeek V3/R1 思维链结构化强制 (<thinking>) 与 AST 语义剪枝（Token 压缩比按调用实测，非固定比例）。 |
 | **OpenClaw / OpenHands (OpenDevin)** | **[All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands)** | ⚠️ **未获取**：HTTPError: HTTP Error 403: rate limit exceeded | Docker 容器级沙箱、Web 浏览器 VNC 交互与微代理事件流 | 白泽拥有原生 Windows PowerShell 极速引擎与真实 git worktree 隔离（baize/swarm.py：每分支独立 worktree + 实测 churn），无需强制启动庞大 Docker 镜像。 |
 | **Codex / SWE-agent** | **[princeton-nlp/SWE-agent](https://github.com/princeton-nlp/SWE-agent)** | ⚠️ **未获取**：HTTPError: HTTP Error 403: rate limit exceeded | Agent-Computer Interface (ACI 专用命令行语法与窗口分页) | 白泽独创 AST 因果反事实自愈与 Monaco 差量 Monaco Hunk 细粒度合并，解决大代码库幻觉覆盖。 |
 | **Claude Code (Anthropic)** | **[anthropics/anthropic-quickstarts](https://github.com/anthropics/anthropic-quickstarts)** | ⚠️ **未获取**：HTTPError: HTTP Error 403: rate limit exceeded | 终端原生交互、子 Agent 并发派生与 Anthropic 官方 MCP 协议 | 白泽 100% 兼容 Anthropic MCP JSON-RPC 2.0，且独创 3 节点拜占庭共识博弈全票加密签名。 |
@@ -21,11 +21,13 @@
 
 > **数据完整性**：10 个竞品中仅 **0 个**成功读取 GitHub API。标注「未获取」的行是**没有查到**，不是「没有变更」——把未获取读成竞品停止更新是错的。
 
+> **「白泽压倒性优势」列的来源**：该列取自 `BENCHMARK_COMPETITORS` 的**手写产品表述**，**不是实测值**。其中的倍数、毫秒数与百分比（「快 10 倍」「<5ms」「100% 全量索引」）**没有对照实验**，请读作宣传语而非测量结果。可核的只有两项：零依赖（`scripts/check_zero_deps.py`）与 MCP 协议兼容性（测试）。
+
 ---
 
 ## 🧠 二、全球 AI 顶级思想领袖架构洞见与白泽践行
 
-> **来源说明**：本节 5 条来自仓库内的**手写常量**（`baize/intelligence_radar.py` 里的 `LUMINARIES_INSIGHTS`），**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；请勿把上面的人名读成「某某近期说过这句话」。
+> **来源说明**：本节 5 条来自仓库内的**手写常量**（`baize/intelligence_radar.py` 里的 `LUMINARIES_INSIGHTS`），**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；请勿把上面的人名读成「某某近期说过这句话」。本节「白泽对齐与吸收」里的数字同样是手写表述，**未经测量**。
 
 ### 👤 Andrej Karpathy (卡帕西) · *Former Tesla AI Director / OpenAI Co-founder*
 - **核心思想**：`LLM as an Operating System Kernel (大模型即操作系统内核)`
@@ -50,7 +52,7 @@
 ### 👤 杨植麟 (Zhilin Yang) · *Moonshot AI (月之暗面 / Kimi) Founder*
 - **核心思想**：`Ultra Long-Context Fidelity & Attention Invariant Anchoring (超长上下文无损与注意力不变量)`
 - **思想概述（白泽团队手写整理，无出处）**：在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。
-- **白泽对齐与吸收**：✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（节省 70% Token），消灭了长程漂移！
+- **白泽对齐与吸收**：✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（Token 压缩比按调用实测，非固定比例），消灭了长程漂移！
 
 ---
 
