@@ -23,29 +23,31 @@
 
 ## 🧠 二、全球 AI 顶级思想领袖架构洞见与白泽践行
 
+> **来源说明**：本节 5 条来自仓库内的**手写常量**（`baize/intelligence_radar.py` 里的 `LUMINARIES_INSIGHTS`），**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；请勿把上面的人名读成「某某近期说过这句话」。
+
 ### 👤 Andrej Karpathy (卡帕西) · *Former Tesla AI Director / OpenAI Co-founder*
 - **核心思想**：`LLM as an Operating System Kernel (大模型即操作系统内核)`
-- **最新洞见**：> *“未来的 Agent 不应该依赖上百个复杂的 Python 第三方库，最优雅的 Agent 应该像 minGPT/llama.c 一样极简纯粹，由标准库和清晰的系统调用（Syscalls）组成。”*
+- **思想概述（白泽团队手写整理，无出处）**：未来的 Agent 不应该依赖上百个复杂的 Python 第三方库，最优雅的 Agent 应该像 minGPT/llama.c 一样极简纯粹，由标准库和清晰的系统调用（Syscalls）组成。
 - **白泽对齐与吸收**：✅ 白泽从第一天起坚持 100% 纯 Python 标准库零依赖，完全吻合 Karpathy 的极简内核哲学！
 
 ### 👤 Sam Altman (奥特曼) · *OpenAI CEO*
 - **核心思想**：`Action-Oriented Verifiable Autonomous Agents (可验证的物理行动型智能体)`
-- **最新洞见**：> *“下一代 Agent 最核心的门槛是『可靠性与无幻觉交付』。不能只看 LLM 说什么，必须有物理世界或代码世界的实际执行凭证（Ground Truth Verification）。”*
+- **思想概述（白泽团队手写整理，无出处）**：下一代 Agent 最核心的门槛是『可靠性与无幻觉交付』。不能只看 LLM 说什么，必须有物理世界或代码世界的实际执行凭证（Ground Truth Verification）。
 - **白泽对齐与吸收**：✅ 白泽独创的 NO FAKE DONE 真实物理防伪门禁与拜占庭共识签名，正是物理可验证的最佳实践！
 
 ### 👤 贾扬清 (Yangqing Jia) · *Lepton AI Founder / Caffe Creator*
 - **核心思想**：`Sub-millisecond End-to-End Latency & Stream Engineering (极低延迟与流式工程)`
-- **最新洞见**：> *“开发者对 Agent 的耐心是以毫秒计算的。启动一个 Shell 进程若花 300ms 就会产生严重顿挫感，持久化连接与极速流式推送是工程落地的关键。”*
+- **思想概述（白泽团队手写整理，无出处）**：开发者对 Agent 的耐心是以毫秒计算的。启动一个 Shell 进程若花 300ms 就会产生严重顿挫感，持久化连接与极速流式推送是工程落地的关键。
 - **白泽对齐与吸收**：✅ 白泽首创的常驻 PowerShell REPL 进程池将执行延迟压至 <5ms，彻底贯彻了贾扬清的低延迟原则！
 
 ### 👤 范麟熙 (Jim Fan) · *NVIDIA Senior Research Scientist & Embodied AI Lead*
 - **核心思想**：`Voyager & Self-Evolving Skill Libraries (自主繁衍与终身学习技能库)`
-- **最新洞见**：> *“真正的通用智能体必须具备『合成新工具并自我迭代』的能力，工具库必须像生物基因一样不断繁衍和淘汰（Darwinian Tool Evolution）。”*
+- **思想概述（白泽团队手写整理，无出处）**：真正的通用智能体必须具备『合成新工具并自我迭代』的能力，工具库必须像生物基因一样不断繁衍和淘汰（Darwinian Tool Evolution）。
 - **白泽对齐与吸收**：✅ 白泽内置的达尔文元工具自主繁衍市场与加密基因签名，直接实现了自进化技能闭环！
 
 ### 👤 杨植麟 (Zhilin Yang) · *Moonshot AI (月之暗面 / Kimi) Founder*
 - **核心思想**：`Ultra Long-Context Fidelity & Attention Invariant Anchoring (超长上下文无损与注意力不变量)`
-- **最新洞见**：> *“在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。”*
+- **思想概述（白泽团队手写整理，无出处）**：在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。
 - **白泽对齐与吸收**：✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（节省 70% Token），消灭了长程漂移！
 
 ---

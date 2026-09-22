@@ -19,6 +19,7 @@ from unittest import mock
 
 from baize.intelligence_radar import (
     BENCHMARK_COMPETITORS,
+    LUMINARIES_PROVENANCE,
     BenchmarkCompetitorTracker,
     GitHubAgentRadar,
     LuminariesIntelTracker,
@@ -75,11 +76,47 @@ def _first_ok_then_rate_limited():
 
 class TestIntelligenceRadar(unittest.TestCase):
     def test_github_agent_radar_fetch(self):
+        """It delegates to the competitor tracker; it does not rank by stars.
+
+        The old assertion was `len(repos) == 5` and `"name" in repos[0]`, which
+        passes for any function returning five dicts - so it could not see that
+        the class did none of what its docstring claimed. Pinned instead: the rows
+        *are* the competitor tracker's rows, in its order, and carry no star data.
+        """
         with mock.patch.object(urllib.request, "urlopen", _ok_urlopen()):
             repos = GitHubAgentRadar.fetch_top_agent_repos(5)
-        self.assertIsInstance(repos, list)
-        self.assertEqual(len(repos), 5)
-        self.assertIn("name", repos[0])
+            comps = BenchmarkCompetitorTracker.fetch_competitor_latest_activity(5)
+        self.assertEqual([r["name"] for r in repos], [c["name"] for c in comps])
+        self.assertNotIn(
+            "stars", repos[0],
+            "star data appeared - if the class now really ranks by stars, its "
+            "docstring and this assertion both need updating")
+
+    def test_only_the_commits_endpoint_is_requested(self):
+        """The description must not promise an endpoint the code never calls.
+
+        `BenchmarkCompetitorTracker`'s docstring claimed "release updates and
+        architecture diffs" and its method docstring claimed releases; the only
+        request either made was `/commits?per_page=1`. This pins the request
+        surface, so a description cannot silently outrun it - and so implementing
+        releases forces the docstring to move in the same commit.
+        """
+        seen = []
+
+        def spy(req, *args, **kwargs):
+            seen.append(getattr(req, "full_url", str(req)))
+            return _FakeResponse(json.dumps([CANNED_COMMIT]).encode("utf-8"))
+
+        with mock.patch.object(urllib.request, "urlopen", spy):
+            BenchmarkCompetitorTracker.fetch_competitor_latest_activity(3)
+        self.assertTrue(seen, "no request was made - this test would be vacuous")
+        for url in seen:
+            # Negative first, so the failure message names the endpoint that was
+            # added rather than the one that went missing. Counter-proved by
+            # inserting a real /releases request: this line fires and prints it.
+            self.assertNotIn("/releases", url)
+            self.assertNotIn("/compare", url)
+            self.assertIn("/commits?", url)
 
     def test_benchmark_competitor_tracker(self):
         with mock.patch.object(urllib.request, "urlopen", _ok_urlopen()):
@@ -156,12 +193,49 @@ class TestIntelligenceRadar(unittest.TestCase):
         self.assertNotIn("未获取", content)
 
     def test_luminaries_intel_tracker(self):
-        insights = LuminariesIntelTracker.get_latest_insights()
+        insights = LuminariesIntelTracker.get_insights()
         self.assertTrue(len(insights) >= 5)
         authors = [i["author"] for i in insights]
         self.assertTrue(any("Karpathy" in a for a in authors))
         self.assertTrue(any("Altman" in a for a in authors))
         self.assertTrue(any("贾扬清" in a for a in authors))
+
+    def test_the_luminaries_rows_do_not_claim_to_be_recent(self):
+        """The key was `recent_insight`, and there is no date anywhere in the list.
+
+        A field name is a claim like any other. `get_latest_insights` said
+        "latest" and returned a literal; nothing in this repository records when
+        any of these five paragraphs was written, so "recent" was not merely
+        unverified but unverifiable - and it is the word that let a static list
+        be read as a news feed.
+        """
+        insights = LuminariesIntelTracker.get_insights()
+        for row in insights:
+            self.assertNotIn(
+                "recent_insight", row,
+                f"{row.get('author')!r} still carries a key claiming recency")
+            self.assertIn("insight_summary", row)
+            self.assertTrue(row["insight_summary"].strip())
+
+    def test_the_report_does_not_quote_the_repository_s_own_prose(self):
+        """Our paragraph, under a real person's name, wrapped in quotation marks.
+
+        `- **最新洞见**：> *“...”*` renders as a citation, and the text is a literal
+        in `intelligence_radar.py` with no recorded origin. Quotation marks are
+        not decoration: they are the part that makes a reader believe the named
+        person said it.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch.object(urllib.request, "urlopen", _ok_urlopen()):
+                report_intel, _ = generate_daily_evolution_report(output_dir=tmp_dir)
+            content = Path(report_intel).read_text(encoding="utf-8")
+        self.assertIn(LUMINARIES_PROVENANCE, content)
+        self.assertNotIn("**最新洞见**", content)
+        self.assertNotIn("> *“", content)
+        # The prose itself is still published - just not as somebody's words.
+        for row in LuminariesIntelTracker.get_insights():
+            self.assertIn(row["insight_summary"], content)
+            self.assertNotIn(f'*“{row["insight_summary"]}”*', content)
 
     def test_generate_daily_evolution_report(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -205,6 +279,49 @@ class TestIntelligenceRadar(unittest.TestCase):
 ROOT = Path(__file__).resolve().parent.parent
 RADAR_DIR = ROOT / "docs" / "radar"
 PLACEHOLDER_MSG = "持续演进与功能迭代"
+LUMINARIES_HEADING = "## 🧠 二、全球 AI 顶级思想领袖架构洞见与白泽践行"
+SECTION_THREE_HEADING = "## 🛠️ 三、"
+
+
+def _reports_missing_luminaries_origin(directory: Path) -> list[str]:
+    """Reports with a luminaries section that never say where that section came from.
+
+    The same failure as the commit column, one layer down. The five paragraphs are
+    hand-written constants, but the renderer put each one inside “” under a real
+    person's name - so the report presented this repository's prose as those
+    people's words. Silence about the origin is the whole mechanism: with a note,
+    a reader knows what they are reading; without one, the quotation marks decide.
+
+    Scope is "files that contain the section". `UPGRADE_RFC_LATEST.md` has none,
+    and a file cannot mis-state the origin of a section it does not have - the
+    same boundary mistake as the commit-column probe's first version, so it is
+    pinned by `test_the_luminaries_probe_ignores_a_report_without_the_section`.
+    """
+    missing = []
+    for path in sorted(directory.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if LUMINARIES_HEADING not in text:
+            continue
+        if LUMINARIES_PROVENANCE not in text:
+            missing.append(path.name)
+    return missing
+
+
+def _luminaries_section(text: str) -> str | None:
+    """Section two verbatim, or None when this file has no such section.
+
+    Everything between the section-two heading and section three is static - no
+    date, no fetched value - so a committed report and a fresh run must agree on
+    it character for character. That is what makes an exact comparison possible
+    instead of a marker check, which a hand-edited file would still pass.
+    """
+    start = text.find(LUMINARIES_HEADING)
+    if start == -1:
+        return None
+    end = text.find(SECTION_THREE_HEADING, start)
+    if end == -1:
+        return None
+    return text[start:end]
 
 
 def _reports_missing_provenance(directory: Path) -> list[str]:
@@ -286,6 +403,61 @@ class TestCommittedRadarReports(unittest.TestCase):
                     "均成功读取 GitHub API", text,
                     f"{path.name} contains placeholder commit cells and also claims "
                     f"that every competitor was fetched successfully")
+
+    # ---------------------------------------------- the luminaries section
+
+    def test_the_luminaries_probe_can_fail(self):
+        """Calibration: a probe that always finds nothing passes the rest by luck."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "DAILY_INTEL_20990201.md").write_text(
+                f"{LUMINARIES_HEADING}\n\n"
+                "### 👤 Someone\n- **最新洞见**：> *“a hand-written line”*\n",
+                encoding="utf-8")
+            self.assertEqual(_reports_missing_luminaries_origin(d),
+                             ["DAILY_INTEL_20990201.md"])
+
+    def test_the_luminaries_probe_ignores_a_report_without_the_section(self):
+        """Boundary, pinned on purpose: the RFC pointer has no luminaries section,
+        and a gate that fires on a legitimate file is how a gate gets switched off."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "UPGRADE_RFC_LATEST.md").write_text(
+                "## 🛠️ 静态能力矩阵\n\n| a | b |\n", encoding="utf-8")
+            self.assertEqual(_reports_missing_luminaries_origin(d), [])
+
+    def test_every_committed_report_states_where_the_luminaries_section_came_from(self):
+        reports = sorted(RADAR_DIR.glob("*.md"))
+        self.assertTrue(reports, "no reports found - this test would be vacuous")
+        self.assertEqual(
+            _reports_missing_luminaries_origin(RADAR_DIR), [],
+            "these committed reports print five hand-written paragraphs inside "
+            "quotation marks under real people's names, and never say the text is "
+            "this repository's own")
+
+    def test_the_committed_luminaries_section_is_what_the_generator_now_emits(self):
+        """The files must *equal* the renderer output, not merely contain a marker.
+
+        A marker check passes on a file whose five paragraphs were hand-edited
+        afterwards. Section two is fully static, so it can be compared exactly.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch.object(urllib.request, "urlopen", _ok_urlopen()):
+                report_intel, _ = generate_daily_evolution_report(output_dir=tmp_dir)
+            fresh = _luminaries_section(
+                Path(report_intel).read_text(encoding="utf-8"))
+        self.assertIsNotNone(fresh, "the generator no longer emits the section")
+        checked = 0
+        for path in sorted(RADAR_DIR.glob("DAILY_INTEL_*.md")):
+            section = _luminaries_section(path.read_text(encoding="utf-8"))
+            if section is None:
+                continue
+            checked += 1
+            self.assertEqual(
+                section, fresh,
+                f"{path.name}: section two is not what the current renderer "
+                f"produces - the file was edited, or the renderer moved without it")
+        self.assertTrue(checked, "no committed report had the section - vacuous")
 
 
 if __name__ == "__main__":

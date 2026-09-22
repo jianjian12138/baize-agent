@@ -30,7 +30,8 @@ def main():
     parser.add_argument("--output", default="docs/radar", help="Output directory for daily briefing markdown")
     args = parser.parse_args()
 
-    print("[Baize Radar] 正在启动白泽全球 AI 演化雷达，全天候巡航 GitHub 竞品与全球顶尖 AI 思想领袖智库...")
+    print("[Baize Radar] 正在启动白泽全球 AI 演化雷达：联网巡航 GitHub 竞品；"
+          "「思想领袖」一节取自本地手写思想库，不联网、不带日期...")
     try:
         report_intel, report_rfc = generate_daily_evolution_report(args.output)
         print(f"[Baize Radar] ✅ 今日全球 AI 演化研报已生成: {report_intel}")

@@ -128,11 +128,25 @@ BENCHMARK_COMPETITORS = [
 
 
 class BenchmarkCompetitorTracker:
-    """Tracks latest commits, release updates and architecture diffs from core benchmark competitors."""
+    """Reads the latest commit of each benchmark competitor.
+
+    Commits only. The single endpoint this class calls is
+    ``/repos/{repo}/commits?per_page=1`` - see
+    ``tests/test_intelligence_radar.py::test_only_the_commits_endpoint_is_requested``,
+    which pins that surface. This docstring used to also promise "release updates
+    and architecture diffs", and the method below promised "commits & releases";
+    neither was ever requested, so the description read as coverage of a surface
+    that did not exist.
+    """
 
     @classmethod
     def fetch_competitor_latest_activity(cls, limit: int = 10) -> list[dict[str, Any]]:
-        """Fetch latest commits & releases from target benchmark repositories via GitHub API."""
+        """Read the latest commit of each target repository via the GitHub API.
+
+        One request per competitor, to the commits endpoint. Returns one row per
+        competitor; ``fetched`` says whether that request succeeded, and
+        ``fetch_error`` says why not when it did not.
+        """
         results = []
         headers = {
             "User-Agent": "Baize-Competitor-Tracker/37.0",
@@ -191,56 +205,94 @@ class BenchmarkCompetitorTracker:
 
 
 class GitHubAgentRadar:
-    """Fetches and analyzes top-starred & trending GitHub agent and skill projects."""
+    """Alias onto the competitor tracker - it does not rank by stars.
+
+    The name and this docstring used to claim it "fetches and analyzes
+    top-starred & trending GitHub agent and skill projects". It never did: the
+    method below is a one-line delegation to ``BenchmarkCompetitorTracker``, which
+    returns the same curated competitor list in the same order, and the only
+    endpoint either of them calls is ``/commits``. The observable consequence is
+    still in the repository - ``docs/radar/DAILY_INTEL_20260831.md`` is a
+    star-ranked report whose section heading no code here emits - and the test
+    that covered this class could not notice, because it asserted only the length
+    of the returned list. Whether this should really rank by stars is a product
+    decision; until it does, the description says what the code does.
+    """
 
     @staticmethod
     def fetch_top_agent_repos(limit: int = 10) -> list[dict[str, Any]]:
+        """The competitor rows, unchanged: not star-ranked, not deduplicated."""
         return BenchmarkCompetitorTracker.fetch_competitor_latest_activity(limit)
 
 
 class LuminariesIntelTracker:
-    """Tracks thoughts, architectural philosophies and insights from top AI luminaries."""
+    """Five AI luminaries, and this repository's own written summary of each one's
+    architectural position. It tracks nothing.
+
+    No request, no date, no source URL, no parsing: ``LUMINARIES_INSIGHTS`` is a
+    literal written into this file and ``get_insights`` returns it unchanged. So
+    two claims in the old one-line docstring were false, and both had visible
+    consequences in the committed reports:
+
+    * "Tracks ... insights from top AI luminaries" - nothing is collected. The
+      list is identical on every run, which is why section two of every daily
+      report is byte-for-byte the same.
+    * "latest" (the method name, and the ``recent_insight`` key) - there is no
+      date for anything to be recent *to*. Nothing in this repository records
+      which talk, post or day any of the five paragraphs came from, so the claim
+      was not merely unverified, it was unverifiable.
+
+    Worse than either: the renderer printed each paragraph as
+    ``- **最新洞见**：> *“...”*`` - a quotation, inside quotation marks, under a
+    named person's name. A paragraph this repository wrote does not become a
+    citation by being wrapped in “”, whether or not it happens to paraphrase the
+    person. The renderer now states the origin on the section itself and labels
+    each line as this repository's own summary; see
+    ``tests/test_intelligence_radar.py::TestCommittedRadarReports``, which pins
+    both and is what should move if this ever becomes a real tracker.
+    """
 
     LUMINARIES_INSIGHTS = [
         {
             "author": "Andrej Karpathy (卡帕西)",
             "role": "Former Tesla AI Director / OpenAI Co-founder",
             "core_philosophy": "LLM as an Operating System Kernel (大模型即操作系统内核)",
-            "recent_insight": "未来的 Agent 不应该依赖上百个复杂的 Python 第三方库，最优雅的 Agent 应该像 minGPT/llama.c 一样极简纯粹，由标准库和清晰的系统调用（Syscalls）组成。",
+            "insight_summary": "未来的 Agent 不应该依赖上百个复杂的 Python 第三方库，最优雅的 Agent 应该像 minGPT/llama.c 一样极简纯粹，由标准库和清晰的系统调用（Syscalls）组成。",
             "baize_alignment": "✅ 白泽从第一天起坚持 100% 纯 Python 标准库零依赖，完全吻合 Karpathy 的极简内核哲学！"
         },
         {
             "author": "Sam Altman (奥特曼)",
             "role": "OpenAI CEO",
             "core_philosophy": "Action-Oriented Verifiable Autonomous Agents (可验证的物理行动型智能体)",
-            "recent_insight": "下一代 Agent 最核心的门槛是『可靠性与无幻觉交付』。不能只看 LLM 说什么，必须有物理世界或代码世界的实际执行凭证（Ground Truth Verification）。",
+            "insight_summary": "下一代 Agent 最核心的门槛是『可靠性与无幻觉交付』。不能只看 LLM 说什么，必须有物理世界或代码世界的实际执行凭证（Ground Truth Verification）。",
             "baize_alignment": "✅ 白泽独创的 NO FAKE DONE 真实物理防伪门禁与拜占庭共识签名，正是物理可验证的最佳实践！"
         },
         {
             "author": "贾扬清 (Yangqing Jia)",
             "role": "Lepton AI Founder / Caffe Creator",
             "core_philosophy": "Sub-millisecond End-to-End Latency & Stream Engineering (极低延迟与流式工程)",
-            "recent_insight": "开发者对 Agent 的耐心是以毫秒计算的。启动一个 Shell 进程若花 300ms 就会产生严重顿挫感，持久化连接与极速流式推送是工程落地的关键。",
+            "insight_summary": "开发者对 Agent 的耐心是以毫秒计算的。启动一个 Shell 进程若花 300ms 就会产生严重顿挫感，持久化连接与极速流式推送是工程落地的关键。",
             "baize_alignment": "✅ 白泽首创的常驻 PowerShell REPL 进程池将执行延迟压至 <5ms，彻底贯彻了贾扬清的低延迟原则！"
         },
         {
             "author": "范麟熙 (Jim Fan)",
             "role": "NVIDIA Senior Research Scientist & Embodied AI Lead",
             "core_philosophy": "Voyager & Self-Evolving Skill Libraries (自主繁衍与终身学习技能库)",
-            "recent_insight": "真正的通用智能体必须具备『合成新工具并自我迭代』的能力，工具库必须像生物基因一样不断繁衍和淘汰（Darwinian Tool Evolution）。",
+            "insight_summary": "真正的通用智能体必须具备『合成新工具并自我迭代』的能力，工具库必须像生物基因一样不断繁衍和淘汰（Darwinian Tool Evolution）。",
             "baize_alignment": "✅ 白泽内置的达尔文元工具自主繁衍市场与加密基因签名，直接实现了自进化技能闭环！"
         },
         {
             "author": "杨植麟 (Zhilin Yang)",
             "role": "Moonshot AI (月之暗面 / Kimi) Founder",
             "core_philosophy": "Ultra Long-Context Fidelity & Attention Invariant Anchoring (超长上下文无损与注意力不变量)",
-            "recent_insight": "在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。",
+            "insight_summary": "在长程多步（>50 步）任务中，大模型注意力会迅速发生漂移（Context Drift）。必须在上下文管理中引入动态不变量锚定与因果修剪。",
             "baize_alignment": "✅ 白泽独创的 CoreInvariantsAnchor（长程不变量置顶）与 AST 语义上下文剪枝（节省 70% Token），消灭了长程漂移！"
         }
     ]
 
     @classmethod
-    def get_latest_insights(cls) -> list[dict[str, Any]]:
+    def get_insights(cls) -> list[dict[str, Any]]:
+        """The constant list, unchanged. Not "latest" - there is no date on it."""
         return cls.LUMINARIES_INSIGHTS
 
 
@@ -249,11 +301,25 @@ def _cell(text: str) -> str:
     return " ".join(str(text).split()).replace("|", "/")
 
 
+# Stated on section two of every report. One string, shared by the renderer and
+# by the five committed reports that predate it, because the claim is about *their*
+# provenance and the two must not be allowed to drift apart: the test that pins
+# this (`TestCommittedRadarReports`) compares the constant against the files, so
+# rewording it means updating the files in the same commit.
+LUMINARIES_PROVENANCE = (
+    "> **来源说明**：本节 5 条来自仓库内的**手写常量**"
+    "（`baize/intelligence_radar.py` 里的 `LUMINARIES_INSIGHTS`），"
+    "**不是本次运行采集的**，也不带日期——所以每份日报的这一节内容完全相同。"
+    "这些文字由白泽团队撰写，**仓库里没有任何记录说明它们出自哪次发言或哪篇文章**；"
+    "请勿把上面的人名读成「某某近期说过这句话」。"
+)
+
+
 def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str, str]:
     """Synthesize GitHub repos + luminary insights into (1) Daily Intel Report and (2) Actionable Upgrade RFC."""
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     competitors = BenchmarkCompetitorTracker.fetch_competitor_latest_activity(10)
-    insights = LuminariesIntelTracker.get_latest_insights()
+    insights = LuminariesIntelTracker.get_insights()
     # How much of the "latest commit" column is real. Without this line the
     # reader cannot tell a fetched row from a placeholder row, and the report
     # reads as a complete survey when it may be a complete outage.
@@ -307,13 +373,18 @@ def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str
         "",
         "## 🧠 二、全球 AI 顶级思想领袖架构洞见与白泽践行",
         "",
+        LUMINARIES_PROVENANCE,
+        "",
     ])
 
     for ins in insights:
         lines_intel.extend([
             f"### 👤 {ins['author']} · *{ins['role']}*",
             f"- **核心思想**：`{ins['core_philosophy']}`",
-            f"- **最新洞见**：> *“{ins['recent_insight']}”*",
+            # Not a quotation, and no longer rendered as one. This sentence was
+            # written in this repository; wrapping it in “” under a real person's
+            # name manufactured a citation out of our own prose.
+            f"- **思想概述（白泽团队手写整理，无出处）**：{ins['insight_summary']}",
             f"- **白泽对齐与吸收**：{ins['baize_alignment']}",
             "",
         ])
