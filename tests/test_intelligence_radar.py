@@ -192,5 +192,101 @@ class TestIntelligenceRadar(unittest.TestCase):
             self.assertIsInstance(row["fetched"], bool)
 
 
+# ------------------------------------------------- committed report artifacts
+#
+# Everything above calls the generator, so it only ever sees a *fresh* report.
+# The two reports the generator printed before the placeholder fix are still in
+# the repository, and nothing looked at them - the same shape as `.gitignore` not
+# applying retroactively: a gate over the code path says nothing about what is
+# already on disk. Observed in the real files: ten rows of a column titled
+# "最新 Commit / 动态" holding `main` / the generation date / 持续演进与功能迭代,
+# with no statement anywhere that nothing had been fetched.
+
+ROOT = Path(__file__).resolve().parent.parent
+RADAR_DIR = ROOT / "docs" / "radar"
+PLACEHOLDER_MSG = "持续演进与功能迭代"
+
+
+def _reports_missing_provenance(directory: Path) -> list[str]:
+    """Daily reports that carry a commit column but never say how much of it is real.
+
+    A report full of placeholder cells is not wrong by itself - the fetch may
+    have failed, and that is a fact worth recording. What is wrong is a report
+    that *stays silent* about it: a placeholder cell and a fetched cell render
+    identically, so silence is what turns an outage into a survey.
+
+    Scope is the competitor report shape - a table with a column titled
+    "最新 Commit / 动态". `DAILY_INTEL_20260831.md` is a different report (a star
+    ranking that no code in this repository generates), so it has no commit
+    column and is deliberately out of scope: a file cannot mis-state the
+    provenance of a column it does not have. This scope was got wrong once - the
+    first version of this probe reported 0831 - so the boundary is pinned by
+    `test_the_probe_ignores_a_report_without_a_commit_column` below.
+    """
+    missing = []
+    for path in sorted(directory.glob("DAILY_INTEL_*.md")):
+        text = path.read_text(encoding="utf-8")
+        if "最新 Commit / 动态" not in text:
+            continue
+        if "**数据完整性**" not in text:
+            missing.append(path.name)
+    return missing
+
+
+class TestCommittedRadarReports(unittest.TestCase):
+    def test_the_probe_can_fail(self):
+        """Calibration: a probe that always finds nothing would pass everything
+        below by accident."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "DAILY_INTEL_20990101.md").write_text(
+                "| 标杆竞品 | 官方仓库 | 最新 Commit / 动态 | 焦点 | 优势 |\n"
+                f"| **X** | `main` (2099-01-01)<br>*{PLACEHOLDER_MSG}* |\n",
+                encoding="utf-8")
+            self.assertEqual(_reports_missing_provenance(d),
+                             ["DAILY_INTEL_20990101.md"])
+
+    def test_the_probe_does_not_fire_on_a_report_that_states_its_provenance(self):
+        """The other half: the probe must not report a file that is honest."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "DAILY_INTEL_20990102.md").write_text(
+                "| 标杆竞品 | 官方仓库 | 最新 Commit / 动态 | 焦点 | 优势 |\n"
+                "> **数据完整性**：10 个竞品中仅 **0 个**成功读取 GitHub API。\n",
+                encoding="utf-8")
+            self.assertEqual(_reports_missing_provenance(d), [])
+
+    def test_the_probe_ignores_a_report_without_a_commit_column(self):
+        """Scope, pinned because I got it wrong: the first version of this probe
+        reported `DAILY_INTEL_20260831.md`, which is a star ranking with no commit
+        column and no generator in this repository. A gate that fires on a
+        legitimate file is how a gate gets switched off."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "DAILY_INTEL_20990103.md").write_text(
+                "| 排名 | 仓库名称 | ⭐ Stars | 技术特点 | 建议 |\n"
+                "| **1** | **[a/b](https://github.com/a/b)** | `238,722` | x | y |\n",
+                encoding="utf-8")
+            self.assertEqual(_reports_missing_provenance(d), [])
+
+    def test_every_committed_daily_report_states_its_provenance(self):
+        reports = sorted(RADAR_DIR.glob("DAILY_INTEL_*.md"))
+        self.assertTrue(reports, "no daily reports found - this test would be vacuous")
+        self.assertEqual(
+            _reports_missing_provenance(RADAR_DIR), [],
+            "these committed reports never say how much of their Commit column was "
+            "actually fetched, so a placeholder cell reads exactly like a real one")
+
+    def test_a_report_with_placeholders_cannot_claim_a_complete_survey(self):
+        """The two claims are mutually exclusive, and only this checks it."""
+        for path in sorted(RADAR_DIR.glob("DAILY_INTEL_*.md")):
+            text = path.read_text(encoding="utf-8")
+            if PLACEHOLDER_MSG in text:
+                self.assertNotIn(
+                    "均成功读取 GitHub API", text,
+                    f"{path.name} contains placeholder commit cells and also claims "
+                    f"that every competitor was fetched successfully")
+
+
 if __name__ == "__main__":
     unittest.main()
