@@ -10,6 +10,7 @@ the parse path measurable and the result deterministic.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 import urllib.error
@@ -278,9 +279,52 @@ class TestIntelligenceRadar(unittest.TestCase):
 
 ROOT = Path(__file__).resolve().parent.parent
 RADAR_DIR = ROOT / "docs" / "radar"
+SKILLS_DIR = ROOT / "assets" / "skills"
 PLACEHOLDER_MSG = "持续演进与功能迭代"
 LUMINARIES_HEADING = "## 🧠 二、全球 AI 顶级思想领袖架构洞见与白泽践行"
 SECTION_THREE_HEADING = "## 🛠️ 三、"
+MISSION_MARK = "**雷达使命**"
+MISSION_FALSE_CLAIM = "大佬前沿思想"
+
+
+def _reports_with_a_false_mission_line(directory: Path) -> list[str]:
+    """Reports whose own first line claims the radar tracks luminary thought daily.
+
+    The section-17 fix corrected section two and left the mission line above it
+    claiming the opposite: "每日全天候跟踪 ... 全球顶尖 AI 大佬前沿思想". A report that
+    contradicts itself on its own first page is worse than either half alone - the
+    mission line is what a reader believes *before* they reach the note that
+    corrects it, and a reader who stops early only ever sees the claim.
+
+    Scope is files carrying the mission line, the same boundary rule as the other
+    two probes: `UPGRADE_RFC_LATEST.md` has no mission line, and a file cannot
+    mis-state a line it does not have.
+    """
+    bad = []
+    for path in sorted(directory.glob("*.md")):
+        for line in path.read_text(encoding="utf-8").split("\n"):
+            if MISSION_MARK in line and MISSION_FALSE_CLAIM in line:
+                bad.append(path.name)
+                break
+    return bad
+
+
+# Italics wrapping quotation marks around a whole line: the epigraph convention.
+# It reads as "somebody's words" while naming nobody, and nothing in this
+# repository records a source for any of them. One of the six sat at the bottom of
+# a skill named after a real person, where the surrounding prose supplied the
+# attribution that the quote marks only implied.
+UNATTRIBUTED_EPIGRAPH = re.compile(r"^\s*\*[\u201c\u201d](?P<body>.+)[\u201c\u201d]\*\s*$")
+
+
+def _files_with_unattributed_epigraphs(root: Path) -> list[str]:
+    bad = []
+    for path in sorted(root.rglob("*.md")):
+        for line in path.read_text(encoding="utf-8").split("\n"):
+            if UNATTRIBUTED_EPIGRAPH.match(line):
+                bad.append(str(path.relative_to(root)).replace("\\", "/"))
+                break
+    return bad
 
 
 def _reports_missing_luminaries_origin(directory: Path) -> list[str]:
@@ -458,6 +502,94 @@ class TestCommittedRadarReports(unittest.TestCase):
                 f"{path.name}: section two is not what the current renderer "
                 f"produces - the file was edited, or the renderer moved without it")
         self.assertTrue(checked, "no committed report had the section - vacuous")
+
+    # ---------------------------------------------- the mission line
+
+    def test_the_mission_line_probe_can_fail(self):
+        """Calibration."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "DAILY_INTEL_20990301.md").write_text(
+                f"> {MISSION_MARK}：每日全天候跟踪 ... 与全球顶尖 AI 大佬前沿思想，"
+                f"为白泽智能体提供坚实的超越依据！\n", encoding="utf-8")
+            self.assertEqual(_reports_with_a_false_mission_line(d),
+                             ["DAILY_INTEL_20990301.md"])
+
+    def test_the_mission_line_probe_ignores_a_report_without_one(self):
+        """Boundary: the RFC pointer has no mission line."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "UPGRADE_RFC_LATEST.md").write_text(
+                "## 🛠️ 静态能力矩阵\n\n| a | b |\n", encoding="utf-8")
+            self.assertEqual(_reports_with_a_false_mission_line(d), [])
+
+    def test_no_committed_report_claims_daily_luminary_tracking(self):
+        reports = sorted(RADAR_DIR.glob("*.md"))
+        self.assertTrue(reports, "no reports found - this test would be vacuous")
+        self.assertEqual(
+            _reports_with_a_false_mission_line(RADAR_DIR), [],
+            "these reports open by claiming the radar tracks luminary thought "
+            "daily, while section two is a hand-written constant that had not "
+            "changed in 19 days")
+
+    def test_the_current_reports_mission_line_is_what_the_generator_emits(self):
+        """The four post-tracker reports must carry the renderer's line verbatim.
+
+        `DAILY_INTEL_20260831.md` is excluded on purpose: it predates the
+        competitor tracker and its first half describes a star-ranked Top-10
+        search, which its own generator really did run (verified in `32f4d3a`).
+        Only its luminary half was false, so only that half was corrected, and
+        asserting identity with today's renderer would be wrong for it.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch.object(urllib.request, "urlopen", _ok_urlopen()):
+                report_intel, _ = generate_daily_evolution_report(output_dir=tmp_dir)
+            fresh = next(ln for ln in Path(report_intel).read_text(
+                encoding="utf-8").split("\n") if MISSION_MARK in ln)
+        checked = 0
+        for path in sorted(RADAR_DIR.glob("DAILY_INTEL_*.md")):
+            if path.name == "DAILY_INTEL_20260831.md":
+                continue
+            line = next((ln for ln in path.read_text(encoding="utf-8").split("\n")
+                         if MISSION_MARK in ln), None)
+            if line is None:
+                continue
+            checked += 1
+            self.assertEqual(line, fresh,
+                             f"{path.name}: mission line is not the renderer's")
+        self.assertTrue(checked, "no report had a mission line - vacuous")
+
+
+class TestAttributedProse(unittest.TestCase):
+    """Prose this repository wrote, formatted so a reader attributes it elsewhere."""
+
+    def test_the_epigraph_probe_can_fail(self):
+        """Calibration."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "some_skill").mkdir()
+            (d / "some_skill" / "SKILL.md").write_text(
+                "*\u201cSome maxim nobody is named for.\u201d*\n", encoding="utf-8")
+            self.assertEqual(_files_with_unattributed_epigraphs(d),
+                             ["some_skill/SKILL.md"])
+
+    def test_the_epigraph_probe_ignores_a_labelled_line(self):
+        """The other half: a labelled line makes the same sentence legitimate."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = Path(tmp_dir)
+            (d / "some_skill").mkdir()
+            (d / "some_skill" / "SKILL.md").write_text(
+                "*白泽手写整理，无注明出处：Some maxim nobody is named for.*\n",
+                encoding="utf-8")
+            self.assertEqual(_files_with_unattributed_epigraphs(d), [])
+
+    def test_no_skill_ends_with_an_unattributed_quotation(self):
+        self.assertTrue(SKILLS_DIR.is_dir(), "skills library not found")
+        self.assertEqual(
+            _files_with_unattributed_epigraphs(SKILLS_DIR), [],
+            "these skill files end with an italic quotation naming no source; the "
+            "epigraph format reads as somebody's words, and one of them sits in a "
+            "skill named after a real person")
 
 
 if __name__ == "__main__":

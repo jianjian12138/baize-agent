@@ -27,4 +27,4 @@ domain: Logic-Precision
 - **逻辑闭环**：每一处变更必须在 `task.md` 中有对应的原子验证项。
 
 ---
-*“Precision is the final sovereignty over hallucination.”*
+*白泽手写整理，无注明出处：Precision is the final sovereignty over hallucination.*

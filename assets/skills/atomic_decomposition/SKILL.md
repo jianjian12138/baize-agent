@@ -27,4 +27,4 @@ domain: Task-Entropy-Control
 - **`任务分解.md`**：作为本 JSON 状态机的可读化快照，供主公审查。
 
 ---
-*“Complexity is defeated by the relentless execution of the obvious.”*
+*白泽手写整理，无注明出处：Complexity is defeated by the relentless execution of the obvious.*

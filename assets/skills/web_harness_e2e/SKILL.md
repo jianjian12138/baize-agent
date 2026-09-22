@@ -25,4 +25,4 @@ domain: QA-Separation-of-Powers
 - `Matrix-Surgical-Probe` (引擎内置探测器)
 
 ---
-*“Trust is synthesized through independent verification.”*
+*白泽手写整理，无注明出处：Trust is synthesized through independent verification.*

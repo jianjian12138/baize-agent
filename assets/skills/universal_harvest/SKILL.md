@@ -23,4 +23,4 @@ domain: Multi-Source-Requirements
 - **结果降解**：所有输入必须统一解构为符合 OpenSpec 的 [**`需求文档.md`**](file:///d:/gogogo/assets/templates/) 格式。
 
 ---
-*“Capture the chaos, output the truth.”*
+*白泽手写整理，无注明出处：Capture the chaos, output the truth.*

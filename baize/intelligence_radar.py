@@ -314,6 +314,16 @@ LUMINARIES_PROVENANCE = (
     "请勿把上面的人名读成「某某近期说过这句话」。"
 )
 
+# The mission line used to end with "与全球顶尖 AI 大佬前沿思想", i.e. it claimed the
+# radar tracks luminary thought daily - the one thing section two demonstrably does
+# not do. A report whose first line contradicts its own second section is worse than
+# either half alone: the mission line is what a reader believes before they reach the
+# note. Shared with the committed reports for the same reason as the note above.
+RADAR_MISSION_TAIL = (
+    "**第二节的思想领袖内容不在此列**：那是本地手写思想库，不联网、不带日期，"
+    "见该节的来源说明。"
+)
+
 
 def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str, str]:
     """Synthesize GitHub repos + luminary insights into (1) Daily Intel Report and (2) Actionable Upgrade RFC."""
@@ -340,7 +350,9 @@ def generate_daily_evolution_report(output_dir: str = "docs/radar") -> tuple[str
     lines_intel = [
         f"# 🛰️ 白泽全球 AI 标杆竞品追踪与思想雷达日报 ({today_str})",
         "",
-        "> **雷达使命**：**『吸其精粹、以我为主、去伪存真』** —— 每日全天候跟踪 **Hermes、DeepSeek、OpenHands、Codex、Claude Code、Pi、Aider、Cline、MetaGPT** 核心标杆代码变更与全球顶尖 AI 大佬前沿思想，为白泽智能体提供坚实的超越依据！",
+        f"> **雷达使命**：**『吸其精粹、以我为主、去伪存真』** —— 每日跟踪 "
+        f"**Hermes、DeepSeek、OpenHands、Codex、Claude Code、Pi、Aider、Cline、MetaGPT** "
+        f"的核心标杆代码变更（联网，逐行标注是否真的取到）。{RADAR_MISSION_TAIL}",
         "",
         "---",
         "",

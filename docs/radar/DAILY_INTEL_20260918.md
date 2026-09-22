@@ -1,6 +1,6 @@
 # 🛰️ 白泽全球 AI 标杆竞品追踪与思想雷达日报 (2026-09-18)
 
-> **雷达使命**：**『吸其精粹、以我为主、去伪存真』** —— 每日全天候跟踪 **Hermes、DeepSeek、OpenHands、Codex、Claude Code、Pi、Aider、Cline、MetaGPT** 核心标杆代码变更与全球顶尖 AI 大佬前沿思想，为白泽智能体提供坚实的超越依据！
+> **雷达使命**：**『吸其精粹、以我为主、去伪存真』** —— 每日跟踪 **Hermes、DeepSeek、OpenHands、Codex、Claude Code、Pi、Aider、Cline、MetaGPT** 的核心标杆代码变更（联网，逐行标注是否真的取到）。**第二节的思想领袖内容不在此列**：那是本地手写思想库，不联网、不带日期，见该节的来源说明。
 
 ---
 

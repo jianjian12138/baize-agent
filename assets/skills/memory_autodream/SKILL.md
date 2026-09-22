@@ -25,4 +25,4 @@ domain: Memory-Governance
 - [**`persistence/EVOLUTION_AUDIT.md`**](file:///d:/gogogo/persistence/EVOLUTION_AUDIT.md)
 
 ---
-*“Clean memory is the fuel for clear logic.”*
+*白泽手写整理，无注明出处：Clean memory is the fuel for clear logic.*

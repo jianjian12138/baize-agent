@@ -26,4 +26,4 @@ domain: Proof-by-Contradiction
 - `Vue Devtools` (状态一致性审计)
 
 ---
-*“Stability is not the absence of errors, but the containment of their proof.”*
+*白泽手写整理，无注明出处：Stability is not the absence of errors, but the containment of their proof.*
