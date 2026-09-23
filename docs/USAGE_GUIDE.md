@@ -184,7 +184,7 @@ baize [SUBCOMMAND] [OPTIONS]
 
 | HTTP 端点 | 方法 | 功能描述 | 请求参数示例 / 响应格式 |
 | :--- | :---: | :--- | :--- |
-| `/health` | `GET` | 探针健康状态与当前版本 | 返回 `{"status":"ok","version":"36.0.0"}` |
+| `/health` | `GET` | 探针健康状态与当前版本 | 返回 `{"status":"ok","version":"37.0.0"}` |
 | `/run` | `POST` | 阻塞式执行自主任务 | `{"goal": "重构工具层"}` ➔ 返回执行结果与轨迹 |
 | `/run/stream` | `POST` | SSE 实时流式执行推送 | `{"goal": "分析代码"}` ➔ 推送 `data: {"type":"step", ...}` |
 | `/api/mcp/tools` | `GET` | 列出所有已注册的 MCP 工具 | 返回标准 JSON-RPC 2.0 Schema 工具清单 |

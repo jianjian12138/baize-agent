@@ -1,10 +1,10 @@
 ---
 name: baize-engine
 description: 白泽引擎主技能——12 阶段研发流水线规约与技能调度入口。适用于在本仓库内启动、推进或验收任何开发项目。
-version: 33.0.0
+version: 37.0.0
 ---
 
-# SKILL.md — 白泽 12 阶段研发流水线 V33.0.0
+# SKILL.md — 白泽 12 阶段研发流水线 V37.0.0 Prometheus
 
 ## 流水线定义（P1–P12）
 
@@ -34,10 +34,10 @@ version: 33.0.0
 3. **检索方式**：`python -m baize index search <关键词>`，命中后读取对应 SKILL.md 并遵循其指令
    （baize Agent 内可直接调用 `search_skills` 工具）。
 4. **索引刷新**：技能库有增删后运行 `python -m baize index build`。
-5. **自进化（V19）**：Agent 完成新颖工作流后，用内置 `save_skill` 工具沉淀为新技能，
+5. **自进化**：Agent 完成新颖工作流后，用内置 `save_skill` 工具沉淀为新技能，
    下次 `index build` 后即可被全体 Agent 检索复用。
 
-## 执行方式（V19 双模式）
+## 执行方式（多模态与自主运行时）
 
 | 模式 | 命令 | 适用场景 |
 |------|------|----------|
@@ -57,7 +57,7 @@ version: 33.0.0
 | 自主循环与会话持久化 | `baize/agent.py` | `tests/test_agent.py` |
 | 工具沙箱与 deny-list | `baize/tools.py` | `tests/test_tools.py` |
 | 模型无关接入 | `baize/llm.py` | `tests/test_llm.py` |
-| 统一组件契约 + 组合内核（V22） | `baize/component.py` | `tests/test_component.py` |
-| 命名模式 = 组件集（V22） | `baize/modes.py` | `tests/test_modes.py` |
-| 组件自动发现 / 钩子体系（V22 硬化） | `baize/plugin.py` | `tests/test_plugin_discovery.py` |
-| 诚实门禁（含组件+模式校验，V22 扩） | `baize/gate.py` | `tests/test_gate.py` |
+| 统一组件契约 + 组合内核 | `baize/component.py` | `tests/test_component.py` |
+| 命名模式 = 组件集 | `baize/modes.py` | `tests/test_modes.py` |
+| 组件自动发现 / 钩子体系 | `baize/plugin.py` | `tests/test_plugin_discovery.py` |
+| 诚实门禁（含组件+模式校验） | `baize/gate.py` | `tests/test_gate.py` |

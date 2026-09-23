@@ -2,7 +2,7 @@
   "name": "baize-assistant-sidecar",
   "displayName": "Baize Studio Assistant (白泽伴侣插件)",
   "description": "Industrial AI Coding Assistant & Sidecar for VS Code / Cursor powered by Baize Agent Engine.",
-  "version": "35.0.0",
+  "version": "37.0.0",
   "publisher": "baize",
   "engines": {
     "vscode": "^1.80.0"

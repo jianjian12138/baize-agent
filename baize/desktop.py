@@ -1,4 +1,4 @@
-"""Baize Agent Native Desktop Launcher (V33.0.0).
+"""Baize Agent Native Desktop Launcher (V37.0.0 Prometheus).
 
 Launches the Baize Desktop Studio in a dedicated standalone application window.
 Zero third-party dependencies required.

@@ -8,11 +8,14 @@ from baize import dashboard
 from baize.cli import build_parser
 
 
+from baize import __version__
+
+
 class TestDesktopApp(unittest.TestCase):
     def test_render_desktop_studio_contains_all_9_modules(self):
-        html = render_desktop_studio("33.0.0")
+        html = render_desktop_studio(__version__)
         self.assertIn("Baize Agent Studio", html)
-        self.assertIn("V33.0.0", html)
+        self.assertIn(f"V{__version__}", html)
         
         # 9 Core Modules
         self.assertIn("tab-workbench", html)
@@ -26,7 +29,7 @@ class TestDesktopApp(unittest.TestCase):
         self.assertIn("tab-integrations", html)
 
     def test_dashboard_render_delegates_to_desktop_studio(self):
-        html = dashboard.render("33.0.0")
+        html = dashboard.render(__version__)
         self.assertIn("Baize Agent Studio", html)
         self.assertIn("白泽智能桌面工作台", html)
 

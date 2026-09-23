@@ -29,6 +29,7 @@ from .logging_setup import redact
 from . import memory as memory_mod
 from . import proc as proc_mod
 from . import skill_index
+from . import __version__
 
 # ---------------------------------------------------------------------------
 # Registry primitives
@@ -517,7 +518,7 @@ def _tool_fetch_url(url: str, max_chars: int = 6000) -> str:
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "baize-agent/33.0.0 (fetch_url)"},
+            headers={"User-Agent": f"baize-agent/{__version__} (fetch_url)"},
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read(131072)  # max 128 KB raw

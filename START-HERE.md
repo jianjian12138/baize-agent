@@ -33,7 +33,7 @@ python -m baize index search tdd      # 例如 tdd / vue / golang
 ## 第 3 步：跑通测试（1 分钟）
 
 ```bash
-python -m pytest tests/ -q            # 597 个真实测试，全部通过
+python -m pytest tests/ -q            # 1350+ 个真实测试，全部通过
 ```
 
 ## 第 4 步：体验白泽智能桌面工作台（推荐）

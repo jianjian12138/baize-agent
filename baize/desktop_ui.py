@@ -1,4 +1,4 @@
-"""Baize Agent Universal Desktop Studio UI (V33.0.0).
+"""Baize Agent Universal Desktop Studio UI (V37.0.0 Prometheus).
 
 A self-contained, high-fidelity, zero-dependency modern Single Page Application
 aligned with Cursor, Hermes-CN-Desktop, Codex Desktop, and Pi Studio.
@@ -1388,7 +1388,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
         <div class="panel-card" style="margin-top:16px;">
           <h3>🌐 企业级私有化集群部署与 gRPC 服务</h3>
           <div style="background:#090b12;padding:10px;border-radius:6px;border:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:8px;">
-            docker run -d -p 8787:8787 -p 50051:50051 -e BAIZE_AUTH_TOKEN=secret_token -v /workspace:/workspace baize/studio:v35.0.0
+            docker run -d -p 8787:8787 -p 50051:50051 -e BAIZE_AUTH_TOKEN=secret_token -v /workspace:/workspace baize/studio:v37.0.0
           </div>
           <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">支持 RESTful HTTP (8787) 与 gRPC 二进制双向流式协议 (50051)。</div>
         </div>
