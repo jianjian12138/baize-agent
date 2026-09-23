@@ -547,14 +547,14 @@ def count_claims() -> list[CountClaim]:
         CountClaim(
             "docs/tutorials/02-5分钟装好环境.md",
             "test cases collected (quoted gate transcript)",
-            re.compile(r"Prometheus, (\d+) tests collected"),
+            re.compile(r"(?:Prometheus|Zephyr|[A-Za-z]+), (\d+) tests collected"),
             collected_count,
             "pytest tests/ --collect-only",
         ),
         CountClaim(
             "docs/tutorials/09-部署到生产.md",
             "test cases collected (quoted gate transcript)",
-            re.compile(r"Prometheus, (\d+) tests collected"),
+            re.compile(r"(?:Prometheus|Zephyr|[A-Za-z]+), (\d+) tests collected"),
             collected_count,
             "pytest tests/ --collect-only",
         ),

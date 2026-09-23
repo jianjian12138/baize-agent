@@ -744,6 +744,11 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
       <span id="server-status-text">127.0.0.1:8787</span>
     </div>
 
+    <span class="status-pill" id="sys1-reflex-badge" title="System 1 亚毫秒快反射内核 · 概率校准路由">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <span>System 1: <strong style="color:var(--accent)" id="sys1-latency">&lt;1ms</strong></span>
+    </span>
+
     <div class="mode-pill" id="autonomy-mode-badge" onclick="switchTab('tab-security')">
       <span>🛡️ 默认权限</span>
     </div>
@@ -1106,6 +1111,17 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
             <p style="font-size:12px;color:var(--text-muted)">红队注入攻防 vs 蓝队沙箱防御 vs 仲裁法官全票共识签名：</p>
             <button class="primary-btn" onclick="runByzantineConsensus()" style="align-self:flex-start">⚖️ 执行拜占庭共识仲裁</button>
             <div id="adv-result-box" style="font-size:12px;margin-top:8px;"></div>
+          </div>
+
+          <!-- System 1 Fast Reflex & Calibrated Routing -->
+          <div class="panel-card">
+            <h3>⚡ System 1 快反射决策控制台 (Fast Reflex &amp; Calibration)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">亚毫秒意图路由、预检安全防护与概率校准矩阵：</p>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="sys1-goal-input" value="运行所有测试并修复测试失败" placeholder="输入意图/命令进行亚毫秒路由与安全检测..." />
+              <button class="primary-btn" onclick="testSystem1Reflex()">⚡ 快反射检测</button>
+            </div>
+            <div id="sys1-result-box" style="font-size:12px;margin-top:8px;"></div>
           </div>
         </div>
       </div>
@@ -2976,6 +2992,45 @@ async function publishCustomTool() {
     alert('【达尔文元工具发布成功】\n\n' + d.message);
   } catch (e) {
     alert('发布失败: ' + e.message);
+  }
+}
+
+// --- System 1 Fast Reflex (V38 Jev) ---
+async function testSystem1Reflex() {
+  const box = document.getElementById('sys1-result-box');
+  const goalInput = document.getElementById('sys1-goal-input');
+  const goal = (goalInput ? goalInput.value : '').trim();
+  if (!goal) return;
+  box.innerHTML = '<span style="color:var(--accent)">正在进行 System 1 亚毫秒快反射判定...</span>';
+  try {
+    const t0 = performance.now();
+    const res = await fetch('/api/system1/route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: goal })
+    });
+    const d = await res.json();
+    const clientLatency = (performance.now() - t0).toFixed(2);
+    const probEntries = Object.entries(d.probabilities || {});
+    const probHtml = probEntries.map(([k, v]) => `<code>${k}</code>: ${(v*100).toFixed(1)}%`).join(' | ');
+    box.innerHTML = `
+      <div style="background:#090a0f;padding:10px;border-radius:6px;border:1px solid var(--accent);display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <strong style="color:var(--accent);font-size:13px;">🎯 路由意图: ${d.intent} (置信度: ${(d.confidence * 100).toFixed(1)}%)</strong>
+          <span style="font-size:11px;color:var(--success);font-family:var(--font-mono);">内核延时: ${d.latency_ms.toFixed(2)}ms (往返: ${clientLatency}ms)</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);">
+          推荐专家: <strong>${(d.recommended_experts || []).join(', ') || '通用执行'}</strong> · 决策内核: <code>${d.backend}</code>
+        </div>
+        <div style="font-size:10.5px;color:var(--text-dim);font-family:var(--font-mono);line-height:1.4;">
+          概率分布: ${probHtml}
+        </div>
+      </div>
+    `;
+    const pill = document.getElementById('sys1-latency');
+    if (pill) pill.textContent = d.latency_ms < 1 ? '<1ms' : d.latency_ms.toFixed(1) + 'ms';
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--danger)">快反射调用异常: ${e.message}</span>`;
   }
 }
 

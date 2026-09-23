@@ -30,6 +30,7 @@ from . import memory as memory_mod
 from . import proc as proc_mod
 from . import skill_index
 from . import __version__
+from .system1 import fast_check_safety
 
 # ---------------------------------------------------------------------------
 # Registry primitives
@@ -110,6 +111,10 @@ class ToolRegistry:
         if name not in self._tools:
             return f"ERROR: unknown tool '{name}'"
         tool = self._tools[name]
+        # V38 System 1 Pre-Flight Safety Guardrail (<1ms fail-closed check)
+        safety = fast_check_safety(name, arguments)
+        if not safety.is_safe:
+            return f"ERROR: {safety.veto_reason}"
         # V33-A4: validate arguments against registered schema
         err = self._validate_args(tool, arguments)
         if err:

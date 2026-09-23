@@ -598,6 +598,31 @@ class Handler(BaseHTTPRequestHandler):
             from .doc_crawler import DocCrawlerRegistry
             res = DocCrawlerRegistry.index_url(url)
             return self._send(200, res)
+        if self.path == "/api/system1/route":
+            goal = data.get("goal") or ""
+            from .system1 import fast_route_intent
+            dec = fast_route_intent(goal)
+            return self._send(200, {
+                "route": dec.route,
+                "confidence": dec.confidence,
+                "recommended_mode": dec.recommended_mode,
+                "complexity_score": dec.complexity_score,
+                "provenance": dec.provenance,
+                "latency_ms": round(dec.latency_ms, 3),
+            })
+        if self.path == "/api/system1/guard":
+            tool = data.get("tool") or ""
+            args = data.get("args") or {}
+            from .system1 import fast_check_safety
+            dec = fast_check_safety(tool, args)
+            return self._send(200, {
+                "is_safe": dec.is_safe,
+                "risk_score": dec.risk_score,
+                "blast_radius": dec.blast_radius,
+                "veto_reason": dec.veto_reason,
+                "provenance": dec.provenance,
+                "latency_ms": round(dec.latency_ms, 3),
+            })
         if self.path == "/api/browser/verify":
             html = data.get("html", "")
             name = data.get("name", "index.html")

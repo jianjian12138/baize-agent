@@ -1,4 +1,4 @@
-# 📖 白泽智能体 (Baize Agent V37.0.0 Prometheus) 完整使用说明手册
+# 📖 白泽智能体 (Baize Agent V38.0.0 Zephyr) 完整使用说明手册
 
 > **白泽智能体 (Baize Agent)** 是一套面向 AI Agent 的**白盒工程化自主研发操作系统**：坚持**纯 Python 标准库构建（零第三方运行时依赖）**。以 **NO FAKE DONE** 物理门禁保证「绝不假绿」，原生支持 **Windows PowerShell 常驻 REPL (<5ms 极速响应)**、**AST 因果代码自愈**、**Asyncio Swarm 影子推演**、**5 大语言代码符号图谱** 与 **评审票数门槛仲裁**。
 
@@ -82,6 +82,7 @@ baize [SUBCOMMAND] [OPTIONS]
 | 命令 | 用途与说明 | 典型使用示例 |
 | :--- | :--- | :--- |
 | `baize doctor` | 运行系统健康体检，验证 Python、PowerShell 执行策略与编码 | `baize doctor` |
+| `baize route "<goal>"` | System 1 亚毫秒快反射意图路由与安全判定（概率校准） | `baize route "编写单元测试"` |
 | `baize run "<goal>"` | 启动单任务全自主执行（自动思考 ➔ 编码 ➔ 测试 ➔ 自愈） | `baize run "为用户认证模块编写严格单元测试"` |
 | `baize chat` | 启动持续交互式终端（支持多行粘贴、时空回溯与模型热切） | `baize chat` |
 | `baize serve` | 启动本地 RESTful API 服务与沉浸式桌面 Studio Web 界面 | `baize serve --port 8787` |
@@ -105,7 +106,7 @@ baize [SUBCOMMAND] [OPTIONS]
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 🏛️ 白泽桌面 Studio (Universal Studio V37.0.0 Prometheus)                      │
+│ 🏛️ 白泽桌面 Studio (Universal Studio V38.0.0 Zephyr)                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 1. 💬 流式对话 (SSE Live Chat)     │ 7. 🧠 分层记忆与混合 RAG (Memory & RAG) │
 │ 2. 📝 Monaco 差异对比与 Hunk 合并 │ 8. 🌐 Anthropic MCP 协议工具连接器      │

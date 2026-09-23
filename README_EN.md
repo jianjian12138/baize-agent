@@ -1,4 +1,4 @@
-# Baize Agent (白泽引擎) — Zero-Dependency Autonomous AI Software Engineer · V37.0.0 Prometheus
+# Baize Agent (白泽引擎) — Zero-Dependency Autonomous AI Software Engineer · V38.0.0 Zephyr
 
 <div align="center">
 
@@ -6,8 +6,8 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-1365%2F1368%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Version](https://img.shields.io/badge/version-V38.0.0--Zephyr-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-1369%2F1378%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -50,7 +50,7 @@
 
 ## 📊 Comparison with Leading Agent Frameworks
 
-| Dimension | **Baize Agent (V37 Prometheus)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
+| Dimension | **Baize Agent (V38 Zephyr)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
 | :--- | :---: | :---: | :---: | :---: |
 | **Runtime 3rd-Party Dependencies** | **0 (Pure Stdlib)** | Heavy Node/C++ | Heavy Python | 100+ Pip packages |
 | **Windows Native PowerShell Pool (<5ms)** | **✅ Yes (First-Class)** | ⚠️ Limited / POSIX | ⚠️ WSL/Docker only | ❌ No |
@@ -117,9 +117,9 @@ This project follows industry-standard Git workflow specifications:
  
 | Branch / Tag | Role & Description | Status |
 | :--- | :--- | :--- |
-| **`main`** | **Production Trunk**: Current official stable release (**V37.0.0 Prometheus**), including Desktop Studio, Swarm speculative execution, Ralph PRD state machine, multi-language symbol graph, and full physical gates | **Default · Production Stable** |
+| **`main`** | **Production Trunk**: Current official stable release (**V38.0.0 Zephyr**), including Desktop Studio, Swarm speculative execution, Ralph PRD state machine, multi-language symbol graph, and full physical gates | **Default · Production Stable** |
 | **`develop`** | **Development Trunk**: Active integration line for ongoing feature development | **Active Integration** |
-| `v37.0.0` (Tag) | Official release tag for V37.0.0 Prometheus | Published Release |
+| `v37.0.0` (Tag) | Official release tag for V38.0.0 Zephyr | Published Release |
 | `v33.0.0-legacy` (Tag) | Archived milestone for V33.0.0 (593 tests, REPL / Setup Wizard) | Archived Snapshot |
 | `v26.0.0-legacy` (Tag) | Archived milestone for V26.0.0 closed-loop fact kernel | Archived Snapshot |
  

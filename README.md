@@ -1,4 +1,4 @@
-# Baize Agent (白泽引擎) — 零依赖工业级自主研发操作系统 · V37.0.0 Prometheus
+# Baize Agent (白泽引擎) — 零依赖工业级自主研发操作系统 · V38.0.0 Zephyr
 
 <div align="center">
 
@@ -6,8 +6,8 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-V37.0.0--Prometheus-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
-[![Tests](https://img.shields.io/badge/tests-1365%2F1368%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Version](https://img.shields.io/badge/version-V38.0.0--Zephyr-orange?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
+[![Tests](https://img.shields.io/badge/tests-1369%2F1378%20passed%20(99%25)-yellow?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Runtime Deps](https://img.shields.io/badge/runtime%20deps-0%20(pure%20stdlib)-blueviolet?style=for-the-badge)](https://github.com/jianjian12138/baize-agent)
 [![Windows Native](https://img.shields.io/badge/windows-native%20powershell%20repl-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jianjian12138/baize-agent)
@@ -50,7 +50,7 @@
 
 ## 📊 与业界主流框架全方位对比
 
-| 对比维度 | **白泽智能体 (Baize V37 Prometheus)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
+| 对比维度 | **白泽智能体 (Baize V38 Zephyr)** | Claude Code / Cursor | AutoGPT / OpenDevin | LangChain / CrewAI |
 | :--- | :---: | :---: | :---: | :---: |
 | **运行时第三方依赖** | **0（纯 Python 标准库）** | 较重 (Node/C++) | 较重 (多层 Python 库) | 100+ Pip 依赖包 |
 | **Windows 原生 PowerShell 池 (<5ms)** | **✅ 原生第一等公民支持** | ⚠️ 基础支持 / POSIX | ⚠️ 仅限 WSL/Docker | ❌ 无 |
@@ -117,9 +117,9 @@ python -m baize serve --port 8787
 
 | 分支 / 标签 | 定位与说明 | 状态 |
 | :--- | :--- | :--- |
-| **`main`** | **生产主干**：当前官方稳定发布版（**V37.0.0 Prometheus**），包含桌面 Studio、Swarm 并发推演、Ralph PRD 状态机、多语言符号图谱与全量事实门禁 | **默认分支 · 生产稳定** |
+| **`main`** | **生产主干**：当前官方稳定发布版（**V38.0.0 Zephyr**），包含桌面 Studio、Swarm 并发推演、Ralph PRD 状态机、多语言符号图谱与全量事实门禁 | **默认分支 · 生产稳定** |
 | **`develop`** | **开发主干**：日常功能演进与多特性集成主线 | **活跃集成** |
-| `v37.0.0` (Tag) | V37.0.0 Prometheus 正式版本发布标签 | 归档发布 |
+| `v37.0.0` (Tag) | V38.0.0 Zephyr 正式版本发布标签 | 归档发布 |
 | `v33.0.0-legacy` (Tag) | V33.0.0 里程碑快照归档（593 tests 基础 REPL / Setup 向导） | 归档存档 |
 | `v26.0.0-legacy` (Tag) | V26.0.0 早期闭环事实内核快照归档 | 归档存档 |
 

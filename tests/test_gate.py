@@ -1,6 +1,8 @@
 """Tests for the NO FAKE DONE gate and the V23.6 quality dimension."""
 from __future__ import annotations
 
+import pytest
+
 from baize import gate
 from baize.gate import check_composition, check_coverage, check_manifest
 
@@ -69,6 +71,7 @@ def test_calibration_the_stale_probe_sees_a_stale_file(tmp_path):
 
 
 def test_a_stale_data_file_is_unknown_not_fail(tmp_path, monkeypatch):
+    pytest.importorskip("coverage")
     from baize import gate
 
     monkeypatch.setattr(gate, "ROOT", _controlled_root(tmp_path))
@@ -85,6 +88,7 @@ def test_a_stale_data_file_is_unknown_not_fail(tmp_path, monkeypatch):
 def test_coverage_file_env_var_is_honoured(tmp_path, monkeypatch):
     """`coverage run` honours COVERAGE_FILE, so the gate must too - otherwise it
     measures a different, older file than the run it is checking."""
+    pytest.importorskip("coverage")
     from baize import gate
 
     monkeypatch.setattr(gate, "ROOT", _controlled_root(tmp_path))

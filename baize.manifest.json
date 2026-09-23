@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "37.0.0",
+  "version": "38.0.0",
   "phases": [
     {
       "id": "V68",
@@ -472,6 +472,17 @@
         "tests/test_v33_features.py",
         "tests/test_v33_refinements.py",
         "tests/test_desktop_app.py"
+      ]
+    },
+    {
+      "id": "V134",
+      "name": "V38.0.0 Dual-System 快慢双系统架构（System 1 亚毫秒概率校准路由、Pre-Flight 零开销安全防线、Swarm Worktree 候选分支快速重排序与 Desktop Studio 遥测）",
+      "status": "done",
+      "evidence": [
+        "baize/system1.py",
+        "baize/intent_router.py",
+        "tests/test_system1.py",
+        "tests/test_intent_router.py"
       ]
     }
   ]

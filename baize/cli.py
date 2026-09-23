@@ -808,6 +808,21 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+def cmd_route(args) -> int:
+    from .intent_router import IntentRouter
+    router = IntentRouter()
+    dec = router.route(args.goal)
+    if getattr(args, "explain", False):
+        print("=== System 1 Fast Decision Breakdown ===")
+        print(f"  Goal: {args.goal}")
+        print(f"  Route: {dec.route} ({dec.recommended_mode})")
+        print(f"  Confidence: {dec.confidence * 100:.1f}% | Complexity: {dec.complexity_score * 100:.1f}%")
+        print(f"  Engine: {dec.provenance} | Latency: {dec.latency_ms:.2f}ms")
+    else:
+        print(router.explain_route(dec))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="baize",
                                 description="Baize Engine runtime CLI")
@@ -855,6 +870,10 @@ def build_parser() -> argparse.ArgumentParser:
                           "skipping already-verified tasks")
     tp.add_argument("--no-color", action="store_true", help="disable ANSI color")
     tp.add_argument("--quiet", action="store_true", help="summary only")
+
+    route_p = sub.add_parser("route", help="System 1 fast intent routing & complexity analysis")
+    route_p.add_argument("goal")
+    route_p.add_argument("--explain", action="store_true", help="print detailed decision breakdown")
 
     mcp_p = sub.add_parser("mcp",
                            help="MCP compat (V25): client (call ext server) / "
@@ -1080,6 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
         "automations": cmd_automations,
         "mcp": cmd_mcp,
         "ralph": cmd_ralph,
+        "route": cmd_route,
     }
     return handlers[args.command](args)
 

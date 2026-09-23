@@ -67,6 +67,7 @@ from typing import Any
 
 from . import proc as proc_mod
 from .config import load_config
+from .system1 import fast_rank_branches
 
 logger = logging.getLogger("baize.swarm")
 
@@ -419,12 +420,20 @@ class SwarmResult:
         verified = sum(1 for b in self.branches if b.verified is True)
         checked = sum(1 for b in self.branches if b.verified is not None)
         verify_note = self._verify_note()
+        ranking_dec = fast_rank_branches([b.to_dict() for b in self.branches], self.goal)
         return {
             "goal": self.goal,
             "total_elapsed_ms": round(self.total_elapsed_ms, 2),
             "branches_count": len(self.branches),
             "branches": [b.to_dict() for b in self.branches],
             "winner": self.winner.to_dict(),
+            "system1_ranking": {
+                "winner": ranking_dec.winner_branch,
+                "confidence": ranking_dec.confidence,
+                "scores": ranking_dec.scores,
+                "rationale": ranking_dec.rationale,
+                "latency_ms": ranking_dec.latency_ms,
+            },
             "isolation": self.isolation,
             "verified_branches": verified,
             "checked_branches": checked,

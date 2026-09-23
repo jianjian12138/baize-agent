@@ -141,6 +141,12 @@ def run(
         if preexec_fn is not None:
             popen_kwargs["preexec_fn"] = preexec_fn
 
+    proc_env = dict(env if env is not None else os.environ)
+    if "PYTHONIOENCODING" not in proc_env:
+        proc_env["PYTHONIOENCODING"] = "utf-8"
+    if "PYTHONUTF8" not in proc_env:
+        proc_env["PYTHONUTF8"] = "1"
+
     stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
     proc = subprocess.Popen(
         cmd,
@@ -149,7 +155,7 @@ def run(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=cwd,
-        env=env,
+        env=proc_env,
         text=True,
         encoding=encoding,
         errors="replace",

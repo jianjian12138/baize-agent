@@ -19,6 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+import pytest
+
 _spec = importlib.util.spec_from_file_location(
     "coverage_gate", ROOT / "scripts" / "coverage_gate.py"
 )
@@ -28,7 +30,7 @@ _spec.loader.exec_module(coverage_gate)
 
 def _real_data_file(tmp_path: Path) -> Path:
     """A genuine (tiny) coverage data file, so the gate has something to measure."""
-    import coverage
+    coverage = pytest.importorskip("coverage")
 
     src = tmp_path / "mod_under_test.py"
     src.write_text("def f():\n    return 1\n", encoding="utf-8")
