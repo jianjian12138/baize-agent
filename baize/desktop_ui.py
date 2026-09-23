@@ -736,7 +736,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
   <div class="header-actions">
     <span class="status-pill" id="git-branch-badge">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
-      <strong style="color:var(--accent)" id="header-branch-name">v30-dev</strong>
+      <strong style="color:var(--accent)" id="header-branch-name">main</strong>
     </span>
 
     <div class="status-pill">
@@ -933,7 +933,7 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
         <div class="panel-card">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div>
-              <span>当前工作分支: </span><strong style="color:var(--accent)" id="git-branch-label">v30-dev</strong>
+              <span>当前工作分支: </span><strong style="color:var(--accent)" id="git-branch-label">main</strong>
             </div>
             <div id="git-clean-badge" style="font-size:12px;color:var(--success)">✓ 工作区状态加载中...</div>
           </div>
@@ -1782,7 +1782,7 @@ async function loadGitDiff() {
     const stRes = await fetch('/api/git/status');
     const st = await stRes.json();
     
-    const branchName = st.branch || 'v30-dev';
+    const branchName = st.branch || 'main';
     document.getElementById('git-branch-label').innerText = branchName;
     const headerBranch = document.getElementById('header-branch-name');
     if (headerBranch) headerBranch.innerText = branchName;

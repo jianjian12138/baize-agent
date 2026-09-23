@@ -111,28 +111,19 @@ Open **`http://127.0.0.1:8787`** to experience the full Obsidian-styled dark des
 
 ---
 
-## 🌿 Branches
-
-This repository carries two **deliberately unmerged** history lines. The default branch and the
-active development line is **`v30-dev`**:
-
-| Branch | Contents | Status |
+## 🌿 Branch & Versioning Specification
+ 
+This project follows industry-standard Git workflow specifications:
+ 
+| Branch / Tag | Role & Description | Status |
 | :--- | :--- | :--- |
-| **`v30-dev`** | The V30 -> V37.0.0 Prometheus line: Ralph autonomous PRD state machine, global intelligence radar, Swarm speculative forking, quorum arbitration, desktop Studio | **Default - active** |
-| `main` | The V26.0.0 "closed-loop fact kernel" architecture rewrite | Frozen archive |
-| `test` | The V33.0.0 upgrade line | Frozen archive |
-
-`main` (V26) and `test` (V33) are two **parallel rewrites** of the same V25 architecture. Neither
-contains the other, and they are **not merged** - keeping both preserves artifacts that exist on
-only one of them:
-
-```bash
-# The V26 public benchmark comparison (exists on main only)
-git show main:benchmarks/COMPARISON.md
-```
-
-The V25 architecture design and expert review documents are archived on this branch under
-`docs/archive/`, matching the paths referenced from `baize/__init__.py`.
+| **`main`** | **Production Trunk**: Current official stable release (**V37.0.0 Prometheus**), including Desktop Studio, Swarm speculative execution, Ralph PRD state machine, multi-language symbol graph, and full physical gates | **Default · Production Stable** |
+| **`develop`** | **Development Trunk**: Active integration line for ongoing feature development | **Active Integration** |
+| `v37.0.0` (Tag) | Official release tag for V37.0.0 Prometheus | Published Release |
+| `v33.0.0-legacy` (Tag) | Archived milestone for V33.0.0 (593 tests, REPL / Setup Wizard) | Archived Snapshot |
+| `v26.0.0-legacy` (Tag) | Archived milestone for V26.0.0 closed-loop fact kernel | Archived Snapshot |
+ 
+Historical V25/V26 design and review documents are archived in `docs/archive/`.
 
 ---
 
