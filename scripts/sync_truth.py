@@ -218,12 +218,12 @@ SURFACES: dict[str, list[tuple[Surface, int]]] = {
 # are exactly what a blanket substitution would have destroyed.
 PROTECTED_LITERALS: dict[str, list[str]] = {
     "README.md": [
-        "V26.0.0「闭环事实内核」架构重构线",
-        "V33.0.0 升级线",
+        "v26.0.0-legacy",
+        "v33.0.0-legacy",
     ],
     "README_EN.md": [
-        'V26.0.0 "closed-loop fact kernel" architecture rewrite',
-        "V33.0.0 upgrade line",
+        "v26.0.0-legacy",
+        "v33.0.0-legacy",
     ],
 }
 

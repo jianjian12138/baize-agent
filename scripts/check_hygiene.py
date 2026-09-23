@@ -113,6 +113,8 @@ def tracked_files() -> list[str]:
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         ).stdout
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
@@ -133,6 +135,8 @@ def untracked_files() -> list[str]:
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         ).stdout
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
