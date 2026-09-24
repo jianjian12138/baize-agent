@@ -22,5 +22,5 @@ string anywhere by hand — edit it here and run::
     python scripts/sync_truth.py
 """
 
-__version__ = "38.0.0"
-__codename__ = "Zephyr"
+__version__ = "39.0.0"
+__codename__ = "Aegis"

@@ -72,6 +72,10 @@ class SymbolGraph:
         self.total_files_indexed = 0
         self.languages_detected: set[str] = set()
 
+    def build(self, max_files: int = 1500) -> None:
+        """Alias for index_workspace."""
+        self.index_workspace(max_files=max_files)
+
     def index_workspace(self, max_files: int = 1500) -> None:
         """Scan workspace and index symbols for Python, TS/JS, Rust, Go, Java."""
         self.symbols.clear()

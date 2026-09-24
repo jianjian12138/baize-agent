@@ -278,11 +278,33 @@ def _tool_read_file(path: str, start_line: int = 1, end_line: int | None = None,
     return body + suffix
 
 
+def _check_blast_radius(file_path: Path, old_code: str, new_code: str) -> str:
+    """Analyze blast radius of modified code file and format warnings."""
+    if not str(file_path).endswith((".py", ".ts", ".js")):
+        return ""
+    try:
+        from .blast_radius import BlastRadiusAnalyzer
+        from .arch_cache import get_cached_symbol_graph
+        graph = get_cached_symbol_graph()
+        analyzer = BlastRadiusAnalyzer(graph)
+        reports = analyzer.analyze_code_diff(str(file_path), old_code, new_code)
+        warnings = [r.format_warning() for r in reports if r.format_warning()]
+        if warnings:
+            return "\n\n" + "\n\n".join(warnings)
+    except Exception:
+        pass
+    return ""
+
+
 def _tool_write_file(path: str, content: str) -> str:
     p = _resolve_in_workspace(path)
+    old_content = ""
+    if p.is_file():
+        old_content = p.read_text(encoding="utf-8", errors="replace")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
-    return f"wrote {len(content)} chars -> {p}"
+    advisory = _check_blast_radius(p, old_content, content) if old_content else ""
+    return f"wrote {len(content)} chars -> {p}{advisory}"
 
 
 def _tool_list_dir(path: str = ".") -> str:
@@ -458,8 +480,10 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
         p.write_text(updated, encoding="utf-8")
         lines_before = current.count("\n") + 1
         lines_after = updated.count("\n") + 1
+        advisory = _check_blast_radius(p, current, updated)
         return (f"patched {path}: {lines_before}→{lines_after} lines "
-                f"({len(new_content) - len(old_content):+d} chars)")
+                f"({len(new_content) - len(old_content):+d} chars)"
+                f"{advisory}")
 
     elif mode == "diff":
         # Apply unified diff supplied in new_content
@@ -484,9 +508,29 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
             return "ERROR: patch_file diff — could not parse any lines from diff"
         updated = "".join(result_lines)
         p.write_text(updated, encoding="utf-8")
-        return (f"patched {path} via diff: {updated.count(chr(10)) + 1} lines")
+        advisory = _check_blast_radius(p, current, updated)
+        return (f"patched {path} via diff: {updated.count(chr(10)) + 1} lines{advisory}")
     else:
         return f"ERROR: patch_file — unknown mode {mode!r} (use 'replace' or 'diff')"
+
+
+def _tool_blast_radius(symbol: str, path: str = "") -> str:
+    """Analyze blast radius, direct/transitive callers, and contract breaking risks for a symbol (V39.0.0 Aegis)."""
+    try:
+        from .blast_radius import analyze_blast_radius
+        report = analyze_blast_radius(target_symbol=symbol, target_file=path)
+        warning = report.format_warning()
+        if warning:
+            return warning
+        return (
+            f"Blast radius analysis for '{symbol}':\n"
+            f"- Direct callers: {len(report.direct_callers)}\n"
+            f"- Risk level: {report.risk_level}\n"
+            f"- Impacted external files: {len(report.impacted_files)}\n"
+            f"No critical breaking contract risks detected."
+        )
+    except Exception as exc:
+        return f"Blast radius analysis failed: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +887,14 @@ def default_registry() -> ToolRegistry:
                         verify_json={"type": "string", "_opt": True},
                         dependencies_json={"type": "string", "_opt": True}),
                      _tool_run_skill)
+        # V39.0.0 Aegis: blast_radius - pre-flight caller and contract impact analyzer
+        reg.register("blast_radius",
+                     "Analyze the blast radius, direct callers, and transitive "
+                     "dependents of a function or class before modifying it, "
+                     "preventing regression bugs in large codebases.",
+                     _s(symbol={"type": "string"},
+                        path={"type": "string", "_opt": True}),
+                     _tool_blast_radius)
         # V33-A2: fetch_url - opt-in HTTP retrieval (BAIZE_ALLOW_FETCH_URL=1)
         cfg = load_config()
         if cfg.get("BAIZE_ALLOW_FETCH_URL", "0") == "1":

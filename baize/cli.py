@@ -981,6 +981,16 @@ def build_parser() -> argparse.ArgumentParser:
     rl.add_argument("--max-iterations", type=int, default=15, help="Max iterations to run")
     rl.add_argument("--no-commit", action="store_true", help="Disable automatic git commits per story")
 
+    imp = sub.add_parser("impact", help="analyze test impact analysis (TIA) for changed file or symbol (V39.0.0 Aegis)")
+    imp.add_argument("target", help="path to changed file or symbol name")
+    imp.add_argument("--json", action="store_true", help="output in machine-readable JSON format")
+    imp.add_argument("--run", action="store_true", help="immediately execute pytest on the impacted test cases")
+
+    bp = sub.add_parser("blast", help="pre-flight blast radius analyzer for symbol or file (V39.0.0 Aegis)")
+    bp.add_argument("target", help="symbol name or file path to analyze")
+    bp.add_argument("--file", default="", help="optional target file path if target is a bare symbol")
+    bp.add_argument("--json", action="store_true", help="output in JSON format")
+
     return p
 
 
@@ -1058,6 +1068,36 @@ def cmd_speculative(args) -> int:
     return 0
 
 
+def cmd_impact(args) -> int:
+    from .test_impact import analyze_test_impact
+    res = analyze_test_impact(args.target)
+    if args.json:
+        print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(res.format_summary())
+    if args.run and res.impacted_files:
+        import subprocess
+        cmd = res.recommended_command
+        print(f"\n🚀 [Executing impacted tests] {cmd}")
+        p = subprocess.run(cmd, shell=True)
+        return p.returncode
+    return 0
+
+
+def cmd_blast(args) -> int:
+    from .blast_radius import analyze_blast_radius
+    rep = analyze_blast_radius(target_symbol=args.target, target_file=args.file)
+    if args.json:
+        print(json.dumps(rep.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        warning = rep.format_warning()
+        if warning:
+            print(warning)
+        else:
+            print(f"[💥 BLAST RADIUS] Symbol '{args.target}' has {len(rep.direct_callers)} direct callers across {len(rep.impacted_files)} external files. Risk: {rep.risk_level}.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     if not actual_argv:
@@ -1065,7 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast"):
         try:
             validate()
         except ConfigError as e:
@@ -1100,6 +1140,8 @@ def main(argv: list[str] | None = None) -> int:
         "mcp": cmd_mcp,
         "ralph": cmd_ralph,
         "route": cmd_route,
+        "impact": cmd_impact,
+        "blast": cmd_blast,
     }
     return handlers[args.command](args)
 

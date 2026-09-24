@@ -1,6 +1,6 @@
 # ⚡ Baize Agent — 60-Second Quickstart Guide
 
-Welcome to **Baize Agent (V38.0.0 Zephyr)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
+Welcome to **Baize Agent (V39.0.0 Aegis)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
 
 ---
 

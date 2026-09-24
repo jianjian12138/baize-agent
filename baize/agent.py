@@ -209,6 +209,19 @@ def build_system_prompt(role: str = "executor",
         cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT)))
     if external_rules:
         parts.append(external_rules)
+
+    # V39.0.0 Aegis: Hierarchical Repo Map for large-scale codebase awareness
+    if cfg.get("BAIZE_REPO_MAP_ENABLED", "1") != "0":
+        try:
+            from .hierarchical_map import get_hierarchical_repo_map
+            ws_dir = cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT))
+            repo_tokens = int(cfg.get("BAIZE_REPO_MAP_TOKENS", "2500"))
+            repo_map = get_hierarchical_repo_map(ws_dir, token_budget=repo_tokens, cfg=cfg)
+            if repo_map and len(repo_map.splitlines()) > 3:
+                parts.append(repo_map)
+        except Exception:
+            pass
+
     return "\n\n".join(p for p in parts if p)
 
 

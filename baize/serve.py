@@ -454,6 +454,33 @@ class Handler(BaseHTTPRequestHandler):
                 "note": INERT_SETTINGS_NOTE,
             })
 
+        if self.path.startswith("/api/blast"):
+            from urllib.parse import urlparse, parse_qs
+            from .blast_radius import analyze_blast_radius
+            query = parse_qs(urlparse(self.path).query)
+            sym = query.get("symbol", [""])[0]
+            f = query.get("file", [""])[0]
+            if not sym:
+                return self._send(400, {"error": "symbol parameter required"})
+            try:
+                rep = analyze_blast_radius(target_symbol=sym, target_file=f)
+                return self._send(200, rep.to_dict())
+            except Exception as e:
+                return self._send(500, {"error": str(e)})
+
+        if self.path.startswith("/api/impact"):
+            from urllib.parse import urlparse, parse_qs
+            from .test_impact import analyze_test_impact
+            query = parse_qs(urlparse(self.path).query)
+            target = query.get("target", [""])[0]
+            if not target:
+                return self._send(400, {"error": "target parameter required"})
+            try:
+                res = analyze_test_impact(target)
+                return self._send(200, res.to_dict())
+            except Exception as e:
+                return self._send(500, {"error": str(e)})
+
         return self._send(404, {"error": "not found"})
 
     def _handle_git_status_or_diff(self) -> None:

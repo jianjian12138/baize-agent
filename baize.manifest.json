@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "38.0.0",
+  "version": "39.0.0",
   "phases": [
     {
       "id": "V68",
@@ -483,6 +483,20 @@
         "baize/intent_router.py",
         "tests/test_system1.py",
         "tests/test_intent_router.py"
+      ]
+    },
+    {
+      "id": "V135",
+      "name": "V39.0.0 Aegis 架构全景树与变更爆炸半径防线（分层 Repo Map 拓扑预算注入、AST 增量缓存、预检爆炸半径逆向调用图分析、Test Impact Analysis 单测子集精确定位与 CLI/Studio 观测）",
+      "status": "done",
+      "evidence": [
+        "baize/arch_cache.py",
+        "baize/hierarchical_map.py",
+        "baize/blast_radius.py",
+        "baize/test_impact.py",
+        "tests/test_hierarchical_map.py",
+        "tests/test_blast_radius.py",
+        "tests/test_test_impact.py"
       ]
     }
   ]

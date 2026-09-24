@@ -944,6 +944,24 @@ _STUDIO_HTML = r"""<!DOCTYPE html>
           </div>
           <div class="diff-terminal" id="git-diff-viewer">点击上方「刷新变更」以审查最新代码修改差量...</div>
         </div>
+
+        <!-- V39.0.0 Aegis: Blast Radius & Test Impact Inspector -->
+        <div class="panel-card" style="margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:16px;">💥</span>
+              <h3 style="font-size:14px;margin:0;color:var(--text-main);">Aegis 变更爆炸半径 (Blast Radius) 与回归测试域 (TIA) 检查器</h3>
+              <span class="badge" style="background:var(--accent-glow);color:var(--accent);font-size:10px;">V39.0 Aegis</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);">预防超大工程改动导致的次生 Bug 与全量单测耗时</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <input type="text" id="aegis-target-input" class="search-input" style="flex:1;" placeholder="输入待修改的函数/类名 (如 default_registry) 或 文件路径 (如 baize/tools.py)" />
+            <button class="primary-btn" onclick="runBlastRadiusInspect()" style="white-space:nowrap;">💥 预检爆炸半径</button>
+            <button class="chip-btn" onclick="runTestImpactInspect()" style="white-space:nowrap;background:var(--bg-elevated);color:var(--accent);border:1px solid var(--border-subtle);">🎯 分析测试影响域</button>
+          </div>
+          <div id="aegis-inspect-result" style="display:none;background:#0b0e14;border:1px solid var(--border-subtle);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:12px;line-height:1.6;"></div>
+        </div>
       </div>
     </section>
 
@@ -1810,6 +1828,70 @@ async function loadGitDiff() {
     renderDiffViewer(rawDiffText);
   } catch (e) {
     viewer.innerText = '获取 Git 差量失败: ' + e.message;
+  }
+}
+
+// --- V39.0.0 Aegis Blast Radius & TIA Inspector ---
+async function runBlastRadiusInspect() {
+  const target = document.getElementById('aegis-target-input').value.trim();
+  const resBox = document.getElementById('aegis-inspect-result');
+  if (!target) { alert('请输入要分析的目标符号或文件路径'); return; }
+  resBox.style.display = 'block';
+  resBox.innerHTML = '<span style="color:var(--text-dim);">⏳ 正在通过 AST 全局拓扑计算直接与传递调用方...</span>';
+  try {
+    const res = await fetch(`/api/blast?symbol=${encodeURIComponent(target)}`);
+    const d = await res.json();
+    if (d.error) {
+      resBox.innerHTML = `<span style="color:var(--error);">❌ 分析错误: ${d.error}</span>`;
+      return;
+    }
+    const badgeColor = d.risk_level === 'CRITICAL' ? 'var(--error)' : (d.risk_level === 'HIGH' ? 'var(--warning)' : 'var(--success)');
+    let callersHtml = (d.direct_callers || []).map(c => `<div>  ↳ <span style="color:var(--accent);">${c.file_path}:${c.line_number}</span> (调用方: <code>${c.caller_symbol}</code>)</div>`).join('');
+    if (!callersHtml) callersHtml = '<div style="color:var(--text-dim);">  (无直接外部调用方，风险极低)</div>';
+    
+    resBox.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-subtle);padding-bottom:8px;margin-bottom:8px;">
+        <div><strong>目标符号:</strong> <code style="color:var(--accent);">${d.target_symbol}</code></div>
+        <div><span class="badge" style="background:${badgeColor}22;color:${badgeColor};border:1px solid ${badgeColor};">风险等级: ${d.risk_level}</span></div>
+      </div>
+      <div><strong>直接受波及调用方 (${d.direct_callers_count || 0} 处):</strong></div>
+      ${callersHtml}
+      ${(d.impacted_files && d.impacted_files.length) ? `<div style="margin-top:6px;"><strong>受波及跨模块文件 (${d.impacted_files.length} 个):</strong> <span style="color:var(--text-dim);">${d.impacted_files.join(', ')}</span></div>` : ''}
+      <div style="margin-top:8px;color:var(--text-dim);font-size:11px;">⏱️ AST 解析耗时: ${d.latency_ms}ms · 零外部依赖</div>
+    `;
+  } catch (e) {
+    resBox.innerHTML = `<span style="color:var(--error);">请求异常: ${e.message}</span>`;
+  }
+}
+
+async function runTestImpactInspect() {
+  const target = document.getElementById('aegis-target-input').value.trim();
+  const resBox = document.getElementById('aegis-inspect-result');
+  if (!target) { alert('请输入要分析的目标文件或符号'); return; }
+  resBox.style.display = 'block';
+  resBox.innerHTML = '<span style="color:var(--text-dim);">⏳ 正在通过 TIA 矩阵分析单测依赖关系...</span>';
+  try {
+    const res = await fetch(`/api/impact?target=${encodeURIComponent(target)}`);
+    const d = await res.json();
+    if (d.error) {
+      resBox.innerHTML = `<span style="color:var(--error);">❌ 分析错误: ${d.error}</span>`;
+      return;
+    }
+    let testsHtml = (d.impacted_files || []).map(f => `<div>  🧪 <span style="color:var(--text-main);">${f}</span></div>`).join('');
+    if (!testsHtml) testsHtml = '<div style="color:var(--text-dim);">  (未检索到直接绑定的单测文件)</div>';
+
+    resBox.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border-subtle);padding-bottom:8px;margin-bottom:8px;">
+        <div><strong>目标:</strong> <code style="color:var(--accent);">${(d.changed_targets || []).join(', ')}</code></div>
+        <div><span class="badge" style="background:var(--success)22;color:var(--success);border:1px solid var(--success);">预期提速: ~${d.speedup_ratio}x</span></div>
+      </div>
+      <div><strong>精准受影响单测集合 (${(d.impacted_files || []).length} / ${d.total_test_files || 0} 个测试文件):</strong></div>
+      ${testsHtml}
+      ${d.recommended_command ? `<div style="margin-top:8px;padding:6px 8px;background:#0d111b;border-radius:4px;border:1px solid var(--border-subtle);"><strong>推荐执行:</strong> <code style="color:var(--accent);">${d.recommended_command}</code></div>` : ''}
+      <div style="margin-top:8px;color:var(--text-dim);font-size:11px;">⏱️ TIA 分析耗时: ${d.latency_ms}ms</div>
+    `;
+  } catch (e) {
+    resBox.innerHTML = `<span style="color:var(--error);">请求异常: ${e.message}</span>`;
   }
 }
 
