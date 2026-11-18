@@ -24,6 +24,8 @@ transport to LLMClient and the whole loop runs for real without network.
 from __future__ import annotations
 
 import json
+import re
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -80,6 +82,7 @@ class Session:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.file = self.dir / f"{self.id}.jsonl"
         self.messages: list[dict] = []
+        self._lock = threading.RLock()
         if self.file.exists():
             self._load()
 
@@ -100,12 +103,13 @@ class Session:
             stored = {**message, "content": redact(clean_content)}
             if kind == "message":
                 message["content"] = clean_content
-        if kind == "message":
-            self.messages.append(message)
-        rec = {"kind": kind, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-               "message": stored}
-        with self.file.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with self._lock:
+            if kind == "message":
+                self.messages.append(message)
+            rec = {"kind": kind, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                   "message": stored}
+            with self.file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     def append_record(self, rec: dict) -> None:
         """Write a raw record line (used by session fork lineage markers).
@@ -114,8 +118,9 @@ class Session:
         caller is responsible for its contents - and never touches
         ``self.messages``.
         """
-        with self.file.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with self._lock:
+            with self.file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     @classmethod
     def list_sessions(cls, cfg: dict | None = None) -> list[dict]:
@@ -123,13 +128,23 @@ class Session:
         d = Path(cfg["BAIZE_SESSIONS_DIR"])
         if not d.is_dir():
             return []
+        entries = sorted(
+            d.glob("*.jsonl"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
         out = []
-        for f in sorted(d.glob("*.jsonl"), reverse=True):
-            n_lines = sum(1 for _ in f.open(encoding="utf-8"))
-            out.append({"id": f.stem, "events": n_lines,
-                        "mtime": time.strftime(
-                            "%Y-%m-%d %H:%M:%S",
-                            time.localtime(f.stat().st_mtime))})
+        for f in entries:
+            try:
+                st = f.stat()
+                with f.open(encoding="utf-8", errors="replace") as fh:
+                    n_lines = sum(1 for _ in fh)
+                out.append({"id": f.stem, "events": n_lines,
+                            "mtime": time.strftime(
+                                "%Y-%m-%d %H:%M:%S",
+                                time.localtime(st.st_mtime))})
+            except OSError:
+                continue
         return out
 
 
@@ -473,40 +488,63 @@ class Agent:
                 n_tool_calls += 1
                 fn = call.get("function", {})
                 name = fn.get("name", "")
-                # V33-B3: retry JSON parse failure up to tool_retry_max times
+                # V33-B3: retry JSON parse failure without corrupting tool_call_id protocol
                 raw_args = fn.get("arguments") or "{}"
                 args = {}
                 parse_ok = False
+                scratch_msgs = list(self.session.messages)
+                other_pending_ids = [
+                    c.get("id", "") for c in calls if c is not call and c.get("id")
+                ]
                 for _attempt in range(tool_retry_max + 1):
-                    try:
-                        args = json.loads(raw_args)
+                    candidate = raw_args.strip() if isinstance(raw_args, str) else raw_args
+                    if isinstance(candidate, dict):
+                        args = candidate
                         parse_ok = True
                         break
-                    except json.JSONDecodeError:
-                        if _attempt < tool_retry_max:
-                            obs.inc("tool_arg_parse_retries")
-                            # Inject a correction nudge into the session so model
-                            # knows to fix its tool call format
-                            self.session.append({
-                                "role": "user",
-                                "content": (
-                                    f"[system] Tool call '{name}' had malformed JSON "
-                                    f"arguments. Please retry with valid JSON."
-                                ),
-                            })
-                            try:
-                                msgs2 = self.client.build_messages(
-                                    sys_prompt, tool_schemas, self.session.messages)
-                                retry_msg = self.client.chat(msgs2, tools=tool_schemas)
-                                retry_calls = retry_msg.get("tool_calls") or []
-                                if retry_calls:
-                                    fn = retry_calls[0].get("function", {})
-                                    name = fn.get("name", name)
-                                    raw_args = fn.get("arguments") or "{}"
-                            except LLMError:
-                                break
-                        else:
+                    # Strip accidental markdown code fences around JSON arguments
+                    if candidate.startswith("```"):
+                        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.DOTALL).strip()
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict):
+                            args = parsed
+                            parse_ok = True
                             break
+                    except json.JSONDecodeError:
+                        pass
+                    if _attempt < tool_retry_max:
+                        obs.inc("tool_arg_parse_retries")
+                        # Answer the dangling tool_call_id in scratch_msgs so the
+                        # provider never sees an unanswered assistant tool_call.
+                        for oid in other_pending_ids:
+                            scratch_msgs.append({
+                                "role": "tool",
+                                "tool_call_id": oid,
+                                "content": "DEFERRED: awaiting retry of sibling tool call",
+                            })
+                        scratch_msgs.append({
+                            "role": "tool",
+                            "tool_call_id": call.get("id", ""),
+                            "content": (
+                                f"ERROR: Tool call '{name}' had malformed JSON "
+                                f"arguments ({raw_args[:120]}). Retry with valid JSON object."
+                            ),
+                        })
+                        try:
+                            msgs2 = self.client.build_messages(
+                                sys_prompt, tool_schemas, scratch_msgs)
+                            retry_msg = self.client.chat(msgs2, tools=tool_schemas)
+                            scratch_msgs.append(retry_msg)
+                            retry_calls = retry_msg.get("tool_calls") or []
+                            if retry_calls:
+                                fn = retry_calls[0].get("function", {})
+                                name = fn.get("name", name)
+                                raw_args = fn.get("arguments") or "{}"
+                        except LLMError:
+                            break
+                    else:
+                        break
                 if not parse_ok:
                     self.session.append({
                         "role": "tool",

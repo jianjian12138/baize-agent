@@ -7,12 +7,16 @@ allowed to propagate into the caller's control flow.
 """
 from __future__ import annotations
 
+import re
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = ["Span", "Observability", "obs"]
+
+_PROM_NAME_RE = re.compile(r"[^a-zA-Z0-9_:]")
 
 
 @dataclass
@@ -30,13 +34,15 @@ class Span:
 
 class Observability:
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self._spans: list[Span] = []
         self._counters: dict[str, int] = {}
         self._gauges: dict[str, float] = {}
         self._enabled = True
 
     def enable(self, on: bool) -> None:
-        self._enabled = on
+        with self._lock:
+            self._enabled = on
 
     @property
     def enabled(self) -> bool:
@@ -46,12 +52,18 @@ class Observability:
     def inc(self, name: str, by: int = 1) -> None:
         if not self._enabled:
             return
-        self._counters[name] = self._counters.get(name, 0) + by
+        with self._lock:
+            self._counters[name] = self._counters.get(name, 0) + by
+
+    def counter(self, name: str, default: int = 0) -> int:
+        with self._lock:
+            return self._counters.get(name, default)
 
     def gauge(self, name: str, value: float) -> None:
         if not self._enabled:
             return
-        self._gauges[name] = value
+        with self._lock:
+            self._gauges[name] = value
 
     def record_error(self, name: str = "errors") -> None:
         self.inc(name)
@@ -72,28 +84,36 @@ class Observability:
             raise
         finally:
             s.end = time.time()
-            self._spans.append(s)
-            if len(self._spans) > 1000:  # bounded buffer
-                self._spans = self._spans[-1000:]
+            with self._lock:
+                self._spans.append(s)
+                if len(self._spans) > 1000:  # bounded buffer
+                    self._spans = self._spans[-1000:]
 
     # --- export ---
     def prometheus(self) -> str:
+        with self._lock:
+            counters = sorted(self._counters.items())
+            gauges = sorted(self._gauges.items())
         lines: list[str] = []
-        for k, v in sorted(self._counters.items()):
-            lines.append(f"# TYPE baize_{k} counter")
-            lines.append(f"baize_{k} {v}")
-        for k, v in sorted(self._gauges.items()):
-            lines.append(f"# TYPE baize_{k} gauge")
-            lines.append(f"baize_{k} {v}")
+        for k, v in counters:
+            metric = _PROM_NAME_RE.sub("_", f"baize_{k}")
+            lines.append(f"# TYPE {metric} counter")
+            lines.append(f"{metric} {v}")
+        for k, v in gauges:
+            metric = _PROM_NAME_RE.sub("_", f"baize_{k}")
+            lines.append(f"# TYPE {metric} gauge")
+            lines.append(f"{metric} {v}")
         return "\n".join(lines) + "\n"
 
     def spans(self, limit: int = 50) -> list[Span]:
-        return self._spans[-limit:]
+        with self._lock:
+            return list(self._spans[-limit:])
 
     def reset(self) -> None:
-        self._spans.clear()
-        self._counters.clear()
-        self._gauges.clear()
+        with self._lock:
+            self._spans.clear()
+            self._counters.clear()
+            self._gauges.clear()
 
 
 # Global default instance. Imported across the runtime.

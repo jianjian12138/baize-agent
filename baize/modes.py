@@ -15,7 +15,7 @@ mode name is ignored (fail-closed to the scalar sliders) rather than crashing.
 """
 from __future__ import annotations
 
-from .autonomy import VALID_LEVELS
+from .autonomy import VALID_LEVELS, resolve_autonomy_level
 
 # mode name -> bundle. ``loop`` is "default" or "programmatic".
 MODES: dict[str, dict] = {
@@ -39,7 +39,7 @@ def resolve_mode(cfg: dict | None = None) -> dict:
     mode = (cfg.get("BAIZE_MODE", "") or "").strip()
     if mode and mode in MODES:
         return dict(MODES[mode])
-    level = cfg.get("BAIZE_AUTONOMY", "balanced")
+    level = resolve_autonomy_level(cfg)
     if level not in VALID_LEVELS:  # defensive: unknown level -> balanced
         level = "balanced"
     plan_mode = str(cfg.get("BAIZE_PLAN_MODE", "0")) == "1"

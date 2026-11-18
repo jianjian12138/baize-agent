@@ -22,8 +22,9 @@ being lost between phases.
 from __future__ import annotations
 
 import json
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from .agent import Agent, Session
@@ -155,6 +156,7 @@ class Orchestrator:
                 self.team_memory = None
         # V26-A2: run ledger (created lazily in run())
         self._ledger: RunLedger | None = None
+        self._session_lock = threading.Lock()
 
     def _team_context(self) -> str:
         if not self.team_memory:
@@ -436,7 +438,7 @@ class Orchestrator:
         workers = int(self.cfg.get("BAIZE_ORCHESTRATOR_WORKERS", "4"))
         reports = self._run_dag(plan, skip_task_ids, session_ids, workers)
 
-        success = all(r.verdict == "pass" for r in reports)
+        success = bool(reports) and all(r.verdict == "pass" for r in reports)
         obs.gauge("orchestration_success", int(success))
         self._ledger.append("run_complete",
                             {"success": success, "tasks": len(reports)})
@@ -467,13 +469,15 @@ class Orchestrator:
 
         summary, sid = self.execute_subtask(sub)
         if sid:
-            session_ids.append(sid)
+            with self._session_lock:
+                session_ids.append(sid)
         report.executor_summary = summary
 
         self.on_event("phase", f"verifying #{task_id}")
         v = self.verify_subtask(sub, summary)
         if v["session_id"]:
-            session_ids.append(v["session_id"])
+            with self._session_lock:
+                session_ids.append(v["session_id"])
         report.verdict, report.evidence, report.issues = (
             v["verdict"], v["evidence"], v["issues"])
         report.checks = v.get("checks", [])
@@ -488,11 +492,13 @@ class Orchestrator:
                         f"\nFix them. Success criteria: {sub['verify']}")
             summary, sid = self.execute_subtask({**sub, "task": fix_goal})
             if sid:
-                session_ids.append(sid)
+                with self._session_lock:
+                    session_ids.append(sid)
             report.executor_summary = summary
             v = self.verify_subtask(sub, summary)
             if v["session_id"]:
-                session_ids.append(v["session_id"])
+                with self._session_lock:
+                    session_ids.append(v["session_id"])
             report.verdict, report.evidence, report.issues = (
                 v["verdict"], v["evidence"], v["issues"])
             report.checks = v.get("checks", [])
@@ -525,61 +531,64 @@ class Orchestrator:
 
     def _run_dag(self, plan: list[dict], skip_task_ids: set,
                  session_ids: list, workers: int) -> list["SubtaskReport"]:
-        """V33-D1: Execute plan tasks respecting depends_on DAG with ThreadPoolExecutor.
+        """Execute plan tasks respecting depends_on DAG with event-driven dispatch.
 
-        Tasks with no pending dependencies are submitted in parallel (up to
-        ``workers`` threads). A task is only dispatched once all tasks listed in
-        its ``depends_on`` field have completed (regardless of verdict — we always
-        attempt downstream tasks so the full picture is surfaced).
+        Uses ``wait(..., return_when=FIRST_COMPLETED)`` so newly unblocked
+        downstream tasks start immediately instead of blocking behind slow
+        unrelated siblings. Cyclic or missing dependencies fail closed with an
+        explicit ``fail`` SubtaskReport rather than being silently dropped.
         """
-        # Build id->sub map and dependency tracking
-        id_map = {sub["id"]: sub for sub in plan}
-        completed: dict[int, SubtaskReport] = {}   # task_id -> report
-        pending = list(plan)  # remaining tasks
+        completed: dict[str, SubtaskReport] = {}
+        pending = list(plan)
         reports_ordered: list[SubtaskReport] = []
+        active: dict = {}
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            while pending or True:
-                # Find tasks whose dependencies are all completed
+        def _deps_for(sub: dict) -> list[str]:
+            return [str(dep) for dep in (sub.get("depends_on") or [])]
+
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            while pending or active:
                 ready = [
                     sub for sub in pending
-                    if all(dep in completed for dep in sub.get("depends_on", []))
+                    if all(dep in completed for dep in _deps_for(sub))
                 ]
-                if not ready:
-                    break  # deadlock guard — all remaining have unresolved deps
-
-                # Submit all ready tasks in parallel
-                future_to_sub = {
-                    pool.submit(self._run_one_subtask, sub,
-                                skip_task_ids, session_ids): sub
-                    for sub in ready
-                }
                 for sub in ready:
                     pending.remove(sub)
+                    fut = pool.submit(self._run_one_subtask, sub,
+                                      skip_task_ids, session_ids)
+                    active[fut] = sub
 
-                # Collect results as they finish
-                for fut in as_completed(future_to_sub):
-                    sub = future_to_sub[fut]
+                if not active:
+                    # Deadlock: cyclic or missing depends_on IDs — fail closed
+                    for sub in pending:
+                        missing = [d for d in _deps_for(sub) if d not in completed]
+                        rep = SubtaskReport(sub["id"], sub["task"], sub["verify"])
+                        rep.verdict = "fail"
+                        rep.evidence = f"unschedulable DAG dependencies: {missing}"
+                        rep.issues = [f"cyclic or missing depends_on: {missing}"]
+                        reports_ordered.append(rep)
+                    pending.clear()
+                    break
+
+                done, _ = wait(active.keys(), return_when=FIRST_COMPLETED)
+                for fut in done:
+                    sub = active.pop(fut)
                     try:
                         report = fut.result()
                     except Exception as exc:
-                        # If a thread crashes, synthesize a fail report
                         report = SubtaskReport(
                             sub["id"], sub["task"], sub["verify"])
                         report.verdict = "fail"
                         report.evidence = f"[thread error] {exc}"
-                    completed[sub["id"]] = report
+                    completed[str(sub["id"])] = report
                     reports_ordered.append(report)
 
-                if not pending:
-                    break
-
-        # Preserve original plan order in output
-        order = {sub["id"]: i for i, sub in enumerate(plan)}
-        reports_ordered.sort(key=lambda r: order.get(r.task_id, 999)
+        order = {str(sub["id"]): i for i, sub in enumerate(plan)}
+        reports_ordered.sort(key=lambda r: order.get(str(r.task_id), 999)
                              if hasattr(r, "task_id") else 999)
-        # Emit memory summary
-        success = all(r.verdict == "pass" for r in reports_ordered)
+        success = bool(reports_ordered) and all(
+            r.verdict == "pass" for r in reports_ordered
+        )
         memory_mod.log_event(
             f"orchestration {'OK' if success else 'FAILED'}: "
             f"({sum(1 for r in reports_ordered if r.verdict == 'pass')}"

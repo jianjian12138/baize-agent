@@ -7,6 +7,7 @@ no hardcoded drive letters anywhere in the runtime.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 # Repo root = parent of the baize/ package directory.
@@ -145,17 +146,32 @@ _DEFAULTS = {
 }
 
 
+_ENV_CACHE_LOCK = threading.Lock()
+_ENV_CACHE: dict[Path, tuple[int, int, dict[str, str]]] = {}
+
+
 def _parse_env_file(path: Path) -> dict:
-    """Parse a .env style file. Ignores comments and blank lines."""
+    """Parse a .env style file with (mtime_ns, size) caching. Ignores comments/blanks."""
+    try:
+        st = path.stat()
+    except OSError:
+        with _ENV_CACHE_LOCK:
+            _ENV_CACHE.pop(path, None)
+        return {}
+    sig_mtime, sig_size = st.st_mtime_ns, st.st_size
+    with _ENV_CACHE_LOCK:
+        cached = _ENV_CACHE.get(path)
+        if cached is not None and cached[0] == sig_mtime and cached[1] == sig_size:
+            return dict(cached[2])
     data: dict[str, str] = {}
-    if not path.exists():
-        return data
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         data[key.strip()] = value.strip().strip('"').strip("'")
+    with _ENV_CACHE_LOCK:
+        _ENV_CACHE[path] = (sig_mtime, sig_size, dict(data))
     return data
 
 

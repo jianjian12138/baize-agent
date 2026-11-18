@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Baize Engine · Baize Agent Studio · 白泽智能桌面工作台 __VER__</title>
+<style>
+__STYLE_BLOCK__
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="app-header">
+  <div class="header-left">
+    <button class="icon-btn" onclick="toggleSessionSidebar()" title="折叠/展开会话抽屉 (Ctrl+B)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+
+    <div class="brand">
+      <div class="brand-logo">白</div>
+      <span>Baize Studio</span>
+      <span class="version-tag">__VER__</span>
+    </div>
+
+    <span class="workspace-pill">📁 d:\tc\baize-agent</span>
+  </div>
+
+  <div class="header-actions">
+    <span class="status-pill" id="git-branch-badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+      <strong style="color:var(--accent)" id="header-branch-name">main</strong>
+    </span>
+
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span id="server-status-text">127.0.0.1:8787</span>
+    </div>
+
+    <span class="status-pill" id="sys1-reflex-badge" title="System 1 亚毫秒快反射内核 · 概率校准路由">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <span>System 1: <strong style="color:var(--accent)" id="sys1-latency">&lt;1ms</strong></span>
+    </span>
+
+    <div class="mode-pill" id="autonomy-mode-badge" onclick="switchTab('tab-security')">
+      <span>🛡️ 默认权限</span>
+    </div>
+
+    <button class="icon-btn" onclick="toggleTheme()" title="切换明亮/暗黑主题">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="app-body">
+  <!-- Slim 64px Activity Rail -->
+  <nav class="activity-rail">
+    <div class="rail-top-group">
+      <div class="rail-item active" onclick="switchTab('tab-workbench')" title="智能结对工作台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>工作台</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-diff')" title="代码审查与 Git 变更">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+        <span>Git审查</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-skills')" title="技能自进化中心 (246+ 技能库)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        <span>技能库</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-lab')" title="白泽深度推理实验室 (影子推演/因果诊断/元工具)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span>实验室</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-team')" title="多 Agent DAG 控制台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>多Agent</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-archive')" title="会话分支与时间旅行">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <span>时间旅行</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-memory')" title="分层记忆面板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <span>记忆台</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-models')" title="模型服务商中心">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        <span>模型设置</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-doctor')" title="系统体检与日志">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>体检日志</span>
+      </div>
+      <div class="rail-item" onclick="switchTab('tab-security')" title="安全与自主度">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>权限治理</span>
+      </div>
+    </div>
+    <div class="rail-item" onclick="switchTab('tab-integrations')" title="平台生态集成">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+      <span>生态集成</span>
+    </div>
+  </nav>
+
+  <!-- Main Viewports -->
+  <main class="stage-container">
+
+    <!-- Tab 1: 智能结对工作台 -->
+    <section id="tab-workbench" class="tab-pane active">
+      <div class="workbench-layout">
+        <!-- Sessions Left Drawer -->
+        <div class="session-sidebar" id="session-sidebar-panel">
+          <div class="session-header">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span style="font-size:12px;font-weight:700;color:var(--text-muted)">会话历史</span>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <button class="icon-btn" onclick="exportCurrentSession()" title="导出当前会话为 Markdown 报告">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </button>
+              <button class="icon-btn" onclick="startNewSession()" title="新建会话">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+          <div style="padding:6px 8px;border-bottom:1px solid var(--border-subtle);">
+            <input type="text" id="session-filter-input" oninput="filterSessions(this.value)" placeholder="🔍 快速过滤会话..." style="width:100%;background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text-main);outline:none;box-sizing:border-box;">
+          </div>
+          <div class="session-list" id="workbench-session-list">
+            <div style="font-size:11px;color:var(--text-dim);padding:20px 8px;text-align:center;line-height:1.6;">暂无历史会话<br><span style="color:var(--accent);cursor:pointer;" onclick="startNewSession()">+ 点击开启新会话</span></div>
+          </div>
+        </div>
+
+        <!-- Chat Viewport -->
+        <div class="chat-viewport">
+          <div class="messages-container" id="chat-messages">
+            <div class="msg-row">
+              <div class="avatar baize">白</div>
+              <div class="msg-bubble">
+                <p><strong>您好！我是白泽（Baize Agent __VER__）。</strong></p>
+                <p style="margin-top:6px;color:var(--text-muted)">已就绪，搭载 12 大安全沙箱原语、246+ 技能库与影子推演内核。请输入您的任务，或使用 <code>@</code> 快速选择文件！</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Prompt Shelf (Engineering Quick Prompts) -->
+          <div class="prompt-shelf">
+            <span class="prompt-card" onclick="insertPrompt('使用 TDD 测试驱动规范为目标函数编写全面单元测试')">🧪 TDD 红绿重构</span>
+            <span class="prompt-card" onclick="insertPrompt('运行 doctor 体检并报告环境与持久化状态')">🩺 /doctor 体检</span>
+            <span class="prompt-card" onclick="insertPrompt('运行系统健康与 Windows PowerShell 宿主环境深度诊断')">🪟 Windows 深度诊断</span>
+            <span class="prompt-card" onclick="insertPrompt('对当前工作区进行系统架构解耦与坏味道清理')">🧹 架构解耦重构</span>
+            <span class="prompt-card" onclick="insertPrompt('执行 AST 因果分析定位最近一次测试失败根因')">🔍 因果根因诊断</span>
+            <span class="prompt-card" onclick="insertPrompt('启动 Speculative 影子时空推演探索 3 条重构路线')">⚡ 影子分支推演</span>
+          </div>
+
+          <!-- Exquisite Dock Input Box -->
+          <div class="chat-dock">
+            <!-- Autocomplete Popups -->
+            <div class="popup-menu" id="file-autocomplete-popup" onclick="event.stopPropagation()" style="left:24px;width:340px;"></div>
+            <div class="popup-menu" id="cmd-autocomplete-popup" onclick="event.stopPropagation()" style="left:24px;width:300px;"></div>
+            <div class="popup-menu" id="model-select-popup" onclick="event.stopPropagation()" style="right:70px;width:240px;"></div>
+            <div class="popup-menu" id="auth-select-popup" onclick="event.stopPropagation()" style="left:50px;width:220px;"></div>
+
+            <div class="dock-box">
+              <!-- Context Chips -->
+              <div class="dock-chips-bar" id="attached-files-bar" style="display:none;"></div>
+
+              <textarea class="dock-textarea" id="chat-input" placeholder="今天帮你做些什么？@ 引用对话文件，/ 调用技能与指令" oninput="handleTextareaInput(event)" onkeydown="handleInputKey(event)"></textarea>
+
+              <!-- Bottom Tool Bar -->
+              <div class="dock-toolbar">
+                <div class="dock-left-tools">
+                  <!-- Hidden Native File Picker -->
+                  <input type="file" multiple id="native-file-picker" style="display:none" onchange="handleNativeFileSelect(event)" />
+
+                  <!-- '+' Attachment button -->
+                  <button class="inline-btn" onclick="triggerFilePicker(event)" title="引用工作区文件 (@)">
+                    <span style="font-size:16px;font-weight:700;line-height:1">+</span>
+                  </button>
+
+                  <!-- Autonomy / Permission dropdown -->
+                  <button class="inline-btn" id="dock-auth-btn" onclick="toggleAuthPopup(event)" title="切换操作权限">
+                    <span id="dock-auth-label">🛡️ 默认权限</span>
+                    <span style="font-size:9px;margin-left:2px">⌄</span>
+                  </button>
+                </div>
+
+                <div class="dock-right-tools">
+                  <!-- Spinner (Thinking indicator) -->
+                  <span id="thinking-indicator" style="display:none;color:var(--accent);font-size:13px;animation:spin 1s linear infinite;">◌</span>
+
+                  <!-- Inline Model Selector -->
+                  <button class="inline-btn" id="dock-model-btn" onclick="toggleModelPopup(event)" title="秒级热切换活跃大模型">
+                    <span>☯</span>
+                    <span id="dock-model-label">DeepSeek V3</span>
+                    <span style="font-size:9px;margin-left:2px">⌄</span>
+                  </button>
+
+                  <!-- Mic Icon -->
+                  <button class="inline-btn" style="padding:4px;" title="语音输入 (准备中)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  </button>
+
+                  <!-- Circular Action Button -->
+                  <button class="round-action-btn" id="send-btn" onclick="submitChat()" title="发送执行 (Enter)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: 代码审查与 Git 变更 -->
+    <section id="tab-diff" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>代码审查与 Git 差量工作区 (Diff Review)</h2>
+          <div style="display:flex;gap:8px;">
+            <div style="display:flex;background:#0d1017;border:1px solid var(--border-subtle);border-radius:6px;padding:2px;">
+              <button class="chip-btn" id="diff-mode-unified" onclick="setDiffViewMode('unified')" style="background:var(--bg-elevated);color:var(--accent);">📄 Unified 单栏</button>
+              <button class="chip-btn" id="diff-mode-split" onclick="setDiffViewMode('split')">📑 Split 并排</button>
+            </div>
+            <button class="primary-btn" onclick="loadGitDiff()">刷新变更</button>
+          </div>
+        </div>
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <span>当前工作分支: </span><strong style="color:var(--accent)" id="git-branch-label">main</strong>
+            </div>
+            <div id="git-clean-badge" style="font-size:12px;color:var(--success)">✓ 工作区状态加载中...</div>
+          </div>
+          <div class="diff-terminal" id="git-diff-viewer">点击上方「刷新变更」以审查最新代码修改差量...</div>
+        </div>
+
+        <!-- V39.0.0 Aegis: Blast Radius & Test Impact Inspector -->
+        <div class="panel-card" style="margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:16px;">💥</span>
+              <h3 style="font-size:14px;margin:0;color:var(--text-main);">Aegis 变更爆炸半径 (Blast Radius) 与回归测试域 (TIA) 检查器</h3>
+              <span class="badge" style="background:var(--accent-glow);color:var(--accent);font-size:10px;">V39.0 Aegis</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);">预防超大工程改动导致的次生 Bug 与全量单测耗时</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <input type="text" id="aegis-target-input" class="search-input" style="flex:1;" placeholder="输入待修改的函数/类名 (如 default_registry) 或 文件路径 (如 baize/tools.py)" />
+            <button class="primary-btn" onclick="runBlastRadiusInspect()" style="white-space:nowrap;">💥 预检爆炸半径</button>
+            <button class="chip-btn" onclick="runTestImpactInspect()" style="white-space:nowrap;background:var(--bg-elevated);color:var(--accent);border:1px solid var(--border-subtle);">🎯 分析测试影响域</button>
+          </div>
+          <div id="aegis-inspect-result" style="display:none;background:#0b0e14;border:1px solid var(--border-subtle);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:12px;line-height:1.6;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: 会话分支与时间旅行 -->
+    <section id="tab-archive" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>会话分支与时间旅行时光机 (Archive & Lineage Graph)</h2>
+          <div style="display:flex;gap:8px;">
+            <button class="chip-btn" onclick="exportCurrentSession()">📥 导出当前会话</button>
+            <button class="primary-btn" onclick="loadSessions();loadLineageTree();">刷新会话树</button>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-bottom:16px;">
+          <h3>🌿 会话血统与分叉时光机 (Lineage Git-Graph)</h3>
+          <div id="lineage-tree-canvas" style="display:flex;flex-direction:column;gap:8px;padding:12px;background:#080a10;border-radius:8px;border:1px solid var(--border-subtle);min-height:100px;">
+            <span style="color:var(--text-dim);font-size:12px;">加载会话拓扑树中...</span>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-bottom:16px;">
+          <h3>🔀 分叉与压缩 (Fork &amp; Compress)</h3>
+          <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+            <input type="text" id="fork-parent-input" placeholder="父会话 ID（可从下方列表复制）" />
+            <button class="primary-btn" onclick="submitFork()" style="white-space:nowrap">🍴 分叉新会话</button>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="text" id="compress-id-input" placeholder="要压缩的会话 ID" />
+            <button class="primary-btn" onclick="submitCompress()" style="white-space:nowrap">🗜️ 压缩会话</button>
+          </div>
+          <div id="fork-compress-result" style="font-size:12px;color:var(--text-dim);margin-top:8px;"></div>
+        </div>
+
+        <div class="panel-card">
+          <h3>会话历史列表 (Append-only JSONL)</h3>
+          <div id="archive-session-table">加载中...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: 多 Agent DAG 控制台 -->
+    <section id="tab-team" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>多 Agent DAG 并行调度控制台 (Interactive Flow Orchestrator)</h2>
+        </div>
+        <div class="panel-card">
+          <h3>派发端到端团队目标</h3>
+          <div style="display:flex;gap:10px;margin-bottom:12px;">
+            <input type="text" id="team-goal-input" placeholder="输入复杂工程目标（例如：实现新特性并编写 100% 覆盖率测试）..." />
+            <button class="primary-btn" onclick="launchTeamGoal()" style="white-space:nowrap">🚀 启动 DAG 并行编排</button>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border-subtle);padding-top:10px;">
+            <div style="font-size:12px;color:var(--text-muted);">
+              <strong>智能体节点库 (点击添加):</strong>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button class="chip-btn" onclick="addDagNode('director', '🎯 Director 规划节点')">+ 🎯 Director</button>
+              <button class="chip-btn" onclick="addDagNode('executor', '⚡ Executor 执行节点')">+ ⚡ Executor</button>
+              <button class="chip-btn" onclick="addDagNode('critic', '🧠 Critic 审查反思')">+ 🧠 Critic</button>
+              <button class="chip-btn" onclick="addDagNode('verifier', '🛡️ Verifier 物理门禁')">+ 🛡️ Verifier</button>
+              <button class="chip-btn" style="color:var(--danger);" onclick="resetDagCanvas()">清空画板</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="dag-canvas" id="team-dag-canvas" style="min-height:220px;">
+          <div style="color:var(--text-muted);font-size:13px;text-align:center;">暂无运行中的多 Agent 编排任务。在上方输入目标或添加节点以编排！</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: 技能中心 (246+) -->
+    <section id="tab-skills" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>技能自进化中心 (246+ Standard Engineering Skills)</h2>
+          <div style="display:flex;gap:8px;">
+            <button class="chip-btn" onclick="loadToolHub()">🧬 浏览元工具生态市场</button>
+            <button class="primary-btn" onclick="openSkillCreator()">+ 新建自定义技能</button>
+          </div>
+        </div>
+
+        <div class="panel-card" id="tool-hub-panel" style="display:none;margin-bottom:16px;">
+          <h3>🧬 达尔文元工具生态市场 (Meta-Tool Hub & Hot-Reload)</h3>
+          <div id="tool-hub-list" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;margin-top:10px;">
+            加载中...
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div style="display:flex;gap:10px;">
+            <input type="text" id="skill-search-input" placeholder="搜索 260+ 内置工程技能库（包含 Matt Pocock 严密工程规约、核心流水线等）..." oninput="filterSkills()" />
+          </div>
+          <!-- Category Filter Pills -->
+          <div class="category-pills" id="skills-cat-pills">
+            <span class="cat-pill active" onclick="setSkillDomainFilter('all', this)">全部 (All)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('mattpocock', this)" style="border-color:var(--accent);color:var(--accent);">⭐ Matt Pocock套件</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('pipeline', this)">核心流水线 (P1-P12)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('arch', this)">架构设计 (Arch)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('refactor', this)">代码重构 (Refactor)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('test', this)">测试驱动 (TDD)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('security', this)">安全沙箱 (Security)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('performance', this)">性能优化 (Perf)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('techstack', this)">语言栈 (TechStack)</span>
+            <span class="cat-pill" onclick="setSkillDomainFilter('devops', this)">DevOps与自进化</span>
+          </div>
+          <div id="skills-grid" class="grid-3" style="margin-top:10px;max-height:500px;overflow-y:auto;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🔍 全局代码符号依赖图谱 (Global AST Symbol Graph)</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">跨文件精准检索函数定义 (Definitions)、类层级与调用链引用 (Call Hierarchy)：</p>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="symbol-search-input" placeholder="输入符号名称（如：Session, run_command, SymbolGraph）..." onkeydown="if(event.key==='Enter')searchSymbols();" />
+            <button class="primary-btn" onclick="searchSymbols()">检索符号图谱</button>
+          </div>
+          <div id="symbols-result-box" style="margin-top:10px;font-size:12px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 6: 白泽深度推理实验室 (V30/V33 Signature Lab) -->
+    <section id="tab-lab" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>白泽深度推理与沙箱演练实验室 (Baize Deep Lab)</h2>
+        </div>
+        <div class="grid-2">
+          <!-- Speculative Forking -->
+          <div class="panel-card">
+            <h3>⚡ 异步并发 Swarm 影子推演 (Asyncio Swarm Engine)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">3 条独立策略路线异步并发试错，按最小代码抖动与零风险决出胜出时间线：</p>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="spec-goal-input" value="优化数据持久化层的并发安全性与锁粒度" />
+              <button class="primary-btn" onclick="runSwarmLab()">⚡ 并发 Swarm 探索</button>
+            </div>
+            <div id="spec-result-box" style="font-size:12px;margin-top:8px;"></div>
+          </div>
+
+          <!-- Causal Debugger & Mutation Arena -->
+          <div class="panel-card">
+            <h3>🔍 AST 因果反事实分析与变异演练 (Causal & Mutation Arena)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">自动提取故障 AST 切片并注入边界变异算子，构建永久抗脆弱红绿网：</p>
+            <div style="display:flex;gap:8px;">
+              <button class="primary-btn" onclick="runCausalLab()">运行因果切片诊断</button>
+              <button class="chip-btn" onclick="runMutationArena()" style="font-size:11px;">🧪 触发 AST 变异测试网</button>
+            </div>
+            <div id="causal-result-box" style="font-size:12px;margin-top:8px;"></div>
+          </div>
+
+          <!-- Meta-Tool Synthesizer -->
+          <div class="panel-card">
+            <h3>🧬 达尔文元工具合成 (Meta-Tool Synthesizer)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">动态编译沙箱验证新工具并认证基因签名：</p>
+            <button class="primary-btn" onclick="runSynthLab()" style="align-self:flex-start">合成并认证元工具</button>
+            <div id="synth-result-box" style="font-size:12px;margin-top:8px;"></div>
+          </div>
+
+          <!-- Red-Blue Game & Byzantine Consensus -->
+          <div class="panel-card">
+            <h3>⚔️ 拜占庭多智能体对抗博弈仲裁 (Byzantine BFT Consensus)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">红队注入攻防 vs 蓝队沙箱防御 vs 仲裁法官全票共识签名：</p>
+            <button class="primary-btn" onclick="runByzantineConsensus()" style="align-self:flex-start">⚖️ 执行拜占庭共识仲裁</button>
+            <div id="adv-result-box" style="font-size:12px;margin-top:8px;"></div>
+          </div>
+
+          <!-- System 1 Fast Reflex & Calibrated Routing -->
+          <div class="panel-card">
+            <h3>⚡ System 1 快反射决策控制台 (Fast Reflex &amp; Calibration)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">亚毫秒意图路由、预检安全防护与概率校准矩阵：</p>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="sys1-goal-input" value="运行所有测试并修复测试失败" placeholder="输入意图/命令进行亚毫秒路由与安全检测..." />
+              <button class="primary-btn" onclick="testSystem1Reflex()">⚡ 快反射检测</button>
+            </div>
+            <div id="sys1-result-box" style="font-size:12px;margin-top:8px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 7: 分层记忆面板 -->
+    <section id="tab-memory" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>分层记忆与 BM25+TF-IDF RAG 测试台 (Memory Studio)</h2>
+          <button class="primary-btn" onclick="archiveMemory()">一键归档 30 天日志</button>
+        </div>
+        <div class="grid-2">
+          <div class="panel-card">
+            <h3>混合 RAG 实时检索测试</h3>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="rag-query-input" placeholder="输入关键词检索长期记忆..." />
+              <button class="primary-btn" onclick="testRagSearch()">检索</button>
+            </div>
+            <div id="rag-results" style="margin-top:10px;font-size:12px;color:var(--text-muted)"></div>
+          </div>
+          <div class="panel-card">
+            <h3>🧠 AST 语义级上下文剪枝压缩器 (AST Context Slicer)</h3>
+            <p style="font-size:12px;color:var(--text-muted)">修剪无关函数体为类型存根，将大模型输入 Token 精减 60%：</p>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="slice-symbol-input" placeholder="聚焦目标符号（如：save_session）" value="save_session" />
+              <button class="primary-btn" onclick="testContextSlice()">⚡ 运行 AST 剪枝</button>
+            </div>
+            <div id="slice-result-box" style="margin-top:10px;font-size:12px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 8: 模型服务商中心 -->
+    <section id="tab-models" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>大模型服务商配置 (Model Hub)</h2>
+          <button class="primary-btn" onclick="autoDiscoverLocalModels()">🔍 自动探测本地 Ollama / LMStudio</button>
+        </div>
+        <div class="panel-card">
+          <h3>端点与密钥配置</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div>
+              <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">API Base URL (端点地址)</label>
+              <input type="text" id="cfg-base-url" placeholder="api.deepseek.com/v1 或 localhost:11434/v1" />
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">API Key (接口密钥)</label>
+              <input type="password" id="cfg-api-key" placeholder="sk-..." />
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Model Name (模型名称)</label>
+              <input type="text" id="cfg-model-name" placeholder="deepseek-chat / gpt-4o / claude-3-7-sonnet" />
+            </div>
+            <div style="display:flex;gap:10px;margin-top:8px;">
+              <button class="primary-btn" onclick="saveModelConfig()">保存配置</button>
+              <button class="chip-btn" onclick="testModelConnection()">⚡ 测试连接与延迟</button>
+            </div>
+            <div id="model-test-result" style="font-size:12px;margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 9: 系统体检与日志 -->
+    <section id="tab-doctor" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>系统体检与实时日志 (Doctor & Live Logs)</h2>
+          <button class="primary-btn" onclick="runDoctorHealthCheck();loadMetricsSummary();">重新体检与刷新大屏</button>
+        </div>
+
+        <div class="panel-card" style="margin-bottom:16px;">
+          <h3>📊 智能体执行大屏与 Token 成本分析 (Metrics & Cost Analyzer)</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;margin-top:10px;">
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">⏱️ 系统已运行</span>
+              <span id="metric-uptime" style="font-size:18px;font-weight:700;color:var(--accent);">--</span>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">🚀 智能体总执行次数</span>
+              <span id="metric-runs" style="font-size:18px;font-weight:700;color:var(--success);">--</span>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">🪙 累计消耗 Token</span>
+              <span id="metric-tokens" style="font-size:18px;font-weight:700;color:var(--text-main);">--</span>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:4px;">
+              <span style="color:var(--text-dim);font-size:11px;">💰 估算支出费用</span>
+              <span id="metric-cost" style="font-size:18px;font-weight:700;color:var(--warning);">--</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel-card">
+            <h3>Baize Doctor 健康报告</h3>
+            <div id="doctor-checks-list" style="display:flex;flex-direction:column;gap:8px;">加载中...</div>
+          </div>
+          <div class="panel-card">
+            <h3>实时日志流 (Live Stream)</h3>
+            <div class="log-terminal" id="live-log-terminal">
+              <div class="log-entry info">[system] Baize Engine __VER__ initialized. Endpoint /metrics and /health ready.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🪟 Windows & PowerShell 宿主引擎与 POSIX 智能转译大屏</h3>
+          <div id="windows-status-card" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;margin-top:10px;">
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:2px;">
+              <span style="font-size:10px;color:var(--text-dim);">Shell 宿主引擎</span>
+              <strong id="win-shell-name" style="color:var(--accent);font-size:12px;">PowerShell 探测中...</strong>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:2px;">
+              <span style="font-size:10px;color:var(--text-dim);">全链路 UTF-8 编码</span>
+              <strong style="color:var(--success);font-size:12px;">✓ [Console]::OutputEncoding UTF-8</strong>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:2px;">
+              <span style="font-size:10px;color:var(--text-dim);">POSIX 指令转译垫片</span>
+              <strong style="color:var(--accent);font-size:12px;">✓ 15+ 种命令无感转译激活</strong>
+            </div>
+            <div class="stat-gauge" style="flex-direction:column;align-items:flex-start;gap:2px;">
+              <span style="font-size:10px;color:var(--text-dim);">执行策略隔离</span>
+              <strong style="color:var(--warning);font-size:12px;">-ExecutionPolicy Bypass</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🧪 混沌工程抗脆弱演练台 (Chaos Simulation Arena)</h3>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+            <select id="chaos-fault-select" style="background:#090b12;border:1px solid var(--border-subtle);color:var(--text-main);padding:6px 10px;border-radius:6px;font-size:12px;">
+              <option value="malformed_json">LLM 输出截断畸变 JSON 响应</option>
+              <option value="network_drop_30">模拟 30% 网络弱网丢包</option>
+              <option value="slow_latency_3000ms">模拟 3000ms 慢网络高延迟</option>
+              <option value="disk_read_only">模拟持久化只读故障</option>
+            </select>
+            <button class="primary-btn" onclick="runChaosSimulation()">⚡ 触发混沌注入演练</button>
+          </div>
+          <div id="chaos-sim-result" style="font-size:12px;margin-top:8px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 10: 安全与自主度 -->
+    <section id="tab-security" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>安全与自主度权限中心 (Security & Autonomy)</h2>
+        </div>
+        <div class="panel-card">
+          <h3>Agent 自主度模式控制</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">
+            <label style="display:flex;align-items:center;gap:10px;">
+              <input type="radio" name="autonomy_level" value="1" onchange="setAutonomyMode(1)" />
+              <span><strong>Level 1: 只读安全模式 (Read-Only)</strong> — 拦截所有文件写入与 Shell 执行</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:10px;">
+              <input type="radio" name="autonomy_level" value="2" checked onchange="setAutonomyMode(2)" />
+              <span><strong>Level 2: 受限半监督 (Supervised)</strong> — 默认安全执行，高危操作弹窗审批</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:10px;">
+              <input type="radio" name="autonomy_level" value="3" onchange="setAutonomyMode(3)" />
+              <span><strong>Level 3: YOLO 极客模式 (Full Autonomous)</strong> — 全自动执行，提效最大化</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🛡️ 细粒度路径 RBAC 权限与物理门禁加密签名</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div style="background:#090b12;padding:8px;border-radius:6px;border:1px solid var(--border-subtle);">
+                <strong>路径策略:</strong>
+                <div style="color:var(--text-muted);font-size:11px;margin-top:4px;">• <code>src/**</code> ➔ 读写 (RW)</div>
+                <div style="color:var(--text-muted);font-size:11px;">• <code>deploy/**</code> ➔ 只读 (RO)</div>
+                <div style="color:var(--text-muted);font-size:11px;">• <code>.env</code> ➔ 禁止访问 (Deny)</div>
+              </div>
+              <div style="background:#090b12;padding:8px;border-radius:6px;border:1px solid var(--border-subtle);">
+                <strong>Git 门禁加密签名水印:</strong>
+                <div id="security-watermark" style="font-family:var(--font-mono);color:var(--accent);font-size:11px;margin-top:4px;">Baize-Gate-Verified: BG-9A71F42B</div>
+              </div>
+            </div>
+            <button class="primary-btn" onclick="applyRbacRules()" style="align-self:flex-start;margin-top:4px;">🔒 更新细粒度路径权限</button>
+            <div id="rbac-result" style="font-size:12px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 11: 平台生态集成 -->
+    <section id="tab-integrations" class="tab-pane">
+      <div class="module-view">
+        <div class="module-title-bar">
+          <h2>平台生态集成 (Feishu / Webhook Integrations)</h2>
+        </div>
+        <div class="panel-card">
+          <h3>飞书 / 钉钉机器人 Webhook 桥接</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div>
+              <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Webhook 转发地址</label>
+              <input type="text" id="webhook-url" placeholder="open.feishu.cn/open-apis/bot/v2/hook/..." />
+            </div>
+            <button class="primary-btn" onclick="alert('集成配置已保存')" style="align-self:flex-start">保存集成配置</button>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>⚡ Webhook 事件触发与双向推送测试</h3>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+            <select id="webhook-target-select" style="background:#090b12;border:1px solid var(--border-subtle);color:var(--text-main);padding:6px 10px;border-radius:6px;font-size:12px;">
+              <option value="feishu">飞书机器人 (Feishu)</option>
+              <option value="dingtalk">钉钉群机器人 (DingTalk)</option>
+              <option value="wecom">企业微信 (WeCom)</option>
+              <option value="slack">Slack Incoming Webhook</option>
+            </select>
+            <button class="primary-btn" onclick="testWebhookDispatch()">🚀 模拟发送事件通知</button>
+          </div>
+          <div id="webhook-test-result" style="font-size:12px;margin-top:8px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🌐 Anthropic MCP (Model Context Protocol) 开放协议连接器</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">原生兼容社区 10,000+ 开源 MCP 工具生态 (SQLite, GitHub, PostgreSQL, Puppeteer, Slack 等)：</p>
+          <div id="mcp-servers-list" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px;margin-bottom:10px;">
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">[MCP] sqlite</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">本地 SQLite 数据库查询与结构分析</div>
+              <button class="chip-btn" onclick="testMcpCall('sqlite', 'sqlite_query', {sql:'SELECT count(*) FROM sessions'})" style="font-size:10px;">⚡ 调用 sqlite_query</button>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">[MCP] github</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">GitHub 远程仓库 PR 与 Issue 交互</div>
+              <button class="chip-btn" onclick="testMcpCall('github', 'github_list_prs', {state:'open'})" style="font-size:10px;">⚡ 调用 list_prs</button>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">[MCP] puppeteer</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">无头浏览器抓取与截图</div>
+              <button class="chip-btn" onclick="testMcpCall('puppeteer', 'puppeteer_navigate', {url:'http://127.0.0.1:8787'})" style="font-size:10px;">⚡ 调用 navigate</button>
+            </div>
+          </div>
+          <div id="mcp-call-result" style="font-size:12px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🧬 达尔文自主繁衍元工具企业市场 (Darwin Marketplace)</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">跨团队共享与挂载自主演化的元工具，附带不可篡改的加密基因签名：</p>
+          <div id="darwin-market-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;margin-bottom:10px;">
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">k8s_manifest_validator</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">K8s YAML 规范与资源配额深度校验器</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span style="color:var(--success)">适应度: 98%</span>
+                <span style="font-family:var(--font-mono);color:var(--text-dim);">DARWIN-9A71</span>
+              </div>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">ast_sql_injection_guard</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">AST 语法树 SQL 拼接与注入扫描器</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span style="color:var(--success)">适应度: 99%</span>
+                <span style="font-family:var(--font-mono);color:var(--text-dim);">DARWIN-F42B</span>
+              </div>
+            </div>
+            <div style="background:#090b12;border:1px solid var(--border-subtle);border-radius:6px;padding:8px;">
+              <strong style="color:var(--accent);font-size:11px;">graphql_schema_differ</strong>
+              <div style="font-size:10px;color:var(--text-dim);margin:4px 0;">GraphQL 破坏性变更影响面分析器</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                <span style="color:var(--success)">适应度: 96%</span>
+                <span style="font-family:var(--font-mono);color:var(--text-dim);">DARWIN-81C3</span>
+              </div>
+            </div>
+          </div>
+          <button class="primary-btn" onclick="publishCustomTool()" style="font-size:11px;">+ 发布当前会话合成的元工具</button>
+        </div>
+
+        <div class="panel-card" style="margin-top:16px;">
+          <h3>🌐 企业级私有化集群部署与 gRPC 服务</h3>
+          <div style="background:#090b12;padding:10px;border-radius:6px;border:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:8px;">
+            docker run -d -p 8787:8787 -p 50051:50051 -e BAIZE_AUTH_TOKEN=secret_token -v /workspace:/workspace baize/studio:v37.0.0
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">支持 RESTful HTTP (8787) 与 gRPC 二进制双向流式协议 (50051)。</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+__SCRIPT_BLOCK__
+</script>
+</body>
+</html>

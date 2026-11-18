@@ -88,12 +88,33 @@ class AutonomyPolicy:
         return True, ""
 
 
+_LEVEL_NUM_MAP = {
+    "1": "supervised",
+    "2": "balanced",
+    "3": "autonomous",
+}
+
+
+def resolve_autonomy_level(cfg: dict | None = None) -> str:
+    """Resolve effective autonomy level from BAIZE_YOLO_MODE / BAIZE_AUTONOMY / BAIZE_AUTONOMY_LEVEL."""
+    cfg = cfg or {}
+    if str(cfg.get("BAIZE_YOLO_MODE", "0")).strip() == "1":
+        return "autonomous"
+    explicit = (cfg.get("BAIZE_AUTONOMY") or "").strip()
+    if explicit in ("supervised", "autonomous"):
+        return explicit
+    numeric = str(cfg.get("BAIZE_AUTONOMY_LEVEL", "")).strip()
+    if numeric in _LEVEL_NUM_MAP:
+        return _LEVEL_NUM_MAP[numeric]
+    return explicit if explicit in VALID_LEVELS else "balanced"
+
+
 def build_policy(cfg: dict | None = None, level: str | None = None,
                  cost_cap: int | None = None) -> AutonomyPolicy:
-    """Construct a policy from config (BAIZE_AUTONOMY / BAIZE_AUTONOMY_COST_CAP)."""
+    """Construct a policy from config (BAIZE_AUTONOMY / BAIZE_AUTONOMY_LEVEL / BAIZE_YOLO_MODE)."""
     from .config import load_config
     cfg = cfg or load_config()
-    lvl = level or cfg.get("BAIZE_AUTONOMY", "balanced")
+    lvl = level or resolve_autonomy_level(cfg)
     cap = cost_cap if cost_cap is not None else \
         int(cfg.get("BAIZE_AUTONOMY_COST_CAP", str(DEFAULT_COST_CAP)))
     return AutonomyPolicy(level=lvl, cost_cap=cap)

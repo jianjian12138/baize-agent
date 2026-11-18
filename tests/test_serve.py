@@ -455,53 +455,28 @@ class TestGitEndpoints:
             assert "diff" in payload
 
 
-class TestInertSettings:
-    """The autonomy slider must announce that it does nothing.
+class TestLiveAutonomySettings:
+    """BAIZE_AUTONOMY_LEVEL and BAIZE_YOLO_MODE are wired into autonomy.py/modes.py."""
 
-    BAIZE_AUTONOMY_LEVEL / BAIZE_YOLO_MODE are written and echoed by
-    /api/config but read by no other code path. Reporting them without that
-    caveat is how a control panel ends up lying to its user.
-    """
-
-    def test_get_config_declares_the_settings_inert(self, server):
+    def test_get_config_reports_effective_settings(self, server):
         status, _, body = get(f"{server}/api/config")
         assert status == 200
         payload = json.loads(body)
-        assert payload["effective"] == {"autonomy_level": False, "yolo_mode": False}
-        assert "no code path reads them" in payload["note"]
+        assert payload["effective"] == {"autonomy_level": True, "yolo_mode": True}
 
-    def test_post_config_does_not_claim_to_have_changed_behaviour(self, server):
+    def test_post_config_updates_effective_autonomy_policy(self, server):
+        from baize.autonomy import build_policy
         status, body = post(server, "/api/config", {"autonomy_level": 3})
         assert status == 200
         payload = json.loads(body)
-        assert payload["effective"] is False
-        assert payload["persisted"] is False
-        assert payload["status"] == "stored_in_process_env"
-        # The old wording was "updated", which reads as "it took effect".
-        assert payload["status"] != "updated"
+        assert payload["effective"] is True
+        assert payload["autonomy_level"] == 3
+        assert build_policy().level == "autonomous"
 
-    def test_these_settings_have_no_consumer_in_the_package(self):
-        """Source-level guard: if someone wires one up, this test must fail so the
-        inert labels above get removed rather than left stale.
+        status2, _ = post(server, "/api/config", {"autonomy_level": 1})
+        assert status2 == 200
+        assert build_policy().level == "supervised"
 
-        Matches string CONSTANTS via the AST rather than raw text, so a mention
-        in a comment or in prose does not count as a consumer.
-        """
-        import ast
-
-        pkg = Path(__file__).resolve().parent.parent / "baize"
-        for key in ("BAIZE_AUTONOMY_LEVEL", "BAIZE_YOLO_MODE"):
-            referencing = set()
-            for p in pkg.rglob("*.py"):
-                tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Constant) and node.value == key:
-                        referencing.add(p.name)
-                        break
-            assert sorted(referencing) == ["config.py", "config_schema.py", "serve.py"], (
-                f"{key} is now referenced in code by {sorted(referencing)} - it may "
-                f"no longer be inert; update /api/config and the Studio slider label"
-            )
-
-
-
+    def test_post_config_rejects_out_of_range_autonomy_level(self, server):
+        status, _ = post(server, "/api/config", {"autonomy_level": 99})
+        assert status == 400

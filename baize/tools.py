@@ -19,6 +19,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -389,7 +390,10 @@ _GIT_ALLOWED = ("status", "add", "commit", "diff", "log", "show", "branch",
 
 
 def _tool_git(args: str, timeout: int = 60) -> str:
-    tokens = args.split()
+    try:
+        tokens = shlex.split(args)
+    except ValueError as exc:
+        return f"ERROR: malformed git arguments: {exc}"
     if not tokens:
         return "ERROR: git requires a subcommand"
     sub = tokens[0]
@@ -398,9 +402,17 @@ def _tool_git(args: str, timeout: int = 60) -> str:
                 f"(allowed: {', '.join(_GIT_ALLOWED)})")
     # Reject option injection that could alter git's execution environment.
     for tok in tokens[1:]:
-        if (tok == "-c" or tok.startswith("--upload-pack") or
-                tok.startswith("--receive-pack") or tok.startswith("--exec") or
-                "core.pager" in tok):
+        low_tok = tok.lower()
+        if (tok == "-c" or tok.startswith("-c") and len(tok) > 2 and "=" in tok
+                or tok == "-C" or tok.startswith("-C") and len(tok) > 2
+                or low_tok.startswith("--git-dir")
+                or low_tok.startswith("--work-tree")
+                or low_tok.startswith("--upload-pack")
+                or low_tok.startswith("--receive-pack")
+                or low_tok.startswith("--exec")
+                or any(k in low_tok for k in (
+                    "core.pager", "core.fsmonitor", "core.sshcommand", "alias."
+                ))):
             return f"ERROR: git option injection blocked: {tok}"
     cfg = load_config()
     workspace = str(_workspace_root(cfg))
@@ -486,27 +498,94 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
                 f"{advisory}")
 
     elif mode == "diff":
-        # Apply unified diff supplied in new_content
-        diff_lines = new_content.splitlines(keepends=True)
-        current_lines = current.splitlines(keepends=True)
-        # Extract target lines from diff (lines starting with + or space)
-        result_lines = []
+        # Apply unified diff hunks cleanly onto current_lines without dropping
+        # unmodified regions of the file.
+        uses_crlf = "\r\n" in current
+        curr_norm = current.replace("\r\n", "\n")
+        diff_norm = new_content.replace("\r\n", "\n")
+        current_lines = curr_norm.splitlines(keepends=True)
+        diff_lines = diff_norm.splitlines(keepends=True)
+
+        hunks: list[tuple[int | None, list[str], list[str]]] = []
+        cur_old_start: int | None = None
+        cur_old: list[str] = []
+        cur_new: list[str] = []
         in_hunk = False
+        hunk_re = re.compile(r"^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@")
+
         for line in diff_lines:
             if line.startswith("@@"):
+                if in_hunk:
+                    hunks.append((cur_old_start, cur_old, cur_new))
+                m = hunk_re.match(line)
+                cur_old_start = int(m.group(1)) if m else None
+                cur_old = []
+                cur_new = []
                 in_hunk = True
                 continue
             if not in_hunk:
                 continue
+            if line.startswith("\\ No newline at end of file"):
+                continue
             if line.startswith("+"):
-                result_lines.append(line[1:])
+                cur_new.append(line[1:])
             elif line.startswith("-"):
-                pass  # removed
+                cur_old.append(line[1:])
             elif line.startswith(" "):
-                result_lines.append(line[1:])
-        if not result_lines:
-            return "ERROR: patch_file diff — could not parse any lines from diff"
-        updated = "".join(result_lines)
+                cur_old.append(line[1:])
+                cur_new.append(line[1:])
+            elif line == "\n" or line == "":
+                cur_old.append(line)
+                cur_new.append(line)
+        if in_hunk:
+            hunks.append((cur_old_start, cur_old, cur_new))
+
+        if not hunks or all(not o and not n for _, o, n in hunks):
+            return "ERROR: patch_file diff — could not parse any hunks from diff"
+
+        def _lines_match(src_lines: list[str], pos: int, pat: list[str]) -> bool:
+            if pos < 0 or pos + len(pat) > len(src_lines):
+                return False
+            for idx, exp in enumerate(pat):
+                if src_lines[pos + idx] != exp:
+                    if idx == len(pat) - 1 and src_lines[pos + idx].rstrip("\n") == exp.rstrip("\n"):
+                        continue
+                    return False
+            return True
+
+        out_lines: list[str] = []
+        cursor = 0
+        for old_start, old_hunk, new_hunk in hunks:
+            match_pos: int | None = None
+            if not old_hunk:
+                target = max(cursor, (old_start - 1) if old_start is not None else cursor)
+                match_pos = min(len(current_lines), target)
+            else:
+                if old_start is not None:
+                    hint = max(cursor, old_start - 1)
+                    if _lines_match(current_lines, hint, old_hunk):
+                        match_pos = hint
+                if match_pos is None:
+                    candidates = [
+                        i for i in range(cursor, len(current_lines) - len(old_hunk) + 1)
+                        if _lines_match(current_lines, i, old_hunk)
+                    ]
+                    if len(candidates) == 1:
+                        match_pos = candidates[0]
+                    elif len(candidates) > 1:
+                        return (f"ERROR: patch_file diff — hunk context matched {len(candidates)} "
+                                f"locations in {path}; supply accurate @@ line numbers")
+            if match_pos is None:
+                return (f"ERROR: patch_file diff — hunk context not found in {path}; "
+                        f"use read_file to verify current lines")
+            out_lines.extend(current_lines[cursor:match_pos])
+            out_lines.extend(new_hunk)
+            cursor = match_pos + len(old_hunk)
+
+        out_lines.extend(current_lines[cursor:])
+        updated = "".join(out_lines)
+        if uses_crlf:
+            updated = updated.replace("\n", "\r\n")
         p.write_text(updated, encoding="utf-8")
         advisory = _check_blast_radius(p, current, updated)
         return (f"patched {path} via diff: {updated.count(chr(10)) + 1} lines{advisory}")
@@ -745,7 +824,25 @@ def _tool_search_skills(keyword: str) -> str:
 
 
 def _tool_load_skill(skill_file: str) -> str:
+    cfg = load_config()
     p = Path(skill_file)
+    if not p.is_absolute():
+        p = _workspace_root(cfg) / p
+    p = p.resolve()
+    allow_outside = cfg.get("BAIZE_ALLOW_OUTSIDE_WORKSPACE", "0") == "1"
+    if not allow_outside:
+        from .config import skill_library_paths
+        allowed_roots = [
+            _workspace_root(cfg),
+            (ROOT / "assets" / "skills").resolve(),
+            (ROOT / "user_skills").resolve(),
+            (ROOT / "skills").resolve(),
+            *(sp.resolve() for sp in skill_library_paths(cfg)),
+        ]
+        if not any(p == r or r in p.parents for r in allowed_roots):
+            return f"ERROR: skill path {p} is outside allowed skill/workspace roots"
+        if p.suffix.lower() != ".md":
+            return f"ERROR: load_skill only reads markdown skill files (.md), got {p.name}"
     if not p.is_file():
         return f"ERROR: skill file not found: {p}"
     text = p.read_text(encoding="utf-8", errors="replace")
@@ -811,6 +908,44 @@ def _tool_save_skill(name: str, description: str, body_markdown: str,
 # via the tool_sdk decorator all consult this one registry, so a custom tool
 # registered anywhere is visible to every Agent/Orchestrator instance. Building
 # built-ins once (lazily) also keeps registration O(1) per call.
+
+
+def _tool_grep_search(
+    pattern: str,
+    path: str = ".",
+    glob: str = "",
+    case_sensitive: bool = True,
+    regex: bool = True,
+    max_results: int = 50,
+) -> str:
+    """Fast pure-Python workspace-confined text/regex search."""
+    from .workspace_search import grep_workspace
+    return grep_workspace(
+        _resolve_in_workspace(path or "."),
+        _workspace_root(),
+        pattern=pattern,
+        glob=glob,
+        case_sensitive=case_sensitive,
+        regex=regex,
+        max_results=max_results,
+    )
+
+
+def _tool_find_files(
+    pattern: str = "*",
+    path: str = ".",
+    max_results: int = 100,
+) -> str:
+    """Fast pure-Python workspace file finder sorted newest first."""
+    from .workspace_search import find_workspace_files
+    return find_workspace_files(
+        _resolve_in_workspace(path or "."),
+        _workspace_root(),
+        pattern=pattern,
+        max_results=max_results,
+    )
+
+
 _DEFAULT_REGISTRY: ToolRegistry | None = None
 
 
@@ -844,6 +979,23 @@ def default_registry() -> ToolRegistry:
                      _tool_patch_file)
         reg.register("list_dir", "List entries of a workspace directory.",
                      _s(path={"type": "string", "_opt": True}), _tool_list_dir)
+        reg.register("grep_search",
+                     "Fast pure-Python workspace search (regex or literal, glob-filtered, "
+                     "binary-safe, confined to workspace). Prefer over bash grep/rg.",
+                     _s(pattern={"type": "string"},
+                        path={"type": "string", "_opt": True},
+                        glob={"type": "string", "_opt": True},
+                        case_sensitive={"type": "boolean", "_opt": True},
+                        regex={"type": "boolean", "_opt": True},
+                        max_results={"type": "integer", "_opt": True}),
+                     _tool_grep_search)
+        reg.register("find_files",
+                     "Find workspace files by glob pattern sorted by modification time "
+                     "(newest first). Prefer over bash find.",
+                     _s(pattern={"type": "string", "_opt": True},
+                        path={"type": "string", "_opt": True},
+                        max_results={"type": "integer", "_opt": True}),
+                     _tool_find_files)
         reg.register("bash", "Run a shell command inside the workspace "
                      "(deny-list gated, 60s timeout, interruptible).",
                      _s(command={"type": "string"},

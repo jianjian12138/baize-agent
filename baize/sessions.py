@@ -37,9 +37,20 @@ def _token_estimate(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _safe_session_file(sessions_dir: Path, session_id: str) -> Path:
+    sid = (session_id or "").strip()
+    if not sid or "/" in sid or "\\" in sid or ".." in sid or "\x00" in sid:
+        raise ValueError(f"invalid session id: {session_id!r}")
+    root = sessions_dir.resolve()
+    cand = (root / f"{sid}.jsonl").resolve()
+    if root not in cand.parents:
+        raise ValueError(f"session id escapes sessions dir: {session_id!r}")
+    return cand
+
+
 def _read_records(session_id: str, cfg: dict | None = None) -> list[dict]:
     d = _sessions_dir(cfg)
-    src = d / f"{session_id}.jsonl"
+    src = _safe_session_file(d, session_id)
     if not src.exists():
         raise FileNotFoundError(f"session not found: {session_id}")
     out: list[dict] = []

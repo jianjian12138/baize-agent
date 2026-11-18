@@ -2,8 +2,8 @@
 
 Pure Python standard library — zero third-party dependencies.
 Indexes cross-file symbol definitions, interfaces, structs, functions and imports across:
-- Python (.py) -> Full AST parse
-- TypeScript & JavaScript (.ts, .tsx, .js, .jsx) -> Interface, Class, Function, Export definitions
+- Python (.py) -> Full AST parse (single-pass non-quadratic call collector)
+- TypeScript & JavaScript (.ts, .tsx, .js, .jsx) -> Precompiled grammar patterns
 - Rust (.rs) -> struct, enum, fn, trait, impl
 - Go (.go) -> type ... struct, type ... interface, func
 - Java (.java) -> class, interface, enum, method
@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -20,15 +21,81 @@ __all__ = [
     "SymbolNode",
     "SymbolGraph",
     "build_workspace_symbol_graph",
+    "clear_symbol_graph_cache",
 ]
+
+_SUPPORTED_EXTS: dict[str, str] = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+}
+
+_SKIP_DIRS = frozenset({
+    "__pycache__", "node_modules", "persistence", "dist", "build", "target", "venv", ".venv",
+})
+
+# Precompiled polyglot extraction patterns
+_RE_TS_IFACE = re.compile(r"\b(?:export\s+)?interface\s+([A-Za-z0-9_]+)")
+_RE_TS_CLASS = re.compile(r"\b(?:export\s+)?class\s+([A-Za-z0-9_]+)")
+_RE_TS_FUNC = re.compile(r"\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)")
+_RE_TS_TYPE = re.compile(r"\b(?:export\s+)?type\s+([A-Za-z0-9_]+)\s*=")
+
+_RE_RS_STRUCT = re.compile(r"\b(?:pub\s+)?struct\s+([A-Za-z0-9_]+)")
+_RE_RS_FN = re.compile(r"\b(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)")
+_RE_RS_TRAIT = re.compile(r"\b(?:pub\s+)?trait\s+([A-Za-z0-9_]+)")
+
+_RE_GO_STRUCT = re.compile(r"\btype\s+([A-Za-z0-9_]+)\s+struct\b")
+_RE_GO_IFACE = re.compile(r"\btype\s+([A-Za-z0-9_]+)\s+interface\b")
+_RE_GO_FUNC = re.compile(r"\bfunc\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]+)\s*\(")
+
+_RE_JAVA_DECL = re.compile(r"\b(?:public|private|protected)?\s*(?:abstract\s+|final\s+)?(class|interface|enum)\s+([A-Za-z0-9_]+)")
+
+
+class _DirectCallCollector(ast.NodeVisitor):
+    """Collect direct function/attribute call names inside a single scope without recursing into nested defs."""
+
+    __slots__ = ("calls", "_seen")
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._seen: set[str] = set()
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if len(self.calls) < 15:
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else (fn.attr if isinstance(fn, ast.Attribute) else None)
+            if name and name not in self._seen:
+                self._seen.add(name)
+                self.calls.append(name)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return  # handled by outer ASTSymbolVisitor
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
 
 
 class SymbolNode:
     """Represents a defined code symbol (function, class, method, struct, interface)."""
+
+    __slots__ = (
+        "name", "kind", "file_path", "line_number", "end_line_number",
+        "docstring", "signature", "language", "references", "calls",
+    )
+
     def __init__(
         self,
         name: str,
-        kind: str,  # 'function', 'class', 'method', 'struct', 'interface', 'enum', 'trait'
+        kind: str,
         file_path: str,
         line_number: int,
         end_line_number: int,
@@ -64,6 +131,7 @@ class SymbolNode:
 
 class SymbolGraph:
     """In-memory polyglot symbol graph indexing definitions, references, and dependencies."""
+
     def __init__(self, root_dir: str = "."):
         self.root_dir = Path(root_dir).resolve()
         self.symbols: dict[str, list[SymbolNode]] = {}
@@ -76,52 +144,56 @@ class SymbolGraph:
         """Alias for index_workspace."""
         self.index_workspace(max_files=max_files)
 
+    def iter_unique_nodes(self) -> list[SymbolNode]:
+        """Return deduplicated list of defined SymbolNode objects (preserving insertion order)."""
+        nodes: list[SymbolNode] = []
+        for f_nodes in self.file_symbols.values():
+            nodes.extend(f_nodes)
+        return nodes
+
     def index_workspace(self, max_files: int = 1500) -> None:
-        """Scan workspace and index symbols for Python, TS/JS, Rust, Go, Java."""
+        """Scan workspace using fast os.scandir and index symbols."""
         self.symbols.clear()
         self.file_symbols.clear()
         self.file_imports.clear()
         self.total_files_indexed = 0
         self.languages_detected.clear()
 
-        supported_exts = {
-            ".py": "python",
-            ".ts": "typescript",
-            ".tsx": "typescript",
-            ".js": "javascript",
-            ".jsx": "javascript",
-            ".rs": "rust",
-            ".go": "go",
-            ".java": "java",
-        }
-
-        for root, dirs, files in os.walk(self.root_dir):
-            dirs[:] = [
-                d for d in dirs
-                if not d.startswith(".")
-                and d not in ("__pycache__", "node_modules", "persistence", "dist", "build", "target")
-            ]
-            for file in files:
-                ext = Path(file).suffix.lower()
-                if ext in supported_exts:
-                    lang = supported_exts[ext]
-                    self.languages_detected.add(lang)
-                    full_path = Path(root) / file
-                    rel_path = str(full_path.relative_to(self.root_dir)).replace("\\", "/")
-                    
-                    if ext == ".py":
-                        self._parse_python_file(full_path, rel_path)
-                    else:
-                        self._parse_polyglot_file(full_path, rel_path, lang)
-                        
-                    self.total_files_indexed += 1
-                    if self.total_files_indexed >= max_files:
-                        break
-            if self.total_files_indexed >= max_files:
-                break
+        root_str = str(self.root_dir)
+        stack = [root_str]
+        while stack and self.total_files_indexed < max_files:
+            cur = stack.pop()
+            try:
+                with os.scandir(cur) as it:
+                    entries = list(it)
+            except OSError:
+                continue
+            for entry in entries:
+                name = entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    if not name.startswith(".") and name not in _SKIP_DIRS:
+                        stack.append(entry.path)
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                _, ext = os.path.splitext(name)
+                ext = ext.lower()
+                lang = _SUPPORTED_EXTS.get(ext)
+                if not lang:
+                    continue
+                self.languages_detected.add(lang)
+                rel_path = os.path.relpath(entry.path, root_str).replace("\\", "/")
+                full_path = Path(entry.path)
+                if ext == ".py":
+                    self._parse_python_file(full_path, rel_path)
+                else:
+                    self._parse_polyglot_file(full_path, rel_path, lang)
+                self.total_files_indexed += 1
+                if self.total_files_indexed >= max_files:
+                    break
 
     def _parse_python_file(self, full_path: Path, rel_path: str) -> None:
-        """Extract classes, functions, and imports from a single Python file AST."""
+        """Parse Python AST for imports, classes, functions, methods, docstrings, and direct calls."""
         try:
             content = full_path.read_text(encoding="utf-8", errors="replace")
             tree = ast.parse(content, filename=rel_path)
@@ -130,23 +202,21 @@ class SymbolGraph:
 
         file_nodes: list[SymbolNode] = []
         imports: list[str] = []
+        symbols_dict = self.symbols
 
         class ASTSymbolVisitor(ast.NodeVisitor):
-            def __init__(self, parent_graph: SymbolGraph):
-                self.parent_graph = parent_graph
+            def __init__(self) -> None:
                 self.current_class: str | None = None
 
-            def visit_Import(self, node: ast.Import):
+            def visit_Import(self, node: ast.Import) -> None:
                 for alias in node.names:
                     imports.append(alias.name)
-                self.generic_visit(node)
 
-            def visit_ImportFrom(self, node: ast.ImportFrom):
+            def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
                 if node.module:
                     imports.append(node.module)
-                self.generic_visit(node)
 
-            def visit_ClassDef(self, node: ast.ClassDef):
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:
                 doc = ast.get_docstring(node) or ""
                 sym = SymbolNode(
                     name=node.name,
@@ -164,28 +234,24 @@ class SymbolGraph:
                 self.generic_visit(node)
                 self.current_class = old_class
 
-            def visit_FunctionDef(self, node: ast.FunctionDef):
-                self._handle_func(node)
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                self._handle_func(node, is_async=False)
                 self.generic_visit(node)
 
-            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
                 self._handle_func(node, is_async=True)
                 self.generic_visit(node)
 
-            def _handle_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef, is_async: bool = False):
+            def _handle_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef, is_async: bool = False) -> None:
                 doc = ast.get_docstring(node) or ""
                 args = [a.arg for a in node.args.args]
                 sig = f"{'async ' if is_async else ''}def {node.name}({', '.join(args)})"
                 kind = "method" if self.current_class else "function"
                 full_name = f"{self.current_class}.{node.name}" if self.current_class else node.name
-                
-                calls = []
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Call):
-                        if isinstance(child.func, ast.Name):
-                            calls.append(child.func.id)
-                        elif isinstance(child.func, ast.Attribute):
-                            calls.append(child.func.attr)
+
+                collector = _DirectCallCollector()
+                for stmt in node.body:
+                    collector.visit(stmt)
 
                 sym = SymbolNode(
                     name=full_name,
@@ -197,72 +263,86 @@ class SymbolGraph:
                     signature=sig,
                     language="python",
                 )
-                sym.calls = list(dict.fromkeys(calls))[:15]
+                sym.calls = collector.calls
                 file_nodes.append(sym)
 
-        visitor = ASTSymbolVisitor(self)
-        visitor.visit(tree)
-
+        ASTSymbolVisitor().visit(tree)
         self.file_symbols[rel_path] = file_nodes
         self.file_imports[rel_path] = imports
-
         for node in file_nodes:
-            self.symbols.setdefault(node.name, []).append(node)
+            symbols_dict.setdefault(node.name, []).append(node)
             if "." in node.name:
-                unqualified = node.name.split(".")[-1]
-                self.symbols.setdefault(unqualified, []).append(node)
+                unqualified = node.name.rsplit(".", 1)[-1]
+                symbols_dict.setdefault(unqualified, []).append(node)
 
     def _parse_polyglot_file(self, full_path: Path, rel_path: str, lang: str) -> None:
-        """Extract symbols for TS/JS, Rust, Go, Java using syntax patterns."""
+        """Extract symbols for TS/JS, Rust, Go, Java using precompiled patterns + keyword prefilter."""
         try:
             content = full_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return
 
-        lines = content.splitlines()
         file_nodes: list[SymbolNode] = []
-
+        lines = content.splitlines()
         if lang in ("typescript", "javascript"):
-            # Interfaces, types, classes, functions
             for i, line in enumerate(lines, 1):
-                m_iface = re.search(r'\b(?:export\s+)?interface\s+([A-Za-z0-9_]+)', line)
-                if m_iface:
-                    file_nodes.append(SymbolNode(m_iface.group(1), "interface", rel_path, i, i, signature=line.strip(), language=lang))
-                m_cls = re.search(r'\b(?:export\s+)?class\s+([A-Za-z0-9_]+)', line)
-                if m_cls:
-                    file_nodes.append(SymbolNode(m_cls.group(1), "class", rel_path, i, i, signature=line.strip(), language=lang))
-                m_fn = re.search(r'\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)', line)
-                if m_fn:
-                    file_nodes.append(SymbolNode(m_fn.group(1), "function", rel_path, i, i, signature=line.strip(), language=lang))
-                m_type = re.search(r'\b(?:export\s+)?type\s+([A-Za-z0-9_]+)\s*=', line)
-                if m_type:
-                    file_nodes.append(SymbolNode(m_type.group(1), "type", rel_path, i, i, signature=line.strip(), language=lang))
-
+                if ("interface " not in line and "class " not in line
+                        and "function " not in line and "type " not in line):
+                    continue
+                if "interface " in line:
+                    m = _RE_TS_IFACE.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "interface", rel_path, i, i, signature=line.strip(), language=lang))
+                if "class " in line:
+                    m = _RE_TS_CLASS.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "class", rel_path, i, i, signature=line.strip(), language=lang))
+                if "function " in line:
+                    m = _RE_TS_FUNC.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "function", rel_path, i, i, signature=line.strip(), language=lang))
+                if "type " in line:
+                    m = _RE_TS_TYPE.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "type", rel_path, i, i, signature=line.strip(), language=lang))
         elif lang == "rust":
-            # struct, fn, enum, trait, impl
             for i, line in enumerate(lines, 1):
-                m_st = re.search(r'\b(?:pub\s+)?struct\s+([A-Za-z0-9_]+)', line)
-                if m_st:
-                    file_nodes.append(SymbolNode(m_st.group(1), "struct", rel_path, i, i, signature=line.strip(), language="rust"))
-                m_fn = re.search(r'\b(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)', line)
-                if m_fn:
-                    file_nodes.append(SymbolNode(m_fn.group(1), "function", rel_path, i, i, signature=line.strip(), language="rust"))
-                m_tr = re.search(r'\b(?:pub\s+)?trait\s+([A-Za-z0-9_]+)', line)
-                if m_tr:
-                    file_nodes.append(SymbolNode(m_tr.group(1), "trait", rel_path, i, i, signature=line.strip(), language="rust"))
-
+                if "struct " not in line and "fn " not in line and "trait " not in line:
+                    continue
+                if "struct " in line:
+                    m = _RE_RS_STRUCT.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "struct", rel_path, i, i, signature=line.strip(), language="rust"))
+                if "fn " in line:
+                    m = _RE_RS_FN.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "function", rel_path, i, i, signature=line.strip(), language="rust"))
+                if "trait " in line:
+                    m = _RE_RS_TRAIT.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "trait", rel_path, i, i, signature=line.strip(), language="rust"))
         elif lang == "go":
-            # type X struct, func X
             for i, line in enumerate(lines, 1):
-                m_st = re.search(r'\btype\s+([A-Za-z0-9_]+)\s+struct\b', line)
-                if m_st:
-                    file_nodes.append(SymbolNode(m_st.group(1), "struct", rel_path, i, i, signature=line.strip(), language="go"))
-                m_if = re.search(r'\btype\s+([A-Za-z0-9_]+)\s+interface\b', line)
-                if m_if:
-                    file_nodes.append(SymbolNode(m_if.group(1), "interface", rel_path, i, i, signature=line.strip(), language="go"))
-                m_fn = re.search(r'\bfunc\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]+)\s*\(', line)
-                if m_fn:
-                    file_nodes.append(SymbolNode(m_fn.group(1), "function", rel_path, i, i, signature=line.strip(), language="go"))
+                if "type " not in line and "func " not in line:
+                    continue
+                if "type " in line:
+                    m = _RE_GO_STRUCT.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "struct", rel_path, i, i, signature=line.strip(), language="go"))
+                    m_if = _RE_GO_IFACE.search(line)
+                    if m_if:
+                        file_nodes.append(SymbolNode(m_if.group(1), "interface", rel_path, i, i, signature=line.strip(), language="go"))
+                if "func " in line:
+                    m = _RE_GO_FUNC.search(line)
+                    if m:
+                        file_nodes.append(SymbolNode(m.group(1), "function", rel_path, i, i, signature=line.strip(), language="go"))
+        elif lang == "java":
+            for i, line in enumerate(lines, 1):
+                if "class " not in line and "interface " not in line and "enum " not in line:
+                    continue
+                m = _RE_JAVA_DECL.search(line)
+                if m:
+                    file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language="java"))
 
         self.file_symbols[rel_path] = file_nodes
         for node in file_nodes:
@@ -270,19 +350,22 @@ class SymbolGraph:
 
     def find_definitions(self, symbol_name: str) -> list[dict[str, Any]]:
         """Find definition locations for a given symbol name."""
-        nodes = self.symbols.get(symbol_name, [])
-        return [n.to_dict() for n in nodes]
+        return [n.to_dict() for n in self.symbols.get(symbol_name, [])]
 
     def search_symbols(self, query: str, limit: int = 25) -> list[dict[str, Any]]:
         """Fuzzy/prefix search for symbols across polyglot codebase."""
         q = query.lower().strip()
         if not q:
             return []
-        
         results: list[dict[str, Any]] = []
+        seen_ids: set[int] = set()
         for name, nodes in self.symbols.items():
             if q in name.lower():
                 for node in nodes:
+                    nid = id(node)
+                    if nid in seen_ids:
+                        continue
+                    seen_ids.add(nid)
                     results.append(node.to_dict())
                     if len(results) >= limit:
                         return results
@@ -296,17 +379,27 @@ class SymbolGraph:
             "total_symbols": total_symbols,
             "unique_symbol_names": len(self.symbols),
             "files_count": len(self.file_symbols),
-            "languages_detected": sorted(list(self.languages_detected)),
+            "languages_detected": sorted(self.languages_detected),
         }
 
 
-_GLOBAL_GRAPH: SymbolGraph | None = None
+_GRAPH_LOCK = threading.RLock()
+_GLOBAL_GRAPHS: dict[str, SymbolGraph] = {}
+
+
+def clear_symbol_graph_cache() -> None:
+    """Clear the module-level workspace symbol graph cache."""
+    with _GRAPH_LOCK:
+        _GLOBAL_GRAPHS.clear()
 
 
 def build_workspace_symbol_graph(root_dir: str = ".") -> SymbolGraph:
-    """Build or retrieve cached global workspace symbol graph."""
-    global _GLOBAL_GRAPH
-    if _GLOBAL_GRAPH is None or _GLOBAL_GRAPH.total_files_indexed == 0:
-        _GLOBAL_GRAPH = SymbolGraph(root_dir=root_dir)
-        _GLOBAL_GRAPH.index_workspace()
-    return _GLOBAL_GRAPH
+    """Build or retrieve cached workspace symbol graph (keyed by resolved root_dir)."""
+    key = str(Path(root_dir).resolve())
+    with _GRAPH_LOCK:
+        graph = _GLOBAL_GRAPHS.get(key)
+        if graph is None or graph.total_files_indexed == 0:
+            graph = SymbolGraph(root_dir=key)
+            graph.index_workspace()
+            _GLOBAL_GRAPHS[key] = graph
+        return graph

@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import http.client
 from dataclasses import dataclass
-from random import shuffle
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 from .config import load_config
 from .logging_setup import get_logger
@@ -72,31 +72,38 @@ class ModelSpec:
 
 
 class RateLimiter:
-    """Sliding-window rate limiter for requests/min and tokens/min (stdlib)."""
+    """Sliding-window rate limiter for requests/min and tokens/min (thread-safe)."""
 
     def __init__(self, rpm: int, tpm: int) -> None:
         self.rpm = rpm
         self.tpm = tpm
         self._reqs: list[float] = []
         self._tokens: list[tuple[float, int]] = []
+        self._lock = threading.Lock()
 
     @staticmethod
     def estimate_tokens(text: str) -> int:
         return max(1, len(text) // 4)
 
     def acquire(self, tokens: int = 0) -> None:
-        now = time.time()
-        self._reqs = [t for t in self._reqs if now - t < 60]
-        self._tokens = [(t, n) for (t, n) in self._tokens if now - t < 60]
-        if self.rpm and len(self._reqs) >= self.rpm:
-            wait = 60 - (now - self._reqs[0])
-            if wait > 0:
-                time.sleep(min(wait, 5))
-        if self.tpm and sum(n for _, n in self._tokens) + tokens > self.tpm:
-            time.sleep(1)  # simple backoff
-        self._reqs.append(time.time())
-        if tokens:
-            self._tokens.append((time.time(), tokens))
+        sleep_for = 0.0
+        with self._lock:
+            now = time.time()
+            self._reqs = [t for t in self._reqs if now - t < 60]
+            self._tokens = [(t, n) for (t, n) in self._tokens if now - t < 60]
+            if self.rpm and len(self._reqs) >= self.rpm:
+                wait = 60 - (now - self._reqs[0])
+                if wait > 0:
+                    sleep_for = max(sleep_for, min(wait, 5))
+            if self.tpm and sum(n for _, n in self._tokens) + tokens > self.tpm:
+                sleep_for = max(sleep_for, 1.0)
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        with self._lock:
+            ts = time.time()
+            self._reqs.append(ts)
+            if tokens:
+                self._tokens.append((ts, tokens))
 
 
 def _infer_provider(base_url: str) -> str:
@@ -109,11 +116,13 @@ def _infer_provider(base_url: str) -> str:
     return "openai"
 
 
+from .http_pool import get_http_pool, get_http_pool_stats, pooled_post_json
+
+_CONN_POOL = get_http_pool()
+
+
 def _http_transport(url: str, headers: dict, payload: dict) -> dict:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return pooled_post_json(url, headers, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +158,51 @@ def _anthropic_request(spec: "ModelSpec", messages: list[dict],
     sys_msgs = [m for m in messages
                 if m.get("role") == "system"
                 and isinstance(m.get("content"), str)]
-    convo = [{"role": m["role"], "content": m["content"]}
-             for m in messages if m.get("role") in ("user", "assistant")]
+    convo: list[dict] = []
+
+    def _push(role: str, content) -> None:
+        if not convo or convo[-1]["role"] != role:
+            convo.append({"role": role, "content": content})
+            return
+        # Merge adjacent same-role turns into content-block lists for Anthropic
+        prev = convo[-1]["content"]
+        prev_blocks = [{"type": "text", "text": prev}] if isinstance(prev, str) else list(prev or [])
+        new_blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or [])
+        convo[-1]["content"] = prev_blocks + new_blocks
+
+    for m in messages:
+        role = m.get("role")
+        if role == "user":
+            _push("user", m.get("content") or "")
+        elif role == "assistant":
+            tcalls = m.get("tool_calls") or []
+            if not tcalls:
+                _push("assistant", m.get("content") or "")
+            else:
+                blocks: list[dict] = []
+                text_val = m.get("content")
+                if text_val:
+                    blocks.append({"type": "text", "text": str(text_val)})
+                for tc in tcalls:
+                    fn = tc.get("function", {})
+                    raw_arg = fn.get("arguments") or "{}"
+                    try:
+                        parsed_input = json.loads(raw_arg) if isinstance(raw_arg, str) else dict(raw_arg)
+                    except (json.JSONDecodeError, TypeError):
+                        parsed_input = {}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id") or f"toolu_{len(blocks)}",
+                        "name": fn.get("name", ""),
+                        "input": parsed_input,
+                    })
+                _push("assistant", blocks)
+        elif role == "tool":
+            _push("user", [{
+                "type": "tool_result",
+                "tool_use_id": m.get("tool_call_id") or "",
+                "content": str(m.get("content") or ""),
+            }])
     body: dict = {"model": spec.name, "max_tokens": spec.max_tokens,
                   "messages": convo}
     if sys_msgs:
@@ -240,9 +292,13 @@ def _http_stream_transport(url: str, headers: dict, payload: dict) -> Iterator[d
     conn = http.client.HTTPSConnection(host, port, timeout=120) \
         if parsed.scheme == "https" else \
         http.client.HTTPConnection(host, port, timeout=120)
+    target = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
     try:
-        conn.request("POST", parsed.path, body=body, headers=headers)
+        conn.request("POST", target, body=body, headers=headers)
         resp = conn.getresponse()
+        if resp.status >= 400:
+            err_body = resp.read(512).decode("utf-8", errors="replace")
+            raise LLMError(f"HTTP {resp.status} from stream endpoint: {err_body}")
         for raw in resp:
             raw = raw.strip()
             if not raw.startswith(b"data:"):
@@ -274,9 +330,13 @@ def _anthropic_stream_transport(url: str, headers: dict, payload: dict) -> Itera
     conn = (http.client.HTTPSConnection(host, port, timeout=120)
             if parsed.scheme == "https" else
             http.client.HTTPConnection(host, port, timeout=120))
+    target = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
     try:
-        conn.request("POST", parsed.path, body=body, headers=headers)
+        conn.request("POST", target, body=body, headers=headers)
         resp = conn.getresponse()
+        if resp.status >= 400:
+            err_body = resp.read(512).decode("utf-8", errors="replace")
+            raise LLMError(f"HTTP {resp.status} from anthropic stream endpoint: {err_body}")
         buf = b""
         for raw in resp:  # http.client yields raw bytes across chunk boundaries
             buf += raw
@@ -327,6 +387,43 @@ class LLMClient:
             self._chaos.wrap_transport(_http_stream_transport)
             if stream_transport is None else stream_transport)
         self._route_from_config()
+        self._telemetry_lock = threading.Lock()
+        self._telemetry: dict[str, float | int] = {
+            "requests": 0,
+            "retries": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_tokens": 0,
+            "total_latency_ms": 0.0,
+        }
+
+    def telemetry(self) -> dict[str, float | int]:
+        """Return measured client request/token/latency telemetry and pool stats."""
+        with self._telemetry_lock:
+            reqs = int(self._telemetry["requests"])
+            out: dict[str, Any] = dict(self._telemetry)
+            out["avg_latency_ms"] = round(float(out["total_latency_ms"]) / reqs, 2) if reqs else 0.0
+            out["http_pool"] = get_http_pool_stats()
+            return out
+
+    def _record_usage(self, raw: dict, latency_ms: float) -> None:
+        usage = raw.get("usage") if isinstance(raw, dict) else None
+        p_tok = c_tok = cached = 0
+        if isinstance(usage, dict):
+            p_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            c_tok = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+            details = usage.get("prompt_tokens_details") or {}
+            cached = int(
+                usage.get("cache_read_input_tokens")
+                or (details.get("cached_tokens") if isinstance(details, dict) else 0)
+                or 0
+            )
+        with self._telemetry_lock:
+            self._telemetry["requests"] = int(self._telemetry["requests"]) + 1
+            self._telemetry["prompt_tokens"] = int(self._telemetry["prompt_tokens"]) + p_tok
+            self._telemetry["completion_tokens"] = int(self._telemetry["completion_tokens"]) + c_tok
+            self._telemetry["cached_tokens"] = int(self._telemetry["cached_tokens"]) + cached
+            self._telemetry["total_latency_ms"] = float(self._telemetry["total_latency_ms"]) + latency_ms
 
     def _route_from_config(self) -> None:
         self.models: list[ModelSpec] = []
@@ -435,9 +532,8 @@ class LLMClient:
                 specs = capable
         if len(specs) == 1:
             return specs
-        order = specs[:]
-        shuffle(order)
-        return order
+        # Preserve priority order (highest weight first, config order on ties)
+        return sorted(specs, key=lambda s: -s.weight)
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              temperature: float | None = None, stream: bool = False) -> dict | Iterator[dict]:
@@ -459,11 +555,13 @@ class LLMClient:
                     if cache_on and spec.provider == "anthropic" and tools:
                         from . import prompt_cache
                         req_msgs = prompt_cache.mark_cacheable(messages, "anthropic")
+                    t0 = time.perf_counter()
                     raw = self.transport(
                         _endpoint(spec),
                         self._headers(spec),
                         _build_request(spec, req_msgs, tools, temperature),
                     )
+                    self._record_usage(raw, (time.perf_counter() - t0) * 1000.0)
                     obs.inc("llm_calls")
                     return _parse_response(raw, spec.provider)
                 except Exception as exc:
@@ -477,6 +575,8 @@ class LLMClient:
                     last_err = exc
                     obs.record_error("llm_errors")
                     obs.inc(f"llm_error_{type(exc).__name__}")
+                    with self._telemetry_lock:
+                        self._telemetry["retries"] = int(self._telemetry["retries"]) + 1
                     if attempt < self.max_retries:
                         time.sleep(1.5 * (attempt + 1))
         err_msg = (f"model call failed after {self.max_retries + 1} attempts across "
@@ -486,7 +586,7 @@ class LLMClient:
 
     def _stream(self, messages: list[dict], tools: list[dict] | None,
                 temperature: float | None) -> Iterator[dict]:
-        spec = self._select()[0]
+        spec = self._select(tools)[0]
         # Anthropic uses a different SSE dialect; route it through the real
         # Anthropic SSE transport (which yields OpenAI-shaped chunks). This is a
         # genuine stream, not the previous single non-streamed fallback.
@@ -494,6 +594,7 @@ class LLMClient:
                      if spec.provider == "anthropic" else self.stream_transport)
         self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
         url = _endpoint(spec)
+        yielded_any = False
         try:
             for chunk in transport(
                 url, self._headers(spec),
@@ -501,12 +602,16 @@ class LLMClient:
             ):
                 delta = chunk.get("choices", [{}])[0].get("delta", {})
                 if delta.get("content") is not None:
+                    yielded_any = True
                     yield {"delta": delta["content"]}
             obs.inc("llm_streams")
-        except Exception:  # defensive: fall back to non-stream
+        except Exception as exc:  # defensive: fall back only if nothing streamed yet
             obs.record_error("llm_stream_errors")
-            full = self.chat(messages, tools, temperature, stream=False)
-            yield {"delta": full.get("content") or ""}
+            if not yielded_any:
+                full = self.chat(messages, tools, temperature, stream=False)
+                yield {"delta": full.get("content") or ""}
+            else:
+                raise LLMError(f"stream interrupted after partial output: {exc}") from exc
 
     @staticmethod
     def _parse_response(raw: dict) -> dict:

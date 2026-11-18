@@ -12,21 +12,21 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 72 modules + __main__.py, flat by design
+baize/                              # 75 modules + __main__.py, flat by design
 ├── agent.py  agent_rules.py  arch_cache.py  automations.py  autonomy.py  bench.py
 │   bench_public.py  blast_radius.py  browser_verify.py  byzantine.py  chaos.py  cli.py
 │   component.py  config.py  config_schema.py  context_slicer.py
 │   contract.py  dashboard.py  desktop.py  desktop_ui.py  doc_crawler.py
-│   docker_sandbox.py  doctor.py  gate.py  graph.py  hierarchical_map.py  hooks.py
+│   docker_sandbox.py  doctor.py  gate.py  graph.py  hierarchical_map.py  hooks.py  http_pool.py
 │   intelligence_radar.py  intent_router.py  interactive_detector.py  invariants_anchor.py
-│   llm.py  logging_setup.py  manifest.py  mcp.py  memory.py  modes.py
+│   llm.py  logging_setup.py  manifest.py  mcp.py  memory.py  modes.py  perf.py
 │   mutation.py  observability.py  orchestrator.py  plugin.py  powershell.py
 │   proc.py  prompt_cache.py  rag.py  ralph.py  recon.py  repl.py
 │   repo_map.py  run_ledger.py  safe_exec.py  sandbox.py  serve.py
 │   session_viewer.py  sessions.py  setup_wizard.py  skill_harvester.py
 │   skill_index.py  skill_runner.py  skills_catalog.py  subagent.py
 │   swarm.py  symbol_graph.py  system1.py  team.py  team_memory.py  test_impact.py  tool_market.py
-│   tool_sdk.py  tools.py  ui.py  vector.py
+│   tool_sdk.py  tools.py  ui.py  vector.py  workspace_search.py
 │
 ├── core/
 │   └── snapshot.py                 # neuro-symbolic state checkpoint & restore
@@ -44,6 +44,11 @@ baize/                              # 72 modules + __main__.py, flat by design
 │   └── providers/                  # reserved - currently empty
 ├── plugins/
 │   └── metrics.py                  # feeds observability counters from lifecycle hooks
+├── server/                         # decomposed HTTP server subpackage
+│   ├── routes_get.py               # GET routes (/health, /api/workspace/search, /api/perf/profile, etc.)
+│   ├── routes_post.py              # POST dispatch & handlers
+│   ├── security.py                 # fail-closed auth, CORS allowlist, path guards
+│   └── streaming.py                # real-time SSE streaming for /run/stream
 └── security/                       # package marker only - no modules
 ```
 

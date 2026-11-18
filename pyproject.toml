@@ -45,7 +45,7 @@ include = ["baize*"]
 version = {attr = "baize.__version__"}
 
 [tool.setuptools.package-data]
-baize = ["py.typed"]
+baize = ["py.typed", "studio/*"]
 
 [tool.pytest.ini_options]
 # Only the real suite lives in tests/; skill scripts under skills/ have their
