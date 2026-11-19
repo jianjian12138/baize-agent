@@ -3,7 +3,7 @@
 Part of ``baize.ext`` (imported lazily; never at core import time, so the
 zero-dependency red line A and the fail-closed red line C both hold).
 
-W2/F5 scope: the core ``baize.llm`` already covers the three built-in adapters
+W2/F5 scope: the core ``baize.core.llm`` already covers the three built-in adapters
 (openai / anthropic / ollama) with real request shaping, real Anthropic SSE
 streaming, and DeepSeek ``reasoning_content`` surfacing. This package is the
 intended home for *additional* vendor adapters that do NOT speak the OpenAI

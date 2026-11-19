@@ -15,7 +15,7 @@ ext module into the core runtime are:
      the kernel — only an explicit ``BAIZE_COMPONENTS`` override may augment the
      tool surface. This is the deliberate trust boundary (F1).
 
-  3. The sanctioned exception: ``baize.tools.register_mcp_client`` imports this
+  3. The sanctioned exception: ``baize.execution.tools.register_mcp_client`` imports this
      package lazily inside its function body.
 
 ``build`` lazily imports the core registry + ext client so importing
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from baize.component import Kind
+from baize.core.component import Kind
 
 
 class MCPToolProvider:
@@ -57,7 +57,7 @@ class MCPComponent:
     ``build`` is a ``staticmethod`` so the composition kernel can call it as
     ``build(cfg)`` (the kernel wraps ``cls.build`` without binding ``self``).
     The MCP server spec is taken from ``BAIZE_MCP_SPEC`` in config; the direct
-    ``baize.tools.register_mcp_client(spec)`` path remains for ad-hoc wiring.
+    ``baize.execution.tools.register_mcp_client(spec)`` path remains for ad-hoc wiring.
     """
 
     KIND = Kind.TOOL
@@ -65,7 +65,7 @@ class MCPComponent:
     @staticmethod
     def build(cfg: dict | None = None) -> MCPToolProvider:
         # Lazy imports keep the ext->core direction clean and fail-closed.
-        from baize.tools import default_registry, register_mcp_client
+        from baize.execution.tools import default_registry, register_mcp_client
 
         registry = default_registry()
         cfg = cfg or {}

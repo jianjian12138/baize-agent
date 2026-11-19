@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from baize.tools import default_registry
+from baize.execution.tools import default_registry
 from baize.ext.mcp.client import MCPClient, MCPServerSpec
 from baize.ext.mcp.transport import StdioTransport
 

@@ -243,7 +243,7 @@ def main() -> int:
     if args.skip_doctor:
         log("skipped via --skip-doctor")
     else:
-        rc = run([sys.executable, "-m", "baize.cli", "doctor"], cwd=root)
+        rc = run([sys.executable, "-m", "baize.interfaces.cli", "doctor"], cwd=root)
         if rc != 0:
             print(
                 "\nWARNING: `baize doctor` reported issues. "

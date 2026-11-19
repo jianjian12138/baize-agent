@@ -1,7 +1,7 @@
 """MCP transport — pure-stdlib stdio JSON-RPC 2.0 with Content-Length framing.
 
 This module is part of ``baize.ext.mcp`` and is ONLY imported lazily by the
-core runtime (via ``baize.tools.register_mcp_client``), never at module top
+core runtime (via ``baize.execution.tools.register_mcp_client``), never at module top
 level. That keeps the zero-dependency red line (A) intact: the core ``baize/``
 package never imports ``baize.ext``.
 

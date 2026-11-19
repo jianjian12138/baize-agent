@@ -34,7 +34,7 @@ Homepage = "https://github.com/jianjian12138/baize-agent"
 Repository = "https://github.com/jianjian12138/baize-agent"
 
 [project.scripts]
-baize = "baize.cli:main"
+baize = "baize.interfaces.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["baize*"]
@@ -45,10 +45,10 @@ include = ["baize*"]
 version = {attr = "baize.__version__"}
 
 [tool.setuptools.package-data]
-baize = ["py.typed", "studio/*"]
+baize = ["py.typed", "interfaces/studio/*"]
 
 [tool.pytest.ini_options]
 # Only the real suite lives in tests/; skill scripts under skills/ have their
 # own harness and must not be collected by the root `pytest` run.
 testpaths = ["tests"]
-norecursedirs = ["assets", "examples", "skills", "install", "benchmarks", "docs", ".github", "ext"]  # V25 F7: 裸 pytest 不收集 ext 测试（ext 测试须显式 pytest tests/test_mcp*.py 运行，importorskip 守卫）
+norecursedirs = ["assets", "examples", "skills", "install", "benchmarks", "docs", ".github"]  # V25 F7: 裸 pytest 不收集 ext 测试（ext 测试须显式 pytest tests/test_mcp*.py 运行，importorskip 守卫）

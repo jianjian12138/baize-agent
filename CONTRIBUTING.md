@@ -55,13 +55,13 @@ __codename__ = "Prometheus"
 
 Every other appearance — README titles, the shields.io badges, the compare-table
 header, `AGENT.md`, the QUICKSTART/USAGE_GUIDE docs, `baize.manifest.json` and
-`pyproject.toml` — is derived from those two lines by `scripts/sync_truth.py`.
+`pyproject.toml` — is derived from those two lines by `scripts/gates/sync_truth.py`.
 The test badge is likewise **measured** by running the suite, never typed.
 
 To cut a release, edit the two literals and run:
 
 ```bash
-python scripts/sync_truth.py     # rewrites every derived surface
+python scripts/gates/sync_truth.py     # rewrites every derived surface
 make truth                       # verifies no drift (CI runs this too)
 ```
 
@@ -85,7 +85,7 @@ git rm -r --cached <path>     # runtime state you still want locally
 git rm <path>                 # one-off scratch that is worthless to others
 ```
 
-`make hygiene` (`scripts/check_hygiene.py`) scans the index for tracked junk and
+`make hygiene` (`scripts/gates/check_hygiene.py`) scans the index for tracked junk and
 fails CI if any is found.
 
 ## Reporting issues

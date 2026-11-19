@@ -54,7 +54,7 @@
   `downloads: 12` 而没有任何计数，都是伪造的证据。
 - **导入的每个名字都必须存在。** `from .x import Y` 里 `Y` 不存在时，端点在**首次被调用时**
   才炸（`CausalDebugger` 就是这样，`/v30/causal` 每次请求都 ImportError）。
-  `scripts/check_module_attrs.py` 现在会检查这一点，不要绕过它。
+  `scripts/gates/check_module_attrs.py` 现在会检查这一点，不要绕过它。
 - **请求里的字符串不许直接进文件名或写盘的源码。** `target_function` 曾经既进
   `test_causal_{fn}.py` 的文件名、又进写盘的 Python 源码正文，一个换行就能把代码注入到
   会被 pytest 收集的文件里。所有这类值先做 `isidentifier()` / 白名单校验，写盘前再做一次

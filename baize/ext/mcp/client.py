@@ -1,6 +1,6 @@
 """MCP client — connect to an external MCP server and wrap its tools.
 
-Part of ``baize.ext.mcp``; imported lazily by ``baize.tools.register_mcp_client``
+Part of ``baize.ext.mcp``; imported lazily by ``baize.execution.tools.register_mcp_client``
 (the single, deliberate exception to the static "no top-level import baize.ext"
 gate). The core runtime never imports this module at import time, so the
 zero-dependency red line (A) and the fail-closed red line (C) both hold:
@@ -134,7 +134,7 @@ class MCPClient:
         return "\n".join(parts)
 
     def register_into(self, registry, prefix: str | None = None) -> list[str]:
-        """Wrap every discovered MCP tool as a :class:`baize.tools.Tool` in the
+        """Wrap every discovered MCP tool as a :class:`baize.execution.tools.Tool` in the
         given registry. Returns the registered tool names. Tool names are
         prefixed with ``{server_name}__`` to avoid colliding with built-ins."""
         if not self._tools:

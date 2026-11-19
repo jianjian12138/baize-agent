@@ -16,10 +16,10 @@ docs/archive/V25-专家评审.md N-03.
 ``__version__`` and ``__codename__`` below are the ONLY version literals in
 the repository. README/AGENT/QUICKSTART/USAGE_GUIDE titles, their shields.io
 badges, ``baize.manifest.json`` and ``pyproject.toml`` are all derived from
-them by ``scripts/sync_truth.py``, and CI fails on any drift. Do not copy the
+them by ``scripts/gates/sync_truth.py``, and CI fails on any drift. Do not copy the
 string anywhere by hand — edit it here and run::
 
-    python scripts/sync_truth.py
+    python scripts/gates/sync_truth.py
 """
 
 __version__ = "39.0.0"

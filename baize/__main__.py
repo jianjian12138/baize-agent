@@ -5,7 +5,7 @@ path as the installed ``baize`` console script.
 """
 from __future__ import annotations
 
-from .cli import main
+from .interfaces.cli import main
 
 
 if __name__ == "__main__":

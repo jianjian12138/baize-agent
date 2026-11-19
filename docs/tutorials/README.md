@@ -43,24 +43,24 @@
 | 项目 | 实测值 | 复现命令 |
 | :--- | :--- | :--- |
 | 版本 | **V39.0.0 Aegis** | `python -c "import baize; print(baize.__version__)"` |
-| 运行时依赖 | **0**（纯 Python 标准库） | `python scripts/check_zero_deps.py` |
+| 运行时依赖 | **0**（纯 Python 标准库） | `python scripts/gates/check_zero_deps.py` |
 | 测试 | **见下方"测试与覆盖率"** | `python -m pytest -q` |
-| 覆盖率 | **见下方"测试与覆盖率"** | `python scripts/coverage_gate.py` |
+| 覆盖率 | **见下方"测试与覆盖率"** | `python scripts/gates/coverage_gate.py` |
 | 基准测试 | **15/15 通过** | `python -m baize bench` |
-| 内置工具 | **14 个**（开启 `BAIZE_ALLOW_FETCH_URL=1` 后 15 个） | `python -c "from baize.tools import default_registry as d; print(len(d().names()))"` |
+| 内置工具 | **16 个**（开启 `BAIZE_ALLOW_FETCH_URL=1` 后 17 个） | `python -c "from baize.execution.tools import default_registry as d; print(len(d().names()))"` |
 | 内置技能 | **23 个** `SKILL.md` | `python -c "import glob; print(len(glob.glob('assets/**/SKILL.md', recursive=True)))"` |
-| 配置项 | **72 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 74 项） | `python -c "from baize.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
+| 配置项 | **72 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 74 项） | `python -c "from baize.core.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
 | CLI 子命令 | **30 个** | `python -m baize --help` |
 | 模型要求 | 任意 OpenAI 兼容端点（需自备） | —— |
 
-> **维护提示**：测试数、覆盖率、配置项数、子命令数都是会随提交漂移的数字。本仓库的 `scripts/sync_truth.py` 会校验其中一部分；改动 `baize/config.py` 或 `baize/cli.py` 后请重新跑一遍上面的命令并更新本表。
+> **维护提示**：测试数、覆盖率、配置项数、子命令数都是会随提交漂移的数字。本仓库的 `scripts/gates/sync_truth.py` 会校验其中一部分；改动 `baize/config.py` 或 `baize/cli.py` 后请重新跑一遍上面的命令并更新本表。
 
 ### 测试与覆盖率
 
 | 项目 | 实测值 | 复现命令 |
 | :--- | :--- | :--- |
 | 测试 | 见 `python -m pytest -q` 的最后一行 | `python -m pytest -q` |
-| 覆盖率 | 见 `python scripts/coverage_gate.py` 的输出 | `python scripts/coverage_gate.py` |
+| 覆盖率 | 见 `python scripts/gates/coverage_gate.py` 的输出 | `python scripts/gates/coverage_gate.py` |
 
 覆盖率下限为 85%。**是否达标以命令输出为准，不要在这里写死判决**——同一提交在工作树与全新克隆下会差 0.1 个百分点（被 gitignore 的 `.env` 是否存在，会影响 `serve.py` 与 `cli.py` 的 6 行），写死一个数就必然在其中一处是错的。
 
@@ -110,4 +110,4 @@
 
 ---
 
-*本系列教程基于 V37.0.0 Prometheus。版本号与测试数由 `scripts/sync_truth.py` 从 `baize/__init__.py` 派生——如果你发现这里的数字和 `python -m baize --version` 不一致，那是 bug，请提 issue。*
+*本系列教程基于 V37.0.0 Prometheus。版本号与测试数由 `scripts/gates/sync_truth.py` 从 `baize/__init__.py` 派生——如果你发现这里的数字和 `python -m baize --version` 不一致，那是 bug，请提 issue。*

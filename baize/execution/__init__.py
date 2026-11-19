@@ -1,0 +1,33 @@
+"""baize.execution — Tool registry, sandboxes, subprocess control, and Windows/Docker execution."""
+from __future__ import annotations
+
+import importlib
+
+_EXPORTS: dict[str, tuple[str, str]] = {
+    "ToolRegistry": (".tools", "ToolRegistry"),
+    "default_registry": (".tools", "default_registry"),
+    "register_mcp_client": (".tools", "register_mcp_client"),
+    "SandboxResult": (".sandbox", "SandboxResult"),
+    "run_sandboxed": (".sandbox", "run"),
+    "exec_restricted": (".safe_exec", "exec_restricted"),
+    "custom_tool": (".tool_sdk", "tool"),
+    "discover_external_rules": (".agent_rules", "discover_external_rules"),
+    "load_external_rules": (".agent_rules", "load_external_rules"),
+    "run_proc": (".proc", "run"),
+    "is_docker_available": (".docker_sandbox", "is_docker_available"),
+}
+
+__all__ = list(_EXPORTS)
+
+def __getattr__(name: str):
+    if name in _EXPORTS:
+        mod_path, attr = _EXPORTS[name]
+        mod = importlib.import_module(mod_path, __name__)
+        val = getattr(mod, attr)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS))

@@ -3,7 +3,7 @@
 零第三方依赖。本文件演示 V22「统一组件契约」的最小实现：
   * 一个类，带 ``KIND`` 属性，声明它替换哪一类核心单元；
   * 一个 ``build(cfg)`` 入口，返回满足对应 ``Protocol`` 的实例；
-  * 实例的方法签名满足 ``baize.component`` 里的 ``*Proto`` 契约。
+  * 实例的方法签名满足 ``baize.core.component`` 里的 ``*Proto`` 契约。
 
 在真实项目里，你把它放进任意「在 PYTHONPATH 上的包/模块」，然后通过
 ``BAIZE_COMPONENTS=your_module:LoggedSandbox`` 注册即可，无需改动 ``agent.py``
@@ -21,7 +21,7 @@ import sys
 # 真实项目请把本类放进你自己的包，再用 BAIZE_COMPONENTS 注册（见教程），此时此行无害。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from baize.component import Component, CompositionKernel, Kind
+from baize.core.component import Component, CompositionKernel, Kind
 
 
 class LoggedSandbox:
@@ -34,7 +34,7 @@ class LoggedSandbox:
     KIND = Kind.SANDBOX  # 也可以是字符串 "sandbox"
 
     def __init__(self, cfg: dict | None = None) -> None:
-        from baize import sandbox  # 惰性 import，避免循环导入
+        from baize.execution import sandbox
         self._inner = sandbox
         self._cfg = cfg
 

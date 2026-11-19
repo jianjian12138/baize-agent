@@ -18,5 +18,5 @@ docs/archive/baize-agent-V25升级计划.md §3.3-§3.6.
 ``BAIZE_COMPONENTS="baize.ext.<mod>:<Class>"`` (explicit, fail-closed) or
 ``plugin.discover()`` (auto, isolated). ``baize.ext.mcp.MCPComponent`` is the
 canonical example. The one and only sanctioned core-side ext hook remains
-``baize.tools.register_mcp_client`` (lazy import inside its function body).
+``baize.execution.tools.register_mcp_client`` (lazy import inside its function body).
 """

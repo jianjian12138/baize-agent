@@ -38,7 +38,7 @@ jobs:
         run: python -m pip install --upgrade pip pytest pytest-cov
 
       - name: Verify zero runtime dependencies
-        # scripts/check_zero_deps.py separates HARD from SOFT:
+        # scripts/gates/check_zero_deps.py separates HARD from SOFT:
         #   HARD = a module-level third-party import. It runs on `import baize`,
         #          so it raises ModuleNotFoundError on a clean interpreter.
         #   SOFT = the same import inside try/except ImportError, in a function
@@ -47,7 +47,7 @@ jobs:
         # The inline AST version this replaced failed on BOTH, so this job had
         # been red since V24 (7af42a5) and had never once been green. A gate
         # nobody has seen pass is a gate everybody learns to ignore.
-        run: python scripts/check_zero_deps.py
+        run: python scripts/gates/check_zero_deps.py
 
       - name: Static grep gate (red line C — ext fail-closed)
         shell: bash
@@ -57,7 +57,7 @@ jobs:
           # (tools.register_mcp_client / cli.cmd_mcp). Anchor at column 0 so
           # indented imports are NOT flagged. We scan only top-level core
           # modules, never baize/ext/ itself.
-          if grep -rnE '^(import|from) baize\.ext' baize/*.py; then
+          if grep -rnE '^(import|from) baize\.ext' baize/core baize/orchestration baize/execution baize/codebase baize/knowledge baize/governance baize/interfaces baize/*.py; then
             echo "RED LINE C VIOLATION: top-level import baize.ext in core"
             exit 1
           fi
@@ -74,11 +74,11 @@ jobs:
 
       - name: Coverage threshold
         # The threshold lives in baize.config (TEST_COVERAGE_THRESHOLD) and is
-        # enforced by scripts/coverage_gate.py - the same script `make cov` runs,
+        # enforced by scripts/gates/coverage_gate.py - the same script `make cov` runs,
         # reading the same .coverage data file pytest-cov just wrote. CI used to
         # hardcode its own 80 here, so the documented promise and the enforced
         # number had already drifted apart.
-        run: python scripts/coverage_gate.py
+        run: python scripts/gates/coverage_gate.py
 
   truth:
     name: version & test-count single source of truth
@@ -101,26 +101,26 @@ jobs:
       # The passed/failed split is deliberately NOT gated here - it depends on
       # python/docker being on PATH, which differs between runners.
       - name: Version + test-count truth gate
-        run: python scripts/sync_truth.py --check
+        run: python scripts/gates/sync_truth.py --check
 
       # .gitignore never applies to already-tracked files, so junk survives in
       # the index long after the ignore rule is added. Gate the index itself.
       - name: Tracked-file hygiene gate
-        run: python scripts/check_hygiene.py
+        run: python scripts/gates/check_hygiene.py
 
       # docs/architecture.md section 2 described a core/ tooling/ knowledge/
       # security/ server/ layout that did not exist - 39 of the 43 files it
       # listed were flat modules under baize/. Gate the tree against the
       # filesystem so a reader can trust the paths.
       - name: Architecture tree gate
-        run: python scripts/check_arch_tree.py
+        run: python scripts/gates/check_arch_tree.py
 
       # `baize plugin install/remove` called `skill_index.build(cfg)`; the
       # function is `build_index`. No test caught it because install needs the
       # network, and remove deleted the directory *before* crashing. This gate
       # resolves every module-attribute reference in the package statically.
       - name: Module attribute gate
-        run: python scripts/check_module_attrs.py
+        run: python scripts/gates/check_module_attrs.py
 
       # NO FAKE DONE at the API layer. Seven routes answered HTTP 200 with a
       # hardcoded success payload ("PR #43 opened", "4/4 checks green") while
@@ -128,7 +128,7 @@ jobs:
       # now answer 501. This gate starts the real server and probes every
       # declared stub route, so it fails on behaviour, not on source shape.
       - name: Endpoint honesty gate
-        run: python scripts/check_endpoint_honesty.py
+        run: python scripts/gates/check_endpoint_honesty.py
 
   install-smoke:
     name: one-command install (${{ matrix.os }})
