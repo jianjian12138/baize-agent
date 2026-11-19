@@ -21,6 +21,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "sandbox_posture": (".sandbox", "sandbox_posture"),
     "resolve_sandbox_mode": (".sandbox", "resolve_sandbox_mode"),
     "scrub_environment": (".sandbox", "scrub_environment"),
+    "BackgroundProcess": (".bg_proc", "BackgroundProcess"),
+    "BackgroundProcessManager": (".bg_proc", "BackgroundProcessManager"),
+    "get_bg_manager": (".bg_proc", "get_bg_manager"),
 }
 
 __all__ = list(_EXPORTS)

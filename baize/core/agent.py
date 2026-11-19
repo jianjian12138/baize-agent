@@ -349,6 +349,8 @@ READ_ONLY_TOOLS = frozenset({
     "search_skills",
     "load_skill",
     "memory_recall",
+    "tool_search",
+    "bash_bg_output",
 })
 
 #: Tools that mutate workspace files and trigger automatic post-edit diagnostics.
@@ -366,11 +368,43 @@ class Agent:
                  loop_strategy=None,
                  on_token=None,
                  auto_rollback: bool | None = None,
-                 enable_checkpoint: bool | None = None):
+                 enable_checkpoint: bool | None = None,
+                 approval_callback=None,
+                 tool_profile: str | None = None,
+                 spillover_bytes: int | None = None,
+                 context_budget_tokens: int | None = None,
+                 compact_ratio: float | None = None):
         self.cfg = cfg or load_config()
         self.role = role
         self.client = client or LLMClient(self.cfg)
+        self._custom_registry = registry is not None
         self.registry = registry or _resolve_tool_registry()
+        self.approval_callback = approval_callback
+        self.tool_profile_name = (
+            tool_profile
+            if tool_profile is not None
+            else str(self.cfg.get("BAIZE_TOOL_PROFILE", "tiered"))
+        )
+        self.spillover_bytes = (
+            int(spillover_bytes)
+            if spillover_bytes is not None
+            else int(self.cfg.get("BAIZE_SPILLOVER_BYTES", "8192") or "8192")
+        )
+        self.context_budget_tokens = (
+            int(context_budget_tokens)
+            if context_budget_tokens is not None
+            else int(self.cfg.get("BAIZE_CONTEXT_BUDGET_TOKENS", "64000") or "64000")
+        )
+        self.compact_ratio = (
+            float(compact_ratio)
+            if compact_ratio is not None
+            else float(self.cfg.get("BAIZE_COMPACT_RATIO", "0.75") or "0.75")
+        )
+        self._steer_lock = threading.Lock()
+        self._steer_queue: list[str] = []
+        self._interrupt_event = threading.Event()
+        self.last_tree_node_id: str = ""
+        self._active_profile_mgr = None
         self.session = session or Session(cfg=self.cfg)
         self.max_steps = int(self.cfg.get("BAIZE_AGENT_MAX_STEPS", "24"))
         self.reflect_every = int(self.cfg.get("BAIZE_REFLECT_EVERY", "6"))
@@ -499,12 +533,50 @@ class Agent:
             pass
         return observation
 
+    def steer(self, message: str) -> None:
+        """Queue a mid-turn user course-correction injected before the next reasoning step."""
+        msg = (message or "").strip()
+        if msg:
+            with self._steer_lock:
+                self._steer_queue.append(msg)
+
+    def request_interrupt(self) -> None:
+        """Request a soft interrupt of the current agent loop."""
+        self._interrupt_event.set()
+
+    def _drain_steering(self) -> list[str]:
+        with self._steer_lock:
+            items = list(self._steer_queue)
+            self._steer_queue.clear()
+        return items
+
+    def context_status(self) -> dict[str, Any]:
+        from .context_engine import estimate_context_ratio
+        used, ratio = estimate_context_ratio(self.session.messages, self.context_budget_tokens)
+        active_tools = len(self._active_profile_mgr.active_names) if self._active_profile_mgr else len(self.registry.names())
+        return {
+            "tokens_est": used,
+            "budget_tokens": self.context_budget_tokens,
+            "context_ratio": ratio,
+            "tool_profile": self.tool_profile_name,
+            "active_tools": active_tools,
+        }
+
     def _run_loop(self, goal: str, extra_system: str = "") -> AgentResult:
         extra = extra_system
         ws_scope = getattr(self, "_workspace_scope", "")
         if ws_scope:
             scope_note = f"Workspace scope constraint: you are confined to path prefix '{ws_scope}'."
             extra = f"{extra}\n\n{scope_note}".strip() if extra else scope_note
+
+        if not getattr(self, "_no_memory", False):
+            try:
+                from ..knowledge.memory import BoundedMemoryStore
+                mem_snap = BoundedMemoryStore(self.cfg).render_prefix_snapshot()
+                if mem_snap:
+                    extra = f"{extra}\n\n{mem_snap}".strip() if extra else mem_snap
+            except Exception:
+                pass
 
         sys_prompt = build_system_prompt(self.role, self.cfg,
                                          self.registry, extra)
@@ -518,7 +590,14 @@ class Agent:
             self.session.append({"role": "user", "content": goal})
             self.hooks.user_prompt_submit(goal)
 
-        tool_schemas = self.registry.schemas()
+        from .context_engine import ToolProfileManager, compact_messages_structured, spill_tool_output
+        profile_mgr = ToolProfileManager(
+            self.registry.schemas(),
+            profile=self.tool_profile_name,
+            custom_registry=self._custom_registry,
+        )
+        self._active_profile_mgr = profile_mgr
+        tool_schemas = profile_mgr.active_schemas()
         n_tool_calls = 0
         last_sig = ""            # loop detection: consecutive identical calls
         repeat_count = 0
@@ -532,11 +611,61 @@ class Agent:
         # V33-E1: generate a unique run_id for this execution for trace correlation
         run_id = uuid.uuid4().hex[:8]
         cp_mgr, cp_id = self._start_checkpoint(goal, run_id)
+        try:
+            from .sessions import record_checkpoint_node
+            node = record_checkpoint_node(
+                self.session.id,
+                turn_index=len(self.session.messages),
+                checkpoint_id=cp_id or "",
+                summary=goal[:80],
+                parent_node_id=self.last_tree_node_id,
+                cfg=self.cfg,
+            )
+            self.last_tree_node_id = node["node_id"]
+        except Exception:
+            pass
         tool_retry_max = int(self.cfg.get("BAIZE_TOOL_RETRY_MAX", "2"))
+        self._interrupt_event.clear()
 
         for step in range(1, self.max_steps + 1):
-            # V20: long-horizon context compression (in-memory only)
-            if _total_chars(self.session.messages) > self.compress_chars:
+            # V41: drain mid-turn steering queue & handle soft interrupt
+            steered_msgs = self._drain_steering()
+            for sm in steered_msgs:
+                self._emit("steered", sm)
+                self.session.append({"role": "user", "content": f"[MID-TURN STEERING] {sm}"})
+            if self._interrupt_event.is_set():
+                self._interrupt_event.clear()
+                if not steered_msgs:
+                    res = AgentResult(self.session.id, "stopped: interrupted by user",
+                                      step, n_tool_calls, "interrupted",
+                                      self.session.messages)
+                    res = self._finish_checkpoint(cp_mgr, cp_id, res)
+                    self.hooks.session_end(res)
+                    return res
+
+            # V41: refresh active tiered tool schemas (append-only for Prefix Cache stability)
+            tool_schemas = profile_mgr.active_schemas()
+
+            # V41: budget-driven structured auto-compaction (default 75% budget)
+            comp = compact_messages_structured(
+                self.session.messages,
+                budget_tokens=self.context_budget_tokens,
+                threshold_ratio=self.compact_ratio,
+            )
+            if comp.compacted:
+                obs.inc("context_compressions")
+                self.hooks.pre_compact(comp.messages_removed)
+                self._emit(
+                    "compacted",
+                    f"compacted {comp.messages_removed} msgs ({comp.tokens_before}->{comp.tokens_after} tok)",
+                )
+                self.session.append({
+                    "compressed": comp.messages_removed,
+                    "tokens_before": comp.tokens_before,
+                    "tokens_after": comp.tokens_after,
+                }, kind="compress")
+            elif _total_chars(self.session.messages) > self.compress_chars:
+                # Legacy char-cap fallback
                 n = compress_context(self.session.messages)
                 if n:
                     obs.inc("context_compressions")
@@ -709,6 +838,29 @@ class Agent:
                     })
                     continue
 
+                # V41: interactive tiered approval callback (Diff / command preview)
+                if self.approval_callback is not None and name not in READ_ONLY_TOOLS:
+                    from ..interfaces.approval import ApprovalRequest, build_tool_preview
+                    ws_dir = str(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
+                    preview = build_tool_preview(name, args, workspace=ws_dir, color=False)
+                    self._emit("diff_preview", f"{name}: {preview[:300]}")
+                    apr_dec = self.approval_callback(ApprovalRequest(
+                        tool_name=name,
+                        arguments=args,
+                        preview=preview,
+                        risk="high" if name in ("bash", "bash_bg_start", "git") else "medium",
+                    ))
+                    if not getattr(apr_dec, "approved", False):
+                        deny_reason = getattr(apr_dec, "reason", "") or "denied by user"
+                        obs.inc("tool_approval_denied")
+                        self._emit("approval_denied", f"{name}: {deny_reason}")
+                        self.session.append({
+                            "role": "tool",
+                            "tool_call_id": call.get("id", ""),
+                            "content": f"ERROR: user denied '{name}': {deny_reason}. Adjust your approach accordingly.",
+                        })
+                        continue
+
                 warn_now = (repeat_count == self.loop_window and not warned_loop)
                 if warn_now:
                     warned_loop = True
@@ -732,7 +884,13 @@ class Agent:
 
             def _exec_one(item: dict[str, Any]) -> tuple[str, int]:
                 t0 = time.time()
-                out = self.registry.execute(item["name"], item["args"])
+                if item["name"] == "tool_search":
+                    q = str(item["args"].get("query") or "")
+                    auto_act = bool(item["args"].get("activate", True))
+                    res_obj = profile_mgr.search_and_activate(q, auto_activate=auto_act)
+                    out = json.dumps(res_obj, ensure_ascii=False)
+                else:
+                    out = self.registry.execute(item["name"], item["args"])
                 elapsed_ms = int((time.time() - t0) * 1000)
                 return str(out), elapsed_ms
 
@@ -772,10 +930,21 @@ class Agent:
                               f"{item['repeat_count']} times in a row. Change "
                               "strategy - repeating it again will abort the run."
                         )
+                    spill = spill_tool_output(
+                        str(observation),
+                        tool_name=name,
+                        session_id=self.session.id,
+                        step=step,
+                        max_bytes=self.spillover_bytes,
+                        artifacts_root=Path(self.cfg.get("BAIZE_PERSISTENCE_DIR", "persistence")) / "artifacts",
+                    )
+                    if spill.spilled:
+                        self._emit("artifact_spilled", f"{name}: {spill.total_bytes}B -> {spill.artifact_path}")
+                    final_obs = spill.text[:MAX_OBSERVATION_CHARS]
                     self.session.append({
                         "role": "tool",
                         "tool_call_id": item["call_id"],
-                        "content": str(observation)[:MAX_OBSERVATION_CHARS],
+                        "content": final_obs,
                     })
                     try:
                         self.autonomy.record_cost(len(str(observation)) // 4)

@@ -1,6 +1,6 @@
 # ⚡ Baize Agent — 60-Second Quickstart Guide
 
-Welcome to **Baize Agent (V40.0.0 Vulcan)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
+Welcome to **Baize Agent (V41.0.0 Polaris)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
 
 ---
 

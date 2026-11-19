@@ -18,13 +18,15 @@ def test_d1_vector_backend_unavailable_fails_closed():
     assert "not configured" in str(exc_info.value)
 
 
-def test_d2_channel_adapter_reserved_interface():
-    """ConversationAdapter is marked reserved and raises NotImplementedError."""
-    adapter = ConversationAdapter("feishu")
-    assert adapter.status == "reserved"
+def test_d2_channel_adapter_active_interface():
+    """V41 promoted channels to active adapters; base ConversationAdapter formats outbound cleanly."""
+    from baize.ext.channels import get_adapter
+    adapter = get_adapter("feishu")
+    assert adapter.channel_name == "feishu"
+    assert adapter.status == "active"
     msg = ChannelMessage(channel="feishu", sender="user1", text="run task")
-    with pytest.raises(NotImplementedError):
-        adapter.handle_inbound(msg)
+    assert msg.channel == "feishu" and msg.text == "run task"
+    assert "ok" in adapter.format_outbound({"status": "ok", "message": "ok"})
 
 
 def test_d4_specialized_role_templates():

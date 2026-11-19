@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🏛️ 白泽引擎 (Baize Agent) — V40.0.0 Vulcan
+# 🏛️ 白泽引擎 (Baize Agent) — V41.0.0 Polaris
 
 **零第三方运行依赖 · 强物理门禁 (`NO FAKE DONE`) · 8 域 58 模块的工业级纯 Python 自治工程运行时**
 
-[![Version](https://img.shields.io/badge/version-V40.0.0--Vulcan-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1284%2F1287%20passed%20(99%25)-yellow?style=flat-square)](tests/)
+[![Version](https://img.shields.io/badge/version-V41.0.0--Polaris-orange?style=flat-square)](baize/__init__.py)
+[![Tests](https://img.shields.io/badge/tests-1299%2F1299%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -18,7 +18,7 @@
 
 ## 为什么是白泽引擎？
 
-**Baize Agent V40 Vulcan** 走极简硬核工程路线，以 **0 第三方运行依赖（纯 Python 3.10+ 标准库）** 构建完整的工业级自主研发闭环：
+**Baize Agent V41 Polaris** 走极简硬核工程路线，以 **0 第三方运行依赖（纯 Python 3.10+ 标准库）** 构建完整的工业级自主研发闭环：
 
 - **内核提速与原子事务回滚**：端到端 Token 级流式响应（REPL & HTTP SSE）、只读工具并发批处理（写操作严格串行）、基于临时 Git 索引的非侵入式检查点（`GitCheckpointManager`）与失败自动/一键回滚（`baize rollback`）。
 - **分级强隔离沙箱**：默认本地加固（静态护栏 + Landlock/Seatbelt + POSIX `rlimit` CPU/FD 配额 + 敏感环境变量清洗），支持 `BAIZE_SANDBOX_MODE=docker|auto` 一键切换无网络/限核/限 PID 的 Docker 容器隔离（`docker` 模式严格 Fail-Closed）。

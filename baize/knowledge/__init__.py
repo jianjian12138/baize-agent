@@ -22,6 +22,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "SkillHarvester": (".skills", "SkillHarvester"),
     "SkillRunner": (".skill_runner", "SkillRunner"),
     "verify_skill_draft": (".skill_runner", "verify_skill_draft"),
+    "BoundedMemoryStore": (".memory", "BoundedMemoryStore"),
 }
 
 __all__ = list(_EXPORTS)

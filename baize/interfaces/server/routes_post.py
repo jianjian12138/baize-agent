@@ -390,6 +390,30 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         res = GitCheckpointManager(cfg.get("BAIZE_WORKSPACE_DIR", ".")).rollback(cp_id)
         return handler._send(200 if res.get("ok") else 404, res)
 
+    if req_path.startswith("/api/channels/") and req_path.endswith("/webhook"):
+        parts = [seg for seg in req_path.split("/") if seg]
+        if len(parts) != 4:
+            return handler._send(404, {"error": "invalid channel webhook path"})
+        channel_name = parts[2].strip().lower()
+        from ...ext.channels import ChannelGateway, get_adapter
+        cfg = load_config()
+        try:
+            adapter = get_adapter(channel_name, cfg)
+        except ValueError as exc:
+            return handler._send(404, {"error": str(exc)})
+        # If the channel has no signing secret configured, still enforce BAIZE_API_TOKEN when set.
+        has_secret = bool(getattr(adapter, "signing_secret", "") or getattr(adapter, "secret", "") or getattr(adapter, "secret_token", ""))
+        if not has_secret and not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        raw_body = getattr(handler, "_raw_body", None)
+        if raw_body is None:
+            raw_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        headers_dict = {k: v for k, v in handler.headers.items()}
+        store = deps["get_job_store"]()
+        gw = ChannelGateway(cfg=cfg, job_store=store)
+        status_code, resp_body = gw.handle_webhook(channel_name, headers_dict, raw_body)
+        return handler._send(status_code, resp_body)
+
     if req_path == "/run":
         return _handle_run(handler, data, deps)
     if req_path == "/run/stream":

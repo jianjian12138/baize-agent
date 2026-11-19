@@ -9,6 +9,14 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "render_dashboard": (".ui", "render"),
     "BaizeREPL": (".repl", "BaizeREPL"),
     "run_repl": (".repl", "run_repl"),
+    "ApprovalRequest": (".approval", "ApprovalRequest"),
+    "ApprovalDecision": (".approval", "ApprovalDecision"),
+    "TieredApprovalPolicy": (".approval", "TieredApprovalPolicy"),
+    "render_unified_diff": (".approval", "render_unified_diff"),
+    "build_tool_preview": (".approval", "build_tool_preview"),
+    "format_status_bar": (".approval", "format_status_bar"),
+    "StreamJsonEmitter": (".rpc", "StreamJsonEmitter"),
+    "RpcServer": (".rpc", "RpcServer"),
 }
 
 __all__ = list(_EXPORTS)

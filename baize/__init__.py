@@ -22,5 +22,5 @@ string anywhere by hand — edit it here and run::
     python scripts/gates/sync_truth.py
 """
 
-__version__ = "40.0.0"
-__codename__ = "Vulcan"
+__version__ = "41.0.0"
+__codename__ = "Polaris"

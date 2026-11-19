@@ -474,4 +474,12 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         cps = mgr.list_checkpoints()
         return handler._send(200, {"checkpoints": cps, "total": len(cps)})
 
+    if req_path == "/api/channels":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...ext.channels import list_channels
+        cfg = load_config()
+        chans = list_channels(cfg)
+        return handler._send(200, {"channels": chans, "total": len(chans)})
+
     return handler._send(404, {"error": "not found"})

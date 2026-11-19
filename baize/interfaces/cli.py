@@ -454,16 +454,59 @@ def cmd_setup(args) -> int:
 
 
 def cmd_run(args) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    tool_profile = getattr(args, "tool_profile", "") or ""
+    approval_mode = getattr(args, "approval", "auto") or "auto"
     client = LLMClient()
     if not client.configured:
-        print("model endpoint not configured - set BAIZE_MODEL_BASE_URL / "
-              "BAIZE_MODEL_NAME (and API key) in .env")
-        print("💡 提示: 您可以运行 'python -m baize setup' 启动交互式快速配置向导。")
+        if output_format == "stream-json":
+            from .rpc import StreamJsonEmitter
+            StreamJsonEmitter().emit("error", {"error": "model endpoint not configured"})
+        else:
+            print("model endpoint not configured - set BAIZE_MODEL_BASE_URL / "
+                  "BAIZE_MODEL_NAME (and API key) in .env")
+            print("💡 提示: 您可以运行 'python -m baize setup' 启动交互式快速配置向导。")
         return 2
-    ui = _make_ui(args)
     session = Session(session_id=args.resume) if args.resume else None
-    agent = Agent(role="executor", client=client, session=session,
-                  on_event=ui.event)
+    approval_cb = None
+    if approval_mode != "auto" and sys.stdin.isatty():
+        from .approval import TieredApprovalPolicy, make_terminal_approval_callback
+        approval_cb = make_terminal_approval_callback(TieredApprovalPolicy(mode=approval_mode))
+    if output_format == "stream-json":
+        from .rpc import StreamJsonEmitter
+        emitter = StreamJsonEmitter()
+        def _emit_ev(kind: str, detail: str = "") -> None:
+            emitter.emit(kind, {"detail": detail})
+        agent = Agent(
+            role="executor",
+            client=client,
+            session=session,
+            on_event=_emit_ev,
+            on_token=lambda tok: emitter.emit("token", {"text": tok}),
+            approval_callback=approval_cb,
+            tool_profile=tool_profile or None,
+        )
+        emitter.emit("session_start", {"session_id": agent.session.id, **agent.context_status()})
+        res = agent.run(args.goal)
+        emitter.emit("result", {
+            "session_id": agent.session.id,
+            "stopped_reason": res.stopped_reason,
+            "final_text": res.final_text,
+            "steps": res.steps,
+            "tool_calls": res.tool_calls,
+            "context": agent.context_status(),
+        })
+        return 0 if res.stopped_reason == "final" else 1
+
+    ui = _make_ui(args)
+    agent = Agent(
+        role="executor",
+        client=client,
+        session=session,
+        on_event=ui.event,
+        approval_callback=approval_cb,
+        tool_profile=tool_profile or None,
+    )
     print(f"session: {agent.session.id}")
     res = agent.run(args.goal)
     print(res.final_text)
@@ -866,12 +909,22 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--resume", default="", help="resume a session by id")
     cp.add_argument("--no-color", action="store_true", help="disable ANSI color")
     cp.add_argument("--quiet", action="store_true", help="summary only")
+    cp.add_argument("--tool-profile", choices=("minimal", "tiered", "full"), default="",
+                    help="tool exposure profile (default: BAIZE_TOOL_PROFILE)")
+    cp.add_argument("--approval", choices=("tiered", "auto", "strict"), default="",
+                    help="interactive approval policy (default: BAIZE_APPROVAL_MODE)")
 
     rp = sub.add_parser("run", help="run a single autonomous agent on a goal")
     rp.add_argument("goal")
     rp.add_argument("--resume", default="", help="resume a session by id")
     rp.add_argument("--no-color", action="store_true", help="disable ANSI color")
     rp.add_argument("--quiet", action="store_true", help="summary only")
+    rp.add_argument("--output-format", choices=("text", "stream-json"), default="text",
+                    help="output format (text or newline-delimited stream-json)")
+    rp.add_argument("--tool-profile", choices=("minimal", "tiered", "full"), default="",
+                    help="tool exposure profile (minimal / tiered / full)")
+    rp.add_argument("--approval", choices=("auto", "tiered", "strict"), default="auto",
+                    help="tool approval policy (default: auto for non-interactive run)")
 
     tp = sub.add_parser("team", help="run Director->Executor->Verifier team")
     tp.add_argument("goal")
@@ -975,11 +1028,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 
-    # V40: coding eval harness
+    # V40/V41: coding eval harness + external dataset + profile A/B comparison
     ev = sub.add_parser("eval", help="run multi-file coding evaluation harness and compare runs")
     ev.add_argument("--mode", choices=("oracle", "live"), default="oracle",
                     help="oracle (deterministic verification) or live (configured LLM)")
     ev.add_argument("--task", action="append", default=None, help="filter specific task_id")
+    ev.add_argument("--dataset", default="", help="path to external SWE-bench style JSONL eval dataset")
+    ev.add_argument("--compare-profiles", action="store_true",
+                    help="compare minimal / tiered / full tool profiles on pass rate and schema tokens")
     ev.add_argument("--list", action="store_true", help="list historical eval runs")
     ev.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"),
                     help="compare two recorded eval_run_ids")
@@ -1022,6 +1078,13 @@ def build_parser() -> argparse.ArgumentParser:
     bp.add_argument("target", help="symbol name or file path to analyze")
     bp.add_argument("--file", default="", help="optional target file path if target is a bare symbol")
     bp.add_argument("--json", action="store_true", help="output in JSON format")
+
+    # V41: bidirectional JSONL RPC headless mode for IDE / CI integration
+    rpc_p = sub.add_parser("rpc", help="start bidirectional stdin/stdout JSONL RPC server (V41.0.0 Polaris)")
+    rpc_p.add_argument("--approval", choices=("auto", "tiered", "strict"), default="",
+                       help="approval policy for RPC tool calls")
+    rpc_p.add_argument("--tool-profile", choices=("minimal", "tiered", "full"), default="",
+                       help="tool exposure profile for RPC sessions")
 
     return p
 
@@ -1073,7 +1136,13 @@ def cmd_ralph(args) -> int:
 
 
 def cmd_eval(args) -> int:
-    from ..governance.eval_harness import compare_runs, load_eval_runs, run_eval_suite
+    from ..governance.eval_harness import (
+        compare_runs,
+        load_eval_runs,
+        load_external_eval_tasks,
+        run_eval_suite,
+        run_profile_comparison,
+    )
     if args.list:
         runs = load_eval_runs()
         if args.json:
@@ -1092,12 +1161,41 @@ def cmd_eval(args) -> int:
         diff = compare_runs(runs[a], runs[b])
         print(json.dumps(diff, indent=2, ensure_ascii=False))
         return 0
-    summary = run_eval_suite(mode=args.mode, task_ids=args.task)
+    ext_tasks = None
+    if getattr(args, "dataset", ""):
+        ext_tasks = load_external_eval_tasks(args.dataset)
+        if args.task:
+            wanted = set(args.task)
+            ext_tasks = [t for t in ext_tasks if t.task_id in wanted]
+    if getattr(args, "compare_profiles", False):
+        report = run_profile_comparison(mode=args.mode, tasks=ext_tasks)
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            print(f"=== Baize Tool Profile Comparison (mode={report['mode']}) ===")
+            for prof, info in report["profiles"].items():
+                print(
+                    f"  {prof:<8s}  active_tools={info['active_tools']:>2d}  "
+                    f"schema_tokens={info['schema_tokens']:>4d}  "
+                    f"pass={info['passed_tasks']}/{info['total_tasks']} ({info['pass_rate']*100:.1f}%)"
+                )
+            print(f"  tiered_savings_vs_full: {report.get('tiered_savings_pct', 0.0):.1f}%")
+        all_ok = all(v["passed_tasks"] == v["total_tasks"] for v in report["profiles"].values())
+        return 0 if all_ok else 1
+    summary = run_eval_suite(mode=args.mode, task_ids=None if ext_tasks is not None else args.task, tasks=ext_tasks)
     if args.json:
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
     else:
         print(summary.format_summary())
     return 0 if summary.passed_tasks == summary.total_tasks else 1
+
+
+def cmd_rpc(args) -> int:
+    from .rpc import RpcServer
+    if getattr(args, "tool_profile", ""):
+        os.environ["BAIZE_TOOL_PROFILE"] = args.tool_profile
+    srv = RpcServer(approval_mode=(getattr(args, "approval", "") or None))
+    return srv.serve_forever()
 
 
 def cmd_rollback(args) -> int:
@@ -1183,7 +1281,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc"):
         try:
             validate()
         except ConfigError as e:
@@ -1222,6 +1320,7 @@ def main(argv: list[str] | None = None) -> int:
         "route": cmd_route,
         "impact": cmd_impact,
         "blast": cmd_blast,
+        "rpc": cmd_rpc,
     }
     return handlers[args.command](args)
 

@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "40.0.0",
+  "version": "41.0.0",
   "phases": [
     {
       "id": "V68",
@@ -526,6 +526,26 @@
         "tests/execution/test_v40_tiered_sandbox.py",
         "tests/codebase/test_v40_diagnostics_and_eval.py",
         "tests/interfaces/test_v40_server_jobs_and_routes.py"
+      ]
+    },
+    {
+      "id": "V137",
+      "name": "V41.0.0 Polaris 业界一线对标全面升级（分层工具按需加载与65% Schema降耗、读写分级Diff预览审批流、自动上下文压缩与大输出落盘、后台长进程管理、JSONL RPC协议、双轴树状回溯、有界MEMORY/USER人格记忆、热重载插件门禁与回滚、飞书/钉钉/Telegram/Slack双向IM网关与外部评测闭环）",
+      "status": "done",
+      "evidence": [
+        "baize/core/context_engine.py",
+        "baize/core/plugin_lifecycle.py",
+        "baize/execution/bg_proc.py",
+        "baize/interfaces/approval.py",
+        "baize/interfaces/rpc.py",
+        "baize/ext/channels.py",
+        "baize/knowledge/memory.py",
+        "baize/core/sessions.py",
+        "baize/core/agent.py",
+        "baize/governance/eval_harness.py",
+        "tests/core/test_v41_context_and_plugins.py",
+        "tests/execution/test_v41_bg_proc_and_channels.py",
+        "tests/interfaces/test_v41_approval_rpc_and_tree.py"
       ]
     }
   ]

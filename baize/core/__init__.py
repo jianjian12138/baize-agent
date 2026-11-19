@@ -28,6 +28,18 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "HTTPConnPool": (".llm", "HTTPConnPool"),
     "setup_logging": (".config", "setup_logging"),
     "get_logger": (".config", "get_logger"),
+    "ToolProfileManager": (".context_engine", "ToolProfileManager"),
+    "SpilloverResult": (".context_engine", "SpilloverResult"),
+    "CompactionReport": (".context_engine", "CompactionReport"),
+    "spill_tool_output": (".context_engine", "spill_tool_output"),
+    "compact_messages_structured": (".context_engine", "compact_messages_structured"),
+    "estimate_context_ratio": (".context_engine", "estimate_context_ratio"),
+    "PluginScope": (".plugin_lifecycle", "PluginScope"),
+    "HotReloadPluginManager": (".plugin_lifecycle", "HotReloadPluginManager"),
+    "get_plugin_manager": (".plugin_lifecycle", "get_plugin_manager"),
+    "build_session_tree": (".sessions", "build_session_tree"),
+    "format_session_tree": (".sessions", "format_session_tree"),
+    "rewind_session": (".sessions", "rewind_session"),
 }
 
 __all__ = list(_EXPORTS)

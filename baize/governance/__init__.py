@@ -17,6 +17,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "EvalRunSummary": (".eval_harness", "EvalRunSummary"),
     "run_eval_suite": (".eval_harness", "run_eval_suite"),
     "compare_runs": (".eval_harness", "compare_runs"),
+    "load_external_eval_tasks": (".eval_harness", "load_external_eval_tasks"),
+    "run_profile_comparison": (".eval_harness", "run_profile_comparison"),
 }
 
 __all__ = list(_EXPORTS)

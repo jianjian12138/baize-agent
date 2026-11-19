@@ -187,6 +187,7 @@ class Handler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             return None
         raw = self.rfile.read(length) if length else b"{}"
+        self._raw_body = raw
         return json.loads(raw or b"{}")
 
     def _is_authorized(self, *, require_token: bool = False) -> bool:
@@ -213,7 +214,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        if not self._is_authorized():
+        req_path = self._req_path()
+        is_channel_webhook = (
+            req_path.startswith("/api/channels/") and req_path.endswith("/webhook")
+        )
+        if not is_channel_webhook and not self._is_authorized():
             return self._send(401, {"error": "unauthorized: invalid or missing bearer token"})
         allowed, retry_after = check_http_rate_limit(self)
         if not allowed:

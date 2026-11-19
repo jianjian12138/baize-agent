@@ -136,7 +136,6 @@ from ..knowledge.memory import recall as memory_recall
 from ..knowledge.rag import build_corpus, retrieve
 from ..codebase.repo_map import RepoMapGenerator
 from ..knowledge.skills import load_index, search as skill_search
-from ..execution.tools import default_registry
 
 __all__ = [
     "measure_step",
@@ -177,6 +176,7 @@ def profile_workspace(
     timings.append(measure_step("rag.build_corpus_and_retrieve", lambda: retrieve("agent mcp tool", corpus=build_corpus(cfg=cfg)), repeat=3))
     timings.append(measure_step("skill_index.load_and_search", lambda: (load_index(cfg), skill_search("python", cfg=cfg)), repeat=3))
     timings.append(measure_step("memory.recall", lambda: memory_recall("agent", cfg=cfg, limit=20), repeat=5))
+    from ..execution.tools import default_registry
     timings.append(measure_step("tools.default_registry", default_registry, repeat=10))
 
     ranked = sorted(timings, key=lambda item: item["avg_ms"], reverse=True)

@@ -12,13 +12,13 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (58 modules)
-├── core/                           # 7 modules: agent loop (streaming+parallel), LLM client, config, sessions, autonomy
-│   ├── agent.py  autonomy.py  component.py  config.py  llm.py  plugin.py  sessions.py
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (63 modules)
+├── core/                           # 9 modules: agent loop, context engine, plugin lifecycle, LLM client, config, sessions, autonomy
+│   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  llm.py  plugin.py  plugin_lifecycle.py  sessions.py
 ├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
 │   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  system1.py  team.py
-├── execution/                      # 7 modules: tools, tiered sandbox, Git checkpoints, proc, PowerShell, Docker, browser
-│   ├── browser_verify.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py
+├── execution/                      # 8 modules: tools, bg_proc, tiered sandbox, Git checkpoints, proc, PowerShell, Docker, browser
+│   ├── bg_proc.py  browser_verify.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py
 ├── codebase/                       # 7 orthogonal static code intelligence & diagnostics modules
 │   ├── arch_cache.py               # incremental mtime/size-keyed SQLite architecture cache
 │   ├── diagnostics.py              # zero-dependency stdio LSP client & compiler/linter diagnostic bridge
@@ -27,21 +27,21 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │   ├── repo_map.py                 # flat + L0/L1/L2 hierarchical repo maps & AST context slicer
 │   ├── symbol_graph.py             # AST/regex symbol graph, PageRank, canonical SKIP_DIRS/SUPPORTED_EXTS
 │   └── workspace_search.py         # zero-dependency workspace grep & glob search
-├── knowledge/                      # 6 modules: layered memory, graph, RAG/TF-IDF, skills & runner
+├── knowledge/                      # 6 modules: layered + bounded memory, graph, RAG/TF-IDF, skills & runner
 │   ├── doc_crawler.py  graph.py  memory.py  rag.py  skill_runner.py  skills.py
 ├── governance/                     # 6 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs
 │   ├── bench.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py
-├── interfaces/                     # 11 modules: CLI, REPL, HTTP/SSE server, persistent jobs, ops, desktop, UI
-│   ├── cli.py  desktop.py  repl.py  serve.py  ui.py
+├── interfaces/                     # 13 modules: CLI, REPL, Diff approval, JSONL RPC, HTTP/SSE server, jobs, ops, desktop, UI
+│   ├── approval.py  cli.py  desktop.py  repl.py  rpc.py  serve.py  ui.py
 │   └── server/                     # decomposed HTTP server subpackage
 │       ├── jobs.py                 # SQLite WAL persistent async job queue & sliding-window rate limiter
 │       ├── operations.py           # real outbound webhook, persistent RBAC, tool importer & CI autofix
-│       ├── routes_get.py           # GET routes (/health, /api/jobs, /api/checkpoints, /api/workspace/search, etc.)
-│       ├── routes_post.py          # POST dispatch (/team/dag, /api/git/apply_hunk, /api/jobs, /api/diagnostics, etc.)
+│       ├── routes_get.py           # GET routes (/health, /api/jobs, /api/checkpoints, /api/channels, etc.)
+│       ├── routes_post.py          # POST dispatch (/team/dag, /api/git/apply_hunk, /api/jobs, /api/channels/<ch>/webhook, etc.)
 │       ├── security.py             # fail-closed auth, CORS allowlist, path guards
 │       └── streaming.py            # real-time token + event SSE streaming for /run/stream
 └── ext/                            # 7 modules: optional extensions (lazily loaded, fail-closed)
-    ├── channels.py                 # conversation adapter interface for chat channels
+    ├── channels.py                 # bidirectional Feishu/DingTalk/Telegram/Slack webhook gateway
     ├── mcp/                        # unified Model Context Protocol client/server/dispatcher
     │   ├── client.py  component.py  dispatcher.py  server.py  transport.py
     ├── plugins/

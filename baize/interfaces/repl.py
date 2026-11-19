@@ -47,7 +47,12 @@ Available Slash Commands:
   /history, /list      Show recent 10 sessions
   /resume <id>         Switch to and resume an existing session
   /fork [name]         Fork current conversation branch into a new parallel session
-  /rewind [N]          Time-travel rewind last N turns (default: 1 turn)
+  /tree                Display dual-axis session & checkpoint tree
+  /rewind [N|id]       Rewind last N turns or jump to checkpoint node (--code restores Git files)
+  /profile [mode]      View or switch tool profile (minimal / tiered / full)
+  /approval [mode]     View or switch approval policy (tiered / auto / strict)
+  /reload [plugin]     Hot-reload plugin with AST + smoke gate & rollback
+  /bg [list|output|stop] Manage background shell processes
   /cost                Inspect session token usage and estimated cost
   /trace               Inspect step-by-step tool execution timeline & latency
   /model [name]        View or instantly switch active LLM model
@@ -151,14 +156,34 @@ def _format_user_friendly_error(err_text: str) -> str:
 class BaizeREPL:
     """Continuous multi-turn interactive conversational REPL for Baize Agent."""
 
-    def __init__(self, session_id: str = "", no_color: bool = False, quiet: bool = False):
+    def __init__(
+        self,
+        session_id: str = "",
+        no_color: bool = False,
+        quiet: bool = False,
+        tool_profile: str = "",
+        approval_mode: str = "",
+    ):
         self.cfg = load_config()
         self.client = LLMClient(self.cfg)
         self.ui = ProgressUI(color=False if no_color else None, verbose=not quiet)
+        self.no_color = no_color
         self.session_id = session_id
         self.session: Session | None = None
         self.agent: Agent | None = None
+        self.tool_profile = (tool_profile or self.cfg.get("BAIZE_TOOL_PROFILE") or "tiered").strip().lower()
+        self.approval_mode = (approval_mode or self.cfg.get("BAIZE_APPROVAL_MODE") or "tiered").strip().lower()
+        from .approval import TieredApprovalPolicy
+        self.approval_policy = TieredApprovalPolicy(mode=self.approval_mode)
         self.running = True
+
+    def _make_approval_cb(self):
+        # Only prompt interactively on a real TTY unless user explicitly chose strict/tiered with custom stdin
+        if not sys.stdin.isatty():
+            return None
+        from .approval import make_terminal_approval_callback
+        ws = self.cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        return make_terminal_approval_callback(self.approval_policy, workspace=ws)
 
     def _init_agent(self) -> None:
         if self.session is None:
@@ -178,7 +203,27 @@ class BaizeREPL:
             session=self.session,
             on_event=self.ui.event,
             on_token=lambda tok: sys.stdout.write(tok) or sys.stdout.flush(),
+            approval_callback=self._make_approval_cb(),
+            tool_profile=self.tool_profile,
         )
+
+    def _print_status_bar(self) -> None:
+        if not self.agent:
+            return
+        from .approval import format_status_bar
+        from ..execution.bg_proc import get_bg_manager
+        st = self.agent.context_status()
+        models = getattr(self.client, "models", [])
+        model_name = models[0].name if models else (self.cfg.get("BAIZE_MODEL_NAME") or "unconfigured")
+        bar = format_status_bar(
+            model=model_name,
+            profile=st.get("profile", self.tool_profile),
+            active_tools=int(st.get("active_tools", 0)),
+            context_ratio=float(st.get("context_ratio", 0.0)),
+            bg_procs=get_bg_manager().active_count(),
+            color=not self.no_color,
+        )
+        print(bar)
 
     def print_banner(self) -> None:
         p = self.ui.p
@@ -205,13 +250,7 @@ class BaizeREPL:
         if cmd in ("/reset", "/new"):
             self.session = Session(cfg=self.cfg)
             self.session_id = self.session.id
-            self.agent = Agent(
-                role="executor",
-                client=self.client,
-                session=self.session,
-                on_event=self.ui.event,
-            on_token=lambda tok: sys.stdout.write(tok) or sys.stdout.flush(),
-            )
+            self._init_agent()
             print(p.paint("green", f"✓ Started new session: {self.session_id}"))
             return
 
@@ -234,13 +273,7 @@ class BaizeREPL:
             try:
                 self.session = Session(session_id=arg, cfg=self.cfg)
                 self.session_id = self.session.id
-                self.agent = Agent(
-                    role="executor",
-                    client=self.client,
-                    session=self.session,
-                    on_event=self.ui.event,
-            on_token=lambda tok: sys.stdout.write(tok) or sys.stdout.flush(),
-                )
+                self._init_agent()
                 print(p.paint("green", f"✓ Resumed session: {self.session_id} ({len(self.session.messages)} messages)"))
             except Exception as e:
                 print(p.paint("red", f"Failed to resume session '{arg}': {e}"))
@@ -261,13 +294,47 @@ class BaizeREPL:
             print(p.paint("green", f"✓ Parallel session forked: {self.session_id} ({len(self.session.messages)} messages)"))
             return
 
+        if cmd == "/tree":
+            from ..core.sessions import format_session_tree
+            print(p.paint("bold", "\nSession & Checkpoint Tree:"))
+            print(format_session_tree(cfg=self.cfg))
+            print()
+            return
+
         if cmd == "/rewind":
-            if not self.session or not self.session.messages:
+            if not self.session:
+                print(p.paint("dim", "No active session to rewind."))
+                return
+            tokens = arg.split()
+            restore_code = "--code" in tokens
+            non_flag = [t for t in tokens if t != "--code"]
+            target = non_flag[0] if non_flag else ""
+            # Dual-axis checkpoint node rewind when target is a non-numeric node_id
+            if target and not target.isdigit():
+                from ..core.sessions import rewind_session
+                ws = self.cfg.get("BAIZE_WORKSPACE_DIR", ".")
+                res = rewind_session(
+                    self.session.id,
+                    target,
+                    restore_code=restore_code,
+                    workspace=ws,
+                    cfg=self.cfg,
+                )
+                if not res.get("ok"):
+                    print(p.paint("red", f"Rewind failed: {res.get('error', res)}"))
+                    return
+                new_sid = res.get("new_session_id") or self.session.id
+                self.session_id = new_sid
+                self.session = Session(session_id=new_sid, cfg=self.cfg)
+                self._init_agent()
+                code_note = " + Git workspace restored" if res.get("code_restored") else ""
+                print(p.paint("green", f"✓ Rewound to node {target}{code_note}. Active messages: {len(self.session.messages)}"))
+                return
+
+            if not self.session.messages:
                 print(p.paint("dim", "No messages in active session to rewind."))
                 return
-            turns = int(arg) if arg.isdigit() and int(arg) > 0 else 1
-            # A turn consists of user message + assistant response + any tool observations
-            # Find turn boundaries (role == 'user')
+            turns = int(target) if target.isdigit() and int(target) > 0 else 1
             user_indices = [i for i, m in enumerate(self.session.messages) if m.get("role") == "user"]
             if not user_indices:
                 self.session.messages.clear()
@@ -276,7 +343,6 @@ class BaizeREPL:
                 cutoff_idx = user_indices[cutoff_turn] if cutoff_turn < len(user_indices) else 0
                 self.session.messages = self.session.messages[:cutoff_idx]
 
-            # Re-write session ledger file on disk atomically
             s_file = self.session.file
             if s_file.exists():
                 lines = [json.dumps(m, ensure_ascii=False) for m in self.session.messages]
@@ -284,6 +350,89 @@ class BaizeREPL:
 
             self._init_agent()
             print(p.paint("green", f"✓ Rewound {turns} turn(s). Active session now has {len(self.session.messages)} messages."))
+            return
+
+        if cmd == "/profile":
+            mode = arg.strip().lower()
+            if mode in ("minimal", "tiered", "full"):
+                self.tool_profile = mode
+                os.environ["BAIZE_TOOL_PROFILE"] = mode
+                self._init_agent()
+                st = self.agent.context_status() if self.agent else {}
+                print(p.paint("green", f"✓ Switched tool profile to '{mode}' "
+                              f"(active={st.get('active_tools', 0)}/{st.get('total_tools', 0)}, "
+                              f"est_schema_tokens={st.get('schema_tokens', 0)})"))
+                return
+            st = self.agent.context_status() if self.agent else {}
+            print(p.paint("bold", f"\nTool Profile: {self.tool_profile}"))
+            print(f"  • Active tools:   {st.get('active_tools', 0)} / {st.get('total_tools', 0)}")
+            print(f"  • Schema tokens:  ~{st.get('schema_tokens', 0)}")
+            print(p.paint("dim", "  (Use '/profile minimal|tiered|full' to switch)\n"))
+            return
+
+        if cmd == "/approval":
+            mode = arg.strip().lower()
+            if mode in ("tiered", "auto", "strict"):
+                self.approval_mode = mode
+                from .approval import TieredApprovalPolicy
+                self.approval_policy = TieredApprovalPolicy(mode=mode)
+                self._init_agent()
+                print(p.paint("green", f"✓ Switched approval policy to '{mode}'"))
+                return
+            print(p.paint("bold", f"\nApproval Policy: {self.approval_mode}"))
+            print(p.paint("dim", "  (Use '/approval tiered|auto|strict' to switch)\n"))
+            return
+
+        if cmd == "/reload":
+            from ..core.plugin_lifecycle import get_plugin_manager
+            mgr = get_plugin_manager()
+            target = arg.strip()
+            if not target:
+                loaded = mgr.list_plugins()
+                if not loaded:
+                    print(p.paint("dim", "No hot-reloadable plugins loaded. Use '/reload <plugin_path_or_id>'."))
+                    return
+                print(p.paint("bold", f"\nLoaded Hot-Reload Plugins ({len(loaded)}):"))
+                for pl in loaded:
+                    print(f"  • {pl['plugin_id']}  tools={pl.get('tools', [])}  path={pl.get('source_path', '')}")
+                print()
+                return
+            if Path(target).exists():
+                res = mgr.load_plugin(target)
+            else:
+                res = mgr.reload_plugin(target)
+            if res.get("ok"):
+                print(p.paint("green", f"✓ Plugin '{res.get('plugin_id')}' reloaded cleanly "
+                              f"(tools={res.get('tools', [])})"))
+            else:
+                print(p.paint("red", f"✗ Plugin reload failed (previous state preserved): {res.get('error')}"))
+            return
+
+        if cmd == "/bg":
+            from ..execution.bg_proc import get_bg_manager
+            mgr = get_bg_manager()
+            parts_bg = arg.split(maxsplit=1)
+            sub = parts_bg[0].lower() if parts_bg else "list"
+            sub_arg = parts_bg[1].strip() if len(parts_bg) > 1 else ""
+            if sub == "list":
+                procs = mgr.list_procs()
+                if not procs:
+                    print(p.paint("dim", "No background processes."))
+                    return
+                print(p.paint("bold", f"\nBackground Processes ({len(procs)}):"))
+                for pr in procs:
+                    print(f"  • {pr['proc_id']}  [{pr['status']}]  pid={pr.get('pid')}  cmd={pr['command'][:60]}")
+                print()
+                return
+            if sub == "output" and sub_arg:
+                res = mgr.read_output(sub_arg)
+                print(json.dumps(res, indent=2, ensure_ascii=False))
+                return
+            if sub == "stop" and sub_arg:
+                res = mgr.stop(sub_arg)
+                print(p.paint("green" if res.get("ok") else "red", json.dumps(res, ensure_ascii=False)))
+                return
+            print(p.paint("yellow", "Usage: /bg [list | output <proc_id> | stop <proc_id>]"))
             return
 
         if cmd == "/cost":
@@ -369,12 +518,30 @@ class BaizeREPL:
 
         if cmd == "/memory":
             from ..knowledge import memory as memory_mod
+            store = memory_mod.BoundedMemoryStore(self.cfg)
             if not arg:
                 stats = memory_mod.stats()
+                bs = store.stats()
                 print(p.paint("bold", "\nMemory Stats:"))
                 print(f"  • Notes size: {stats.get('notes_bytes', 0)} bytes ({stats.get('notes_lines', 0)} lines)")
                 print(f"  • Log entries: {stats.get('log_entries', 0)}")
-                print(f"  • Total storage: {stats.get('total_bytes', 0)} bytes\n")
+                print(f"  • Total storage: {stats.get('total_bytes', 0)} bytes")
+                print(f"  • Bounded MEMORY.md: {bs['memory']['chars']}/{bs['memory']['limit']} chars")
+                print(f"  • Bounded USER.md:   {bs['user']['chars']}/{bs['user']['limit']} chars\n")
+                return
+            sub_m = arg.split(maxsplit=1)
+            action = sub_m[0].lower()
+            rest_m = sub_m[1].strip() if len(sub_m) > 1 else ""
+            if action == "show":
+                print(store.render_prefix_snapshot() or "(Bounded MEMORY.md / USER.md are empty)")
+                return
+            if action == "add" and rest_m:
+                res = store.update("memory", "add", rest_m)
+                print(p.paint("green" if res.get("ok") else "red", json.dumps(res, ensure_ascii=False)))
+                return
+            if action == "user" and rest_m:
+                res = store.update("user", "add", rest_m)
+                print(p.paint("green" if res.get("ok") else "red", json.dumps(res, ensure_ascii=False)))
                 return
             recs = memory_mod.recall(arg, limit=5)
             if not recs:
@@ -437,20 +604,38 @@ class BaizeREPL:
                 context_blocks.append(f"### Context File: `{f['path']}`\n```\n{f['snippet']}\n```")
             final_prompt = f"{user_goal}\n\n" + "\n\n".join(context_blocks)
 
-        # 2. Execute agent turn
-        try:
-            res = self.agent.run(final_prompt)
-            if res.stopped_reason == "error":
-                friendly = _format_user_friendly_error(res.final_text)
-                print(p.paint("red", f"\n❌ {friendly}\n"))
-            else:
-                print(f"\n{res.final_text}\n")
-            self.ui.summary(res)
-            print()
-        except KeyboardInterrupt:
-            print(p.paint("yellow", "\n[Interrupted by user] Current execution stopped."))
-        except Exception as e:
-            print(p.paint("red", f"\nExecution error: {e}\n"))
+        # 2. Execute agent turn (with soft-interrupt steering & status bar)
+        prompt_to_run = final_prompt
+        while True:
+            try:
+                res = self.agent.run(prompt_to_run)
+                if res.stopped_reason == "error":
+                    friendly = _format_user_friendly_error(res.final_text)
+                    print(p.paint("red", f"\n❌ {friendly}\n"))
+                else:
+                    print(f"\n{res.final_text}\n")
+                self.ui.summary(res)
+                self._print_status_bar()
+                print()
+                break
+            except KeyboardInterrupt:
+                if self.agent is not None:
+                    self.agent.request_interrupt()
+                print(p.paint("yellow", "\n[Interrupted by user] Current execution paused."))
+                if sys.stdin.isatty():
+                    try:
+                        steer_msg = input(p.paint("cyan", "  ↳ 输入新指令立即转向（直接回车停止本次任务）: ")).strip()
+                    except (KeyboardInterrupt, EOFError):
+                        steer_msg = ""
+                    if steer_msg:
+                        if self.agent is not None:
+                            self.agent.steer(steer_msg)
+                        prompt_to_run = steer_msg
+                        continue
+                break
+            except Exception as e:
+                print(p.paint("red", f"\nExecution error: {e}\n"))
+                break
 
     def run(self) -> int:
         self.print_banner()
@@ -538,6 +723,18 @@ class BaizeREPL:
         return 0
 
 
-def run_repl(session_id: str = "", no_color: bool = False, quiet: bool = False) -> int:
-    repl = BaizeREPL(session_id=session_id, no_color=no_color, quiet=quiet)
+def run_repl(
+    session_id: str = "",
+    no_color: bool = False,
+    quiet: bool = False,
+    tool_profile: str = "",
+    approval_mode: str = "",
+) -> int:
+    repl = BaizeREPL(
+        session_id=session_id,
+        no_color=no_color,
+        quiet=quiet,
+        tool_profile=tool_profile,
+        approval_mode=approval_mode,
+    )
     return repl.run()

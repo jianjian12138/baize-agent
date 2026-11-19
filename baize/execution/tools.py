@@ -1004,6 +1004,45 @@ def _tool_diagnostics(path: str = "", use_lsp: bool = False) -> str:
     return "\n".join(lines)
 
 
+
+def _tool_search_deferred(query: str = "", activate: bool = True) -> str:
+    """Discover available deferred tools by keyword (runtime activation handled by Agent)."""
+    reg = default_registry()
+    q = (query or "").strip().lower()
+    matches = []
+    for name in reg.names():
+        t = reg.get(name)
+        if t is None:
+            continue
+        if not q or q in name.lower() or q in t.description.lower():
+            matches.append({"name": name, "description": t.description})
+    return json.dumps({"query": query, "matches": matches[:10], "activate": bool(activate)}, ensure_ascii=False)
+
+
+def _tool_bash_bg_start(command: str, use_pty: bool = False) -> str:
+    from .bg_proc import get_bg_manager
+    ws = str(_workspace_root())
+    return json.dumps(get_bg_manager().start(command, cwd=ws, use_pty=bool(use_pty)), ensure_ascii=False)
+
+
+def _tool_bash_bg_output(proc_id: str, tail_lines: int = 60, wait_ms: int = 0) -> str:
+    from .bg_proc import get_bg_manager
+    return json.dumps(get_bg_manager().read_output(proc_id, tail_lines=int(tail_lines), wait_ms=int(wait_ms)), ensure_ascii=False)
+
+
+def _tool_bash_bg_stop(proc_id: str) -> str:
+    from .bg_proc import get_bg_manager
+    return json.dumps(get_bg_manager().stop(proc_id), ensure_ascii=False)
+
+
+def _tool_memory_profile(slot: str = "memory", action: str = "read", content: str = "", target: str = "") -> str:
+    from ..knowledge.memory import BoundedMemoryStore
+    store = BoundedMemoryStore(load_config())
+    if (action or "read").strip().lower() == "read":
+        return json.dumps({"slot": slot, "content": store.read(slot), "revision_hash": store.revision_hash()}, ensure_ascii=False)
+    return json.dumps(store.update(slot, action, content=content, target=target), ensure_ascii=False)
+
+
 def default_registry() -> ToolRegistry:
     global _DEFAULT_REGISTRY
     if _DEFAULT_REGISTRY is None:
@@ -1109,6 +1148,34 @@ def default_registry() -> ToolRegistry:
                      _s(path={"type": "string", "_opt": True},
                         use_lsp={"type": "boolean", "_opt": True}),
                      _tool_diagnostics)
+        # V41 Polaris: deferred tool loader, background process manager, bounded memory profile
+        reg.register("tool_search",
+                     "Search and activate deferred advanced tools (e.g. diagnostics, blast_radius, bash_bg_start, memory_profile, skills) on demand.",
+                     _s(query={"type": "string"},
+                        activate={"type": "boolean", "_opt": True}),
+                     _tool_search_deferred)
+        reg.register("bash_bg_start",
+                     "Start a long-running background shell command (dev server, watcher) with ring-buffer log capture and automatic cleanup.",
+                     _s(command={"type": "string"},
+                        use_pty={"type": "boolean", "_opt": True}),
+                     _tool_bash_bg_start)
+        reg.register("bash_bg_output",
+                     "Read recent log lines and live status from a background process started via bash_bg_start.",
+                     _s(proc_id={"type": "string"},
+                        tail_lines={"type": "integer", "_opt": True},
+                        wait_ms={"type": "integer", "_opt": True}),
+                     _tool_bash_bg_output)
+        reg.register("bash_bg_stop",
+                     "Terminate a background process and its process group cleanly.",
+                     _s(proc_id={"type": "string"}),
+                     _tool_bash_bg_stop)
+        reg.register("memory_profile",
+                     "Read or update bounded persistent MEMORY.md (project facts) or USER.md (developer preferences) snapshots.",
+                     _s(slot={"type": "string", "_opt": True},
+                        action={"type": "string", "_opt": True},
+                        content={"type": "string", "_opt": True},
+                        target={"type": "string", "_opt": True}),
+                     _tool_memory_profile)
         # V33-A2: fetch_url - opt-in HTTP retrieval (BAIZE_ALLOW_FETCH_URL=1)
         cfg = load_config()
         if cfg.get("BAIZE_ALLOW_FETCH_URL", "0") == "1":

@@ -16,6 +16,7 @@ so engineers can compare two engine/prompt versions with ``compare_runs()``.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -339,8 +340,10 @@ def _write_files(root: Path, files: dict[str, str]) -> None:
 
 
 def _run_verify(root: Path, cmd: list[str], timeout: int = 30) -> tuple[bool, str]:
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.run(
-        cmd, cwd=str(root), capture_output=True, text=True,
+        cmd, cwd=str(root), env=env, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout,
     )
     out = (proc.stdout + "\n" + proc.stderr).strip()
@@ -360,11 +363,13 @@ def run_eval_suite(
     cfg: dict[str, str] | None = None,
     persist: bool = True,
     runner: Callable[[EvalTask, Path], dict[str, Any]] | None = None,
+    tasks: list[EvalTask] | None = None,
 ) -> EvalRunSummary:
     """Execute the coding eval suite in ``oracle`` or ``live`` mode."""
     cfg = cfg or load_config()
+    source_tasks = list(tasks) if tasks is not None else list(BUILTIN_EVAL_TASKS)
     tasks = [
-        t for t in BUILTIN_EVAL_TASKS
+        t for t in source_tasks
         if not task_ids or t.task_id in task_ids
     ]
     model_name = "oracle" if mode == "oracle" else (cfg.get("BAIZE_MODEL") or "configured-llm")
@@ -496,4 +501,80 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any]
         "avg_duration_ms_delta": round(float(run_b.get("avg_duration_ms", 0.0)) - float(run_a.get("avg_duration_ms", 0.0)), 2),
         "regressions": regressions,
         "improvements": improvements,
+    }
+
+
+# ---------------------------------------------------------------------------
+# V41: SWE-bench Style External JSONL Dataset Loader & Tool Profile Comparison
+# ---------------------------------------------------------------------------
+
+def load_external_eval_tasks(dataset_path: str | Path) -> list[EvalTask]:
+    """Load real coding evaluation tasks from an external JSONL file."""
+    import shlex
+
+    p = Path(dataset_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Eval dataset not found: {p}")
+    tasks: list[EvalTask] = []
+    for lineno, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        tid = str(obj.get("task_id") or f"ext_{lineno:03d}")
+        files = obj.get("initial_files") if isinstance(obj.get("initial_files"), dict) else (
+            obj.get("files") if isinstance(obj.get("files"), dict) else {}
+        )
+        oracle_files = obj.get("oracle_files") if isinstance(obj.get("oracle_files"), dict) else {}
+        raw_cmd = obj.get("test_command") or obj.get("verify_cmd") or [sys.executable, "-m", "unittest"]
+        test_command = [str(c) for c in raw_cmd] if isinstance(raw_cmd, list) else shlex.split(str(raw_cmd))
+        tasks.append(EvalTask(
+            task_id=tid,
+            title=str(obj.get("title") or tid),
+            category=str(obj.get("category") or "external"),
+            goal=str(obj.get("goal") or ""),
+            initial_files={str(k): str(v) for k, v in files.items()},
+            test_command=test_command,
+            oracle_files={str(k): str(v) for k, v in oracle_files.items()},
+        ))
+    return tasks
+
+
+def run_profile_comparison(
+    *,
+    profiles: tuple[str, ...] = ("minimal", "tiered", "full"),
+    mode: str = "oracle",
+    tasks: list[EvalTask] | None = None,
+    cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compare schema token overhead and eval results across V41 tool profiles."""
+    from ..core.context_engine import ToolProfileManager
+    from ..execution.tools import default_registry
+
+    cfg = cfg or load_config()
+    all_schemas = default_registry().schemas()
+    by_profile: dict[str, dict[str, Any]] = {}
+    for prof in profiles:
+        mgr = ToolProfileManager(all_schemas, profile=prof)
+        prof_cfg = dict(cfg)
+        prof_cfg["BAIZE_TOOL_PROFILE"] = prof
+        summary = run_eval_suite(mode=mode, tasks=tasks, cfg=prof_cfg, persist=False)
+        by_profile[prof] = {
+            "profile": prof,
+            "active_tools": len(mgr.active_names),
+            "deferred_tools": len(mgr.deferred_names),
+            "schema_tokens": mgr.schema_token_estimate(),
+            "passed_tasks": summary.passed_tasks,
+            "total_tasks": summary.total_tasks,
+            "pass_rate": summary.pass_rate,
+            "avg_steps": summary.avg_steps,
+            "avg_duration_ms": summary.avg_duration_ms,
+        }
+    full_tok = by_profile.get("full", {}).get("schema_tokens", 0)
+    tiered_tok = by_profile.get("tiered", {}).get("schema_tokens", 0)
+    savings_pct = round((1.0 - tiered_tok / full_tok) * 100.0, 2) if full_tok > 0 else 0.0
+    return {
+        "mode": mode,
+        "profiles": by_profile,
+        "tiered_savings_pct": savings_pct,
     }

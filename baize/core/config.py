@@ -154,6 +154,15 @@ _DEFAULTS = {
     "BAIZE_ORCHESTRATOR_WORKERS": "4",       # orchestrator.py: parallel worker count
     "BAIZE_TOOL_RETRY_MAX": "2",             # agent.py: tool retry budget
     "BAIZE_YOLO_MODE": "0",                  # serve.py: reported by /api/status
+    # V41 Polaris: tiered tools, interactive Diff approval, context governance, bounded memory & channels
+    "BAIZE_TOOL_PROFILE": "tiered",          # context_engine.py: minimal (4) | tiered (6+tool_search) | full
+    "BAIZE_APPROVAL_MODE": "tiered",         # approval.py: tiered (diff+cmd confirm) | auto | strict
+    "BAIZE_SPILLOVER_BYTES": "8192",         # context_engine.py: spill oversized tool outputs to file
+    "BAIZE_COMPACT_RATIO": "0.75",           # context_engine.py: auto-compact trigger ratio of budget
+    "BAIZE_CONTEXT_BUDGET_TOKENS": "64000",  # context_engine.py: token budget for auto-compaction
+    "BAIZE_MEMORY_MAX_CHARS": "2400",        # memory.py: bounded MEMORY.md snapshot character cap
+    "BAIZE_USER_PROFILE_MAX_CHARS": "1400",  # memory.py: bounded USER.md snapshot character cap
+    "BAIZE_CHANNEL_ALLOWLIST": "",           # channels.py: comma-separated allowed IM sender IDs
 }
 
 

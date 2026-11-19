@@ -7,6 +7,7 @@ from __future__ import annotations
 # ===========================================================================
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -444,3 +445,119 @@ class TeamMemory:
         """
         if self.file.exists():
             self.file.write_text("", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# V41: Bounded Cache-Friendly Memory Snapshots (MEMORY.md & USER.md)
+# ---------------------------------------------------------------------------
+
+class BoundedMemoryStore:
+    """Hermes-inspired bounded markdown memory slots injected stably into the
+    system prompt prefix to preserve LLM Prompt Cache hit rates.
+
+    Maintains two strictly bounded markdown files under ``BAIZE_PERSISTENCE_DIR``:
+      - ``MEMORY.md``: durable project architecture facts & conventions (default 2400 chars)
+      - ``USER.md``: developer preferences & collaboration style (default 1400 chars)
+    """
+
+    def __init__(self, cfg: dict | None = None) -> None:
+        self.cfg = cfg or load_config()
+        self.root = _persistence_dir(self.cfg)
+        self.max_memory_chars = max(200, int(self.cfg.get("BAIZE_MEMORY_MAX_CHARS", "2400") or "2400"))
+        self.max_user_chars = max(200, int(self.cfg.get("BAIZE_USER_PROFILE_MAX_CHARS", "1400") or "1400"))
+
+    def _slot_file(self, slot: str) -> tuple[Path, int]:
+        key = (slot or "memory").strip().lower()
+        if key in ("user", "user.md", "profile"):
+            return self.root / "USER.md", self.max_user_chars
+        return self.root / "MEMORY.md", self.max_memory_chars
+
+    def read(self, slot: str = "memory") -> str:
+        fp, cap = self._slot_file(slot)
+        if not fp.is_file():
+            return ""
+        return fp.read_text(encoding="utf-8", errors="replace")[:cap]
+
+    def stats(self) -> dict:
+        m = self.read("memory")
+        u = self.read("user")
+        return {
+            "memory": {"chars": len(m), "limit": self.max_memory_chars},
+            "user": {"chars": len(u), "limit": self.max_user_chars},
+            "revision": self.revision_hash(),
+        }
+
+    def revision_hash(self) -> str:
+        import hashlib
+        combined = f"M:{self.read('memory')}\n---\nU:{self.read('user')}".encode("utf-8")
+        return hashlib.sha256(combined).hexdigest()[:16]
+
+    def update(self, slot: str, action: str, content: str = "", target: str = "") -> dict:
+        fp, cap = self._slot_file(slot)
+        act = (action or "add").strip().lower()
+        existing = fp.read_text(encoding="utf-8", errors="replace") if fp.is_file() else ""
+        entry = (content or "").strip()
+
+        if act == "add":
+            if not entry:
+                return {"ok": False, "error": "content is required for add"}
+            line = entry if entry.startswith("- ") else f"- {entry}"
+            lines = [ln for ln in existing.splitlines() if ln.strip()]
+            if line not in lines:
+                lines.append(line)
+            new_text = "\n".join(lines) + "\n"
+        elif act == "replace":
+            if not target:
+                return {"ok": False, "error": "target substring is required for replace"}
+            if target not in existing:
+                return {"ok": False, "error": f"target {target!r} not found in {fp.name}"}
+            new_text = existing.replace(target, entry, 1)
+        elif act == "remove":
+            if not target:
+                return {"ok": False, "error": "target substring is required for remove"}
+            kept = [ln for ln in existing.splitlines() if target not in ln]
+            new_text = ("\n".join(kept) + "\n") if kept else ""
+        elif act == "set":
+            new_text = entry + ("\n" if entry else "")
+        else:
+            return {"ok": False, "error": f"invalid action {action!r}; use add|replace|remove|set"}
+
+        truncated = False
+        if len(new_text) > cap:
+            lines = [ln for ln in new_text.splitlines() if ln.strip()]
+            kept_rev: list[str] = []
+            used = 0
+            for ln in reversed(lines):
+                need = len(ln) + 1
+                if used + need > cap:
+                    truncated = True
+                    break
+                kept_rev.append(ln)
+                used += need
+            new_text = "\n".join(reversed(kept_rev)) + ("\n" if kept_rev else "")
+
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = fp.with_suffix(".md.tmp")
+        tmp.write_text(new_text, encoding="utf-8")
+        os.replace(tmp, fp)
+        return {
+            "ok": True,
+            "file": str(fp),
+            "slot": "user" if fp.name == "USER.md" else "memory",
+            "chars": len(new_text),
+            "max_chars": cap,
+            "truncated": truncated,
+            "revision_hash": self.revision_hash(),
+        }
+
+    def render_prefix_snapshot(self) -> str:
+        mem = self.read("memory").strip()
+        usr = self.read("user").strip()
+        if not mem and not usr:
+            return ""
+        blocks: list[str] = ["[BOUNDED PERSISTENT MEMORY SNAPSHOT]"]
+        if mem:
+            blocks.append(f"<MEMORY.md>\n{mem}\n</MEMORY.md>")
+        if usr:
+            blocks.append(f"<USER.md>\n{usr}\n</USER.md>")
+        return "\n".join(blocks)
