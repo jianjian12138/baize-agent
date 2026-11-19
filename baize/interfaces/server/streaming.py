@@ -1,4 +1,4 @@
-"""Live SSE streaming handler for /run/stream."""
+"""Live SSE streaming handler for /run/stream with real token deltas."""
 from __future__ import annotations
 
 import json
@@ -24,11 +24,21 @@ def handle_run_stream(handler, data: dict, deps: dict[str, Any]) -> None:
         return handler._send(422, {"error": "model API key not set (placeholder in .env)"})
 
     evt_queue: queue.Queue = queue.Queue()
+    streamed_any = False
 
     def _on_agent_event(ev_kind: str, detail: str) -> None:
         evt_queue.put(("event", ev_kind, str(detail)))
 
-    agent = agent_cls(role="executor", client=client, on_event=_on_agent_event)
+    def _on_token(chunk: str) -> None:
+        if chunk:
+            evt_queue.put(("delta", chunk, None))
+
+    agent = agent_cls(
+        role="executor",
+        client=client,
+        on_event=_on_agent_event,
+        on_token=_on_token,
+    )
     obs.inc("serve_run")
 
     handler.send_response(200)
@@ -74,7 +84,12 @@ def handle_run_stream(handler, data: dict, deps: dict[str, Any]) -> None:
             continue
 
         tag = item[0]
-        if tag == "event":
+        if tag == "delta":
+            _, text_piece, _ = item
+            streamed_any = True
+            if not emit("delta", {"text": text_piece}):
+                break
+        elif tag == "event":
             _, ev_kind, detail = item
             mapped = "think" if ev_kind in ("reflect", "compress") else ev_kind
             if not emit(mapped, {"kind": ev_kind, "content": detail}):
@@ -89,14 +104,14 @@ def handle_run_stream(handler, data: dict, deps: dict[str, Any]) -> None:
     if res is None:
         return
 
-    text = res.final_text or "任务执行完毕。"
-    chunk_size = 64
-    for i in range(0, len(text), chunk_size):
-        if not emit("delta", {"text": text[i:i + chunk_size]}):
-            return
+    if not streamed_any:
+        text = res.final_text or "任务执行完毕。"
+        emit("delta", {"text": text})
     emit("done", {
         "final_text": res.final_text,
         "session_id": res.session_id,
         "steps": res.steps,
         "stopped_reason": res.stopped_reason,
+        "checkpoint_id": getattr(res, "checkpoint_id", ""),
+        "rolled_back": getattr(res, "rolled_back", False),
     })

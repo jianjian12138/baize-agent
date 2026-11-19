@@ -12,15 +12,16 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (53 modules)
-├── core/                           # 7 modules: agent loop, LLM client, config, sessions, autonomy
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (57 modules)
+├── core/                           # 7 modules: agent loop (streaming+parallel), LLM client, config, sessions, autonomy
 │   ├── agent.py  autonomy.py  component.py  config.py  llm.py  plugin.py  sessions.py
 ├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
 │   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  system1.py  team.py
-├── execution/                      # 6 modules: tools, sandboxes, proc timeouts, PowerShell, Docker, browser
-│   ├── browser_verify.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py
-├── codebase/                       # 6 orthogonal static code intelligence modules
+├── execution/                      # 7 modules: tools, tiered sandbox, Git checkpoints, proc, PowerShell, Docker, browser
+│   ├── browser_verify.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py
+├── codebase/                       # 7 orthogonal static code intelligence & diagnostics modules
 │   ├── arch_cache.py               # incremental mtime/size-keyed SQLite architecture cache
+│   ├── diagnostics.py              # zero-dependency stdio LSP client & compiler/linter diagnostic bridge
 │   ├── impact.py                   # blast-radius analyzer, test-impact matrix & unified change-impact
 │   ├── recon.py                    # pre-flight prior-art & skill library reconnaissance
 │   ├── repo_map.py                 # flat + L0/L1/L2 hierarchical repo maps & AST context slicer
@@ -28,15 +29,16 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │   └── workspace_search.py         # zero-dependency workspace grep & glob search
 ├── knowledge/                      # 6 modules: layered memory, graph, RAG/TF-IDF, skills & runner
 │   ├── doc_crawler.py  graph.py  memory.py  rag.py  skill_runner.py  skills.py
-├── governance/                     # 5 modules: NO FAKE DONE gate, bench, doctor, mutation, observability
-│   ├── bench.py  doctor.py  gate.py  mutation.py  observability.py
-├── interfaces/                     # 9 modules: CLI, REPL, HTTP/SSE server, desktop, terminal/web UI
+├── governance/                     # 6 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs
+│   ├── bench.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py
+├── interfaces/                     # 10 modules: CLI, REPL, HTTP/SSE server, persistent jobs, desktop, UI
 │   ├── cli.py  desktop.py  repl.py  serve.py  ui.py
 │   └── server/                     # decomposed HTTP server subpackage
-│       ├── routes_get.py           # GET routes (/health, /api/workspace/search, /api/perf/profile, etc.)
-│       ├── routes_post.py          # POST dispatch & handlers
+│       ├── jobs.py                 # SQLite WAL persistent async job queue & sliding-window rate limiter
+│       ├── routes_get.py           # GET routes (/health, /api/jobs, /api/checkpoints, /api/workspace/search, etc.)
+│       ├── routes_post.py          # POST dispatch (/team/dag, /api/git/apply_hunk, /api/jobs, /api/diagnostics, etc.)
 │       ├── security.py             # fail-closed auth, CORS allowlist, path guards
-│       └── streaming.py            # real-time SSE streaming for /run/stream
+│       └── streaming.py            # real-time token + event SSE streaming for /run/stream
 └── ext/                            # 7 modules: optional extensions (lazily loaded, fail-closed)
     ├── channels.py                 # conversation adapter interface for chat channels
     ├── mcp/                        # unified Model Context Protocol client/server/dispatcher

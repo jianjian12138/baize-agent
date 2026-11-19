@@ -50,12 +50,18 @@ class DockerSandboxDriver:
         timeout: int = 60,
         memory_limit: str = "1g",
         cpu_limit: str = "2.0",
+        network_mode: str = "none",
+        pids_limit: int = 128,
+        strict: bool = False,
     ):
         self.image = image
         self.workspace = str(Path(workspace).resolve())
         self.timeout = timeout
         self.memory_limit = memory_limit
         self.cpu_limit = cpu_limit
+        self.network_mode = network_mode
+        self.pids_limit = pids_limit
+        self.strict = strict
         self.docker_available = is_docker_available()
 
     def _run_local_fallback(self, command: str) -> dict[str, Any]:
@@ -101,6 +107,18 @@ class DockerSandboxDriver:
         evidence the honesty rule forbids. If we cannot run it, we say so.
         """
         if not self.docker_available:
+            if self.strict:
+                return {
+                    "returncode": 126,
+                    "stdout": "",
+                    "stderr": (
+                        "ERROR: strict Docker sandbox mode requested, but Docker daemon "
+                        "is unavailable. Failing closed without running on host."
+                    ),
+                    "degraded": True,
+                    "driver": "docker_unavailable",
+                    "mechanism": "docker_unavailable",
+                }
             return self._run_local_fallback(command)
 
         # Build docker run invocation. The container gets an explicit unique name
@@ -117,6 +135,8 @@ class DockerSandboxDriver:
             "-w", "/workspace",
             f"--memory={self.memory_limit}",
             f"--cpus={self.cpu_limit}",
+            f"--network={self.network_mode}",
+            f"--pids-limit={self.pids_limit}",
             self.image,
             "sh", "-c", command,
         ]

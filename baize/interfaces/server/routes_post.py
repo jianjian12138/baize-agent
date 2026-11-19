@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,169 @@ def _handle_compress(handler, data: dict, deps: dict[str, Any]) -> None:
 
 
 
+
+
+def _handle_team_dag(handler, data: dict, deps: dict[str, Any]) -> None:
+    """Real Director -> Executor -> Verifier DAG planner (and optional executor)."""
+    goal = (data.get("goal") or "").strip()
+    if not goal:
+        return handler._send(400, {"error": "missing goal"})
+    execute = bool(data.get("execute", False))
+    from ...orchestration.orchestrator import Orchestrator
+
+    if not execute:
+        # Honest deterministic task decomposition without claiming code execution
+        parts = [p.strip() for p in re.split(r"[;；\n]+|然后|并且|and then", goal) if p.strip()]
+        if not parts:
+            parts = [goal]
+        nodes = [
+            {
+                "id": f"task-{idx}",
+                "role": "director" if idx == 1 else "executor",
+                "title": part[:120],
+                "depends_on": [f"task-{idx - 1}"] if idx > 1 else [],
+                "status": "planned",
+            }
+            for idx, part in enumerate(parts, 1)
+        ]
+        nodes.append({
+            "id": f"task-{len(nodes) + 1}",
+            "role": "verifier",
+            "title": "Run physical NO FAKE DONE verification gates",
+            "depends_on": [nodes[-1]["id"]],
+            "status": "planned",
+        })
+        return handler._send(200, {
+            "mode": "plan_only",
+            "executed": False,
+            "goal": goal,
+            "nodes": nodes,
+        })
+
+    client = deps["LLMClient"]()
+    if not client.configured:
+        return handler._send(422, {"error": "model endpoint not configured"})
+    if not deps["has_real_key"](client):
+        return handler._send(422, {"error": "model API key not set (placeholder in .env)"})
+    orch = deps["Orchestrator"](client=client)
+    res = orch.run(goal)
+    return handler._send(200, {
+        "mode": "executed",
+        "executed": True,
+        "success": res.success,
+        "nodes": [
+            {"id": r.task_id, "task": r.task, "verdict": r.verdict, "issues": r.issues}
+            for r in res.reports
+        ],
+    })
+
+
+def _handle_git_apply_hunk(handler, data: dict, deps: dict[str, Any]) -> None:
+    """Apply a unified diff patch safely with pre-flight Git checkpoint & auto-rollback."""
+    patch_text = data.get("patch") or data.get("diff") or ""
+    if not patch_text.strip():
+        return handler._send(400, {"error": "missing unified diff 'patch'"})
+
+    git_bin = deps["resolve_git"]()
+    if not git_bin:
+        return handler._send(503, {"error": "git executable not available"})
+
+    cfg = load_config()
+    ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+    from ...execution.checkpoint import GitCheckpointManager
+
+    mgr = GitCheckpointManager(ws)
+    if not mgr.is_git_repo():
+        return handler._send(400, {"error": f"workspace is not a git repository: {ws}"})
+
+    cp = mgr.create(label="api/git/apply_hunk")
+    import subprocess
+    check = subprocess.run(
+        [git_bin, "apply", "--check", "--whitespace=nowarn", "-"],
+        input=patch_text, cwd=ws, capture_output=True, text=True, timeout=15,
+    )
+    if check.returncode != 0:
+        mgr.rollback(cp.checkpoint_id)
+        return handler._send(422, {
+            "error": "patch failed git apply --check",
+            "detail": (check.stderr or check.stdout).strip(),
+            "checkpoint_id": cp.checkpoint_id,
+            "rolled_back": True,
+        })
+
+    applied = subprocess.run(
+        [git_bin, "apply", "--whitespace=nowarn", "-"],
+        input=patch_text, cwd=ws, capture_output=True, text=True, timeout=15,
+    )
+    if applied.returncode != 0:
+        mgr.rollback(cp.checkpoint_id)
+        return handler._send(500, {
+            "error": "git apply failed",
+            "detail": (applied.stderr or applied.stdout).strip(),
+            "checkpoint_id": cp.checkpoint_id,
+            "rolled_back": True,
+        })
+
+    stat = mgr.diff_stat(cp.checkpoint_id)
+    mgr.commit(cp.checkpoint_id)
+    return handler._send(200, {
+        "status": "applied",
+        "checkpoint_id": cp.checkpoint_id,
+        "diff_stat": stat,
+    })
+
+
+def _handle_enqueue_job(handler, data: dict, deps: dict[str, Any]) -> None:
+    kind = (data.get("kind") or "run").strip().lower()
+    if kind not in ("run", "team", "eval"):
+        return handler._send(400, {"error": f"unsupported job kind: {kind!r} (expected run|team|eval)"})
+    if kind in ("run", "team") and not (data.get("goal") or "").strip():
+        return handler._send(400, {"error": "missing goal"})
+
+    store = deps["get_job_store"]()
+
+    def _worker(job_id: str, payload: dict[str, Any], cancel_ev, emit_fn) -> dict[str, Any]:
+        if kind == "eval":
+            from ...governance.eval_harness import run_eval_suite
+            mode = (payload.get("mode") or "oracle").strip()
+            emit_fn("eval_start", f"running eval suite mode={mode}")
+            summary = run_eval_suite(mode=mode, task_ids=payload.get("task_ids"), persist=True)
+            return summary.to_dict()
+
+        client = deps["LLMClient"]()
+        if not client.configured or not deps["has_real_key"](client):
+            raise RuntimeError("model endpoint or API key not configured")
+
+        if kind == "team":
+            orch = deps["Orchestrator"](client=client)
+            res = orch.run(payload["goal"])
+            return {
+                "success": res.success,
+                "reports": [
+                    {"task_id": r.task_id, "verdict": r.verdict, "issues": r.issues, "task": r.task}
+                    for r in res.reports
+                ],
+            }
+
+        agent = deps["Agent"](
+            role="executor",
+            client=client,
+            on_event=lambda k, d: emit_fn(k, str(d)),
+        )
+        res = agent.run(payload["goal"])
+        return {
+            "final_text": res.final_text,
+            "stopped_reason": res.stopped_reason,
+            "steps": res.steps,
+            "session_id": res.session_id,
+            "checkpoint_id": getattr(res, "checkpoint_id", ""),
+            "rolled_back": getattr(res, "rolled_back", False),
+        }
+
+    job = store.enqueue(kind, data, _worker)
+    return handler._send(202, job)
+
+
 def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> None:
     stub_routes = deps["STUB_ROUTES"]
     if req_path in stub_routes:
@@ -170,6 +334,37 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
     if req_path == "/api/browser/verify":
         from ...execution.browser_verify import verify_frontend_code
         return handler._send(200, verify_frontend_code(data.get("html", ""), data.get("name", "index.html")))
+
+
+    if req_path == "/team/dag":
+        return _handle_team_dag(handler, data, deps)
+    if req_path == "/api/git/apply_hunk":
+        return _handle_git_apply_hunk(handler, data, deps)
+    if req_path == "/api/jobs":
+        return _handle_enqueue_job(handler, data, deps)
+    if req_path.startswith("/api/jobs/") and req_path.endswith("/cancel"):
+        jid = req_path[len("/api/jobs/"):-len("/cancel")].strip("/")
+        job = deps["get_job_store"]().cancel(jid)
+        if not job:
+            return handler._send(404, {"error": "job not found"})
+        return handler._send(200, job)
+    if req_path == "/api/diagnostics":
+        from ...codebase.diagnostics import diagnose_file, diagnose_workspace
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        fpath = (data.get("path") or "").strip()
+        if fpath:
+            rep = diagnose_file(fpath, workspace=ws, use_lsp=bool(data.get("use_lsp", False)))
+            return handler._send(200, rep.to_dict())
+        return handler._send(200, diagnose_workspace(ws, paths=data.get("paths")))
+    if req_path == "/api/checkpoints/rollback":
+        cp_id = (data.get("checkpoint_id") or "").strip()
+        if not cp_id:
+            return handler._send(400, {"error": "missing checkpoint_id"})
+        from ...execution.checkpoint import GitCheckpointManager
+        cfg = load_config()
+        res = GitCheckpointManager(cfg.get("BAIZE_WORKSPACE_DIR", ".")).rollback(cp_id)
+        return handler._send(200 if res.get("ok") else 404, res)
 
     if req_path == "/run":
         return _handle_run(handler, data, deps)

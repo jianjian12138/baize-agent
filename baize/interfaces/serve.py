@@ -5,6 +5,8 @@ POST routes) while keeping all public & test-patched attributes on ``baize.inter
 """
 from __future__ import annotations
 
+from .server.jobs import JobStore, SlidingWindowRateLimiter
+
 import json
 import shutil
 import time
@@ -51,13 +53,9 @@ STUB_ROUTES: dict[str, str] = {
     "/api/vision/analyze":
         "no multimodal model is called - the component list and colour palette "
         "were hardcoded literals",
-    "/api/git/apply_hunk":
-        "no patch is applied - no file is read, patched or written",
     "/api/ci/autofix":
         "no CI run is inspected and no pull request is opened - the PR number "
         "was a literal",
-    "/team/dag":
-        "no DAG is executed - the per-node verdicts and timings were literals",
     "/v30/speculative/merge":
         "no timeline is merged and no regression test is run",
     "/v30/causal/heal":
@@ -105,6 +103,37 @@ def _warn_about_auth_posture(cfg: dict) -> None:
     _warn_posture_fn(cfg, log)
 
 
+
+_JOB_STORE: JobStore | None = None
+_JOB_STORE_DB: str = ""
+_RATE_LIMITER: SlidingWindowRateLimiter | None = None
+_RATE_LIMITER_RPM: int = -1
+
+
+def get_job_store(cfg: dict | None = None) -> JobStore:
+    global _JOB_STORE, _JOB_STORE_DB
+    cfg = cfg or load_config()
+    db_path = str(Path(cfg.get("BAIZE_PERSISTENCE_DIR", "persistence")) / "jobs.sqlite3")
+    workers = max(1, int(cfg.get("BAIZE_JOB_WORKERS", "2") or "2"))
+    if _JOB_STORE is None or _JOB_STORE_DB != db_path:
+        _JOB_STORE = JobStore(db_path, max_workers=workers)
+        _JOB_STORE_DB = db_path
+    return _JOB_STORE
+
+
+def check_http_rate_limit(handler) -> tuple[bool, float]:
+    global _RATE_LIMITER, _RATE_LIMITER_RPM
+    rpm = int(load_config().get("BAIZE_HTTP_RPM", "0") or "0")
+    if rpm <= 0:
+        return True, 0.0
+    if _RATE_LIMITER is None or _RATE_LIMITER_RPM != rpm:
+        _RATE_LIMITER = SlidingWindowRateLimiter(max_requests=rpm, window_seconds=60.0)
+        _RATE_LIMITER_RPM = rpm
+    client_ip = (handler.client_address[0] if getattr(handler, "client_address", None) else "local")
+    auth_hdr = (handler.headers.get("Authorization") or "")[:32]
+    return _RATE_LIMITER.allow(f"{client_ip}:{auth_hdr}")
+
+
 def _live_deps() -> dict:
     """Resolve dependencies via baize.interfaces.serve globals so test monkeypatches apply."""
     return {
@@ -124,6 +153,7 @@ def _live_deps() -> dict:
         "resolve_git": _resolve_git,
         "sessions_mod": sessions_mod,
         "stub_body": _stub_body,
+        "get_job_store": get_job_store,
         "version": __version__,
     }
 
@@ -180,6 +210,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._is_authorized():
             return self._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        allowed, retry_after = check_http_rate_limit(self)
+        if not allowed:
+            return self._send(429, {
+                "error": "rate_limit_exceeded",
+                "retry_after_seconds": retry_after,
+            })
         try:
             data = self._body()
         except (ValueError, json.JSONDecodeError):

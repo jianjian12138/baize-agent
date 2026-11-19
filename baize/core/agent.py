@@ -23,6 +23,7 @@ transport to LLMClient and the whole loop runs for real without network.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 import threading
@@ -279,6 +280,8 @@ class AgentResult:
     tool_calls: int
     stopped_reason: str  # "final" | "max_steps" | "error" | "loop_detected"
     transcript: list[dict] = field(default_factory=list)
+    checkpoint_id: str = ""
+    rolled_back: bool = False
 
 
 def _total_chars(messages: list[dict]) -> int:
@@ -333,6 +336,24 @@ def compress_context(messages: list[dict],
     return compressed
 
 
+
+#: Tools verified to have no workspace side effects, eligible for bounded
+#: parallel execution when the model emits multiple calls in a single turn.
+READ_ONLY_TOOLS = frozenset({
+    "read_file",
+    "list_dir",
+    "find_files",
+    "grep_search",
+    "blast_radius",
+    "diagnostics",
+    "search_skills",
+    "load_skill",
+    "memory_recall",
+})
+
+#: Tools that mutate workspace files and trigger automatic post-edit diagnostics.
+EDIT_TOOLS = frozenset({"write_file", "patch_file"})
+
 class Agent:
     def __init__(self, role: str = "executor", cfg: dict | None = None,
                  client: LLMClient | None = None,
@@ -342,7 +363,10 @@ class Agent:
                  hooks: HookRegistry | None = None,
                  plan_mode: bool | None = None,
                  autonomy=None,
-                 loop_strategy=None):
+                 loop_strategy=None,
+                 on_token=None,
+                 auto_rollback: bool | None = None,
+                 enable_checkpoint: bool | None = None):
         self.cfg = cfg or load_config()
         self.role = role
         self.client = client or LLMClient(self.cfg)
@@ -353,6 +377,23 @@ class Agent:
         self.loop_window = max(2, int(self.cfg.get("BAIZE_LOOP_DETECT_WINDOW", "3")))
         self.compress_chars = int(self.cfg.get("BAIZE_CONTEXT_COMPRESS_CHARS", "60000"))
         self.on_event = on_event or (lambda *_: None)
+        self.on_token = on_token
+        self.auto_rollback = (
+            bool(auto_rollback)
+            if auto_rollback is not None
+            else str(self.cfg.get("BAIZE_AUTO_ROLLBACK", "0")).strip().lower() in ("1", "true", "yes")
+        )
+        self.enable_checkpoint = (
+            bool(enable_checkpoint)
+            if enable_checkpoint is not None
+            else (
+                self.auto_rollback
+                or str(self.cfg.get("BAIZE_CHECKPOINT", "0")).strip().lower() in ("1", "true", "yes")
+            )
+        )
+        self.auto_diagnostics = (
+            str(self.cfg.get("BAIZE_AUTO_DIAGNOSTICS", "1")).strip().lower() not in ("0", "false", "no")
+        )
         # V21 P1-1: lifecycle hook bus. Default off (empty) unless a hooks file
         # is declared via BAIZE_HOOKS_FILE - never silently on.
         self.hooks = hooks or HookRegistry.from_config(self.cfg)
@@ -403,6 +444,61 @@ class Agent:
         """
         return self.loop.run(self, goal, extra_system)
 
+
+    def _start_checkpoint(self, goal: str, run_id: str) -> tuple[Any, str]:
+        if not self.enable_checkpoint:
+            return None, ""
+        try:
+            from ..execution.checkpoint import GitCheckpointManager
+            ws = self.cfg.get("BAIZE_WORKSPACE_DIR") or "."
+            mgr = GitCheckpointManager(ws)
+            if not mgr.is_git_repo():
+                return None, ""
+            cp = mgr.create(label=goal[:120], run_id=run_id)
+            self._emit("checkpoint_created", cp.checkpoint_id)
+            return mgr, cp.checkpoint_id
+        except Exception:
+            return None, ""
+
+    def _finish_checkpoint(self, mgr: Any, checkpoint_id: str, res: AgentResult) -> AgentResult:
+        if not mgr or not checkpoint_id:
+            return res
+        res.checkpoint_id = checkpoint_id
+        if res.stopped_reason == "final":
+            try:
+                mgr.commit(checkpoint_id)
+            except Exception:
+                pass
+            return res
+        if self.auto_rollback:
+            try:
+                rb = mgr.rollback(checkpoint_id)
+                if rb.get("ok"):
+                    res.rolled_back = True
+                    self._emit("checkpoint_rolled_back", checkpoint_id)
+            except Exception:
+                pass
+        return res
+
+    def _post_edit_diagnostics(self, name: str, args: dict, observation: str) -> str:
+        if (not self.auto_diagnostics or name not in EDIT_TOOLS
+                or str(observation).startswith("ERROR")):
+            return observation
+        target_path = args.get("path") or args.get("file_path") or ""
+        if not target_path:
+            return observation
+        try:
+            from ..codebase.diagnostics import diagnose_file
+            ws = self.cfg.get("BAIZE_WORKSPACE_DIR") or "."
+            rep = diagnose_file(target_path, workspace=ws)
+            if not rep.ok:
+                diag_txt = rep.format_for_agent()
+                self._emit("diagnostic_report", diag_txt[:200])
+                return f"{observation}\n\n{diag_txt}"
+        except Exception:
+            pass
+        return observation
+
     def _run_loop(self, goal: str, extra_system: str = "") -> AgentResult:
         extra = extra_system
         ws_scope = getattr(self, "_workspace_scope", "")
@@ -435,6 +531,7 @@ class Agent:
 
         # V33-E1: generate a unique run_id for this execution for trace correlation
         run_id = uuid.uuid4().hex[:8]
+        cp_mgr, cp_id = self._start_checkpoint(goal, run_id)
         tool_retry_max = int(self.cfg.get("BAIZE_TOOL_RETRY_MAX", "2"))
 
         for step in range(1, self.max_steps + 1):
@@ -452,7 +549,12 @@ class Agent:
                 # stable block is unambiguous - required for prompt caching.
                 msgs = self.client.build_messages(
                     sys_prompt, tool_schemas, self.session.messages)
-                msg = self.client.chat(msgs, tools=tool_schemas)
+                if self.on_token is not None and hasattr(self.client, "chat_with_stream"):
+                    msg = self.client.chat_with_stream(
+                        msgs, tools=tool_schemas, on_token=self.on_token
+                    )
+                else:
+                    msg = self.client.chat(msgs, tools=tool_schemas)
             except LLMError as exc:
                 plugin_registry.fire("on_error", exc)
                 obs.record_error("agent_errors")
@@ -461,6 +563,7 @@ class Agent:
                 res = AgentResult(self.session.id, str(exc), step,
                                   n_tool_calls, "error",
                                   self.session.messages)
+                res = self._finish_checkpoint(cp_mgr, cp_id, res)
                 self.hooks.session_end(res)
                 return res
             self.session.append(msg)
@@ -481,9 +584,13 @@ class Agent:
                                 self._emit("skill_harvested", f"distilled skill to {h_path.name}")
                     except Exception:
                         pass
+                res = self._finish_checkpoint(cp_mgr, cp_id, res)
                 self.hooks.session_end(res)
                 return res
 
+            # Pre-parse arguments for all calls in this turn so contiguous read-only
+            # calls can be batched concurrently while preserving deterministic order.
+            prepared_calls: list[dict[str, Any]] = []
             for call in calls:
                 n_tool_calls += 1
                 fn = call.get("function", {})
@@ -568,6 +675,7 @@ class Agent:
                                       f"{repeat_count} times ({name})",
                                       step, n_tool_calls, "loop_detected",
                                       self.session.messages)
+                    res = self._finish_checkpoint(cp_mgr, cp_id, res)
                     self.hooks.session_end(res)
                     return res
 
@@ -601,46 +709,81 @@ class Agent:
                     })
                     continue
 
-                self.on_event("tool", f"{name}({json.dumps(args, ensure_ascii=False)[:200]})")
-                plugin_registry.fire("on_tool_call", name, args)
-                obs.inc("tool_calls")
-                # V33-E1: record span timing for this tool call
-                span_start = time.time()
-                span_id = uuid.uuid4().hex[:6]
-                observation = self.registry.execute(name, args)
-                span_elapsed_ms = int((time.time() - span_start) * 1000)
-                # Write span to session JSONL for trace inspection
-                self.session.append_record({
-                    "kind": "span",
-                    "run_id": run_id,
-                    "span_id": span_id,
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "tool": name,
-                    "elapsed_ms": span_elapsed_ms,
-                    "ok": not str(observation).startswith("ERROR"),
-                })
-                if repeat_count == self.loop_window and not warned_loop:
+                warn_now = (repeat_count == self.loop_window and not warned_loop)
+                if warn_now:
                     warned_loop = True
-                    observation = (str(observation)
-                                   + f"\n\n[WARNING] You have called {name} with "
-                                     "identical arguments "
-                                     f"{repeat_count} times in a row. Change "
-                                     "strategy - repeating it again will abort the run.")
-                self.session.append({
-                    "role": "tool",
-                    "tool_call_id": call.get("id", ""),
-                    "content": str(observation)[:MAX_OBSERVATION_CHARS],
+                prepared_calls.append({
+                    "call_id": call.get("id", ""),
+                    "name": name,
+                    "args": args,
+                    "repeat_count": repeat_count,
+                    "warn_now": warn_now,
+                    "read_only": name in READ_ONLY_TOOLS,
                 })
-                # V21 P2-1: account estimated token spend; a breach forces an
-                # autonomy downgrade (token-runaway guard).
-                try:
-                    self.autonomy.record_cost(len(str(observation)) // 4)
-                except Exception:
-                    pass
-                # V21 P1-1: fire post_tool_use (and failure variant) hooks.
-                self.hooks.post_tool_use(name, args, observation)
-                if str(observation).startswith("ERROR"):
-                    self.hooks.post_tool_use_failure(name, args, observation)
+
+            # Group prepared_calls into contiguous read-only parallel batches vs
+            # strictly serial mutating tool invocations.
+            groups: list[tuple[bool, list[dict[str, Any]]]] = []
+            for item in prepared_calls:
+                if item["read_only"] and groups and groups[-1][0]:
+                    groups[-1][1].append(item)
+                else:
+                    groups.append((item["read_only"], [item]))
+
+            def _exec_one(item: dict[str, Any]) -> tuple[str, int]:
+                t0 = time.time()
+                out = self.registry.execute(item["name"], item["args"])
+                elapsed_ms = int((time.time() - t0) * 1000)
+                return str(out), elapsed_ms
+
+            for is_ro, batch in groups:
+                for item in batch:
+                    self.on_event("tool", f"{item['name']}({json.dumps(item['args'], ensure_ascii=False)[:200]})")
+                    plugin_registry.fire("on_tool_call", item["name"], item["args"])
+                    obs.inc("tool_calls")
+
+                if is_ro and len(batch) > 1:
+                    obs.inc("parallel_tool_batches")
+                    self._emit("tool_batch_start", f"parallel x{len(batch)}: {', '.join(i['name'] for i in batch)}")
+                    with ThreadPoolExecutor(max_workers=min(4, len(batch))) as pool:
+                        results_batch = list(pool.map(_exec_one, batch))
+                else:
+                    results_batch = [_exec_one(item) for item in batch]
+
+                for item, (observation, span_elapsed_ms) in zip(batch, results_batch):
+                    name = item["name"]
+                    args = item["args"]
+                    observation = self._post_edit_diagnostics(name, args, observation)
+                    span_id = uuid.uuid4().hex[:6]
+                    self.session.append_record({
+                        "kind": "span",
+                        "run_id": run_id,
+                        "span_id": span_id,
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "tool": name,
+                        "elapsed_ms": span_elapsed_ms,
+                        "ok": not str(observation).startswith("ERROR"),
+                    })
+                    if item["warn_now"]:
+                        observation = (
+                            str(observation)
+                            + f"\n\n[WARNING] You have called {name} with "
+                              "identical arguments "
+                              f"{item['repeat_count']} times in a row. Change "
+                              "strategy - repeating it again will abort the run."
+                        )
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": item["call_id"],
+                        "content": str(observation)[:MAX_OBSERVATION_CHARS],
+                    })
+                    try:
+                        self.autonomy.record_cost(len(str(observation)) // 4)
+                    except Exception:
+                        pass
+                    self.hooks.post_tool_use(name, args, observation)
+                    if str(observation).startswith("ERROR"):
+                        self.hooks.post_tool_use_failure(name, args, observation)
 
             # V20: periodic self-reflection checkpoint
             if (self.reflect_every > 0 and step % self.reflect_every == 0
@@ -653,6 +796,7 @@ class Agent:
         res = AgentResult(self.session.id,
                           "stopped: reached max steps", self.max_steps,
                           n_tool_calls, "max_steps", self.session.messages)
+        res = self._finish_checkpoint(cp_mgr, cp_id, res)
         self.hooks.session_end(res)
         return res
 

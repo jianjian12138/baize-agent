@@ -814,6 +814,92 @@ class LLMClient:
             else:
                 raise LLMError(f"stream interrupted after partial output: {exc}") from exc
 
+
+    def chat_with_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        temperature: float | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> dict:
+        """Stream a chat turn, invoking ``on_token(text)`` live while accumulating
+        both assistant text and incremental OpenAI/Anthropic ``tool_calls`` deltas.
+
+        Falls back transparently to :meth:`chat` when a custom non-HTTP transport
+        is injected (e.g. unit tests) or when streaming cannot initialize.
+        """
+        if on_token is None or (self.transport is not _http_transport and self.stream_transport is _http_stream_transport):
+            msg = self.chat(messages, tools=tools, temperature=temperature, stream=False)
+            if on_token is not None and msg.get("content"):
+                try:
+                    on_token(str(msg["content"]))
+                except Exception:
+                    pass
+            return msg
+
+        spec = self._select(tools)[0]
+        transport = (
+            _anthropic_stream_transport
+            if spec.provider == "anthropic"
+            else self.stream_transport
+        )
+        self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
+        url = _endpoint(spec)
+        content_parts: list[str] = []
+        tc_acc: dict[int, dict[str, Any]] = {}
+        yielded_any = False
+
+        try:
+            for chunk in transport(
+                url,
+                self._headers(spec),
+                _build_request(spec, messages, tools, temperature),
+            ):
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                text = delta.get("content")
+                if text:
+                    yielded_any = True
+                    content_parts.append(text)
+                    try:
+                        on_token(text)
+                    except Exception:
+                        pass
+                for tc in delta.get("tool_calls") or []:
+                    yielded_any = True
+                    idx = int(tc.get("index", 0))
+                    slot = tc_acc.setdefault(
+                        idx,
+                        {"id": tc.get("id") or f"call_{idx}", "type": "function",
+                         "function": {"name": "", "arguments": ""}},
+                    )
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += fn["arguments"]
+            obs.inc("llm_streams")
+        except Exception as exc:
+            obs.record_error("llm_stream_errors")
+            if not yielded_any:
+                msg = self.chat(messages, tools=tools, temperature=temperature, stream=False)
+                if msg.get("content"):
+                    try:
+                        on_token(str(msg["content"]))
+                    except Exception:
+                        pass
+                return msg
+            raise LLMError(f"stream interrupted after partial output: {exc}") from exc
+
+        out: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(content_parts) if content_parts else None,
+        }
+        if tc_acc:
+            out["tool_calls"] = [tc_acc[i] for i in sorted(tc_acc)]
+        return out
+
     @staticmethod
     def _parse_response(raw: dict) -> dict:
         try:

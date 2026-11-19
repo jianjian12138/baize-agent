@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import re
+
 # ===========================================================================
 # Section: safe_exec.py
 # ===========================================================================
@@ -275,39 +278,193 @@ def plan_argv(argv, workspace: str, cfg: dict | None = None) -> ArgvPlan:
     return ArgvPlan(args, "logical-only", None, True)
 
 
-def run(command: str, cwd: str | None = None, timeout: int = 60,
-        cfg: dict | None = None) -> SandboxResult:
-    """Run ``command`` applying the OS sandbox when enabled.
 
-    When ``BAIZE_SANDBOX_ENABLED != "1"`` this is identical to a plain
-    subprocess (mechanism="none", degraded=False). When enabled but the
-    platform cannot apply OS isolation, it degrades to a plain run with
-    degraded=True and a warning (never a silent fake shield).
+# ===========================================================================
+# Tiered Sandbox Policy: POSIX rlimit + Env Scrubbing + Docker Routing
+# ===========================================================================
+
+_SENSITIVE_ENV_RE = re.compile(
+    r"(?:^BAIZE_AUTH_TOKEN$|API_KEY$|_SECRET|_TOKEN$|PASSWORD$|PASSWD$|PRIVATE_KEY$)",
+    re.I,
+)
+
+
+@dataclass(frozen=True)
+class SandboxPolicy:
+    """Runtime resource & isolation policy for sandboxed execution."""
+    mode: str = ""  # "" (legacy) | "local-hardened" | "docker" | "auto"
+    cpu_seconds: int = 60
+    memory_mb: int = 1024
+    nofile: int = 256
+    scrub_env: bool = True
+    docker_image: str = "python:3.11-slim"
+    docker_network: str = "none"
+
+
+def scrub_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a copy of ``env`` with API keys, auth tokens, and secrets stripped."""
+    src = os.environ if env is None else env
+    return {k: v for k, v in src.items() if not _SENSITIVE_ENV_RE.search(k)}
+
+
+def resolve_sandbox_mode(cfg: dict[str, str] | None = None) -> str:
+    """Resolve effective sandbox mode from config.
+
+    Returns one of ``""`` (legacy disabled), ``"local-hardened"``,
+    ``"docker"``, or ``"auto"``.
     """
-    cfg = cfg or load_config()
-    cwd = cwd or str(ROOT)
-    enabled = cfg.get("BAIZE_SANDBOX_ENABLED", "0") == "1"
-    if not enabled:
+    cfg = cfg if cfg is not None else load_config()
+    raw = (cfg.get("BAIZE_SANDBOX_MODE") or "").strip().lower()
+    if raw in ("local-hardened", "local", "hardened"):
+        return "local-hardened"
+    if raw in ("docker", "auto"):
+        return raw
+    if str(cfg.get("BAIZE_SANDBOX_ENABLED", "0")).strip().lower() in ("1", "true", "yes"):
+        return "local-hardened"
+    return ""
+
+
+def _build_policy(cfg: dict[str, str] | None = None, mode_override: str | None = None) -> SandboxPolicy:
+    cfg = cfg if cfg is not None else load_config()
+    mode = (mode_override or "").strip().lower() or resolve_sandbox_mode(cfg)
+    if mode in ("local", "hardened"):
+        mode = "local-hardened"
+    return SandboxPolicy(
+        mode=mode,
+        cpu_seconds=max(5, int(cfg.get("BAIZE_SANDBOX_CPU_LIMIT_S", "60") or "60")),
+        memory_mb=max(128, int(cfg.get("BAIZE_SANDBOX_MEM_LIMIT_MB", "1024") or "1024")),
+        docker_image=(cfg.get("BAIZE_SANDBOX_DOCKER_IMAGE") or "python:3.11-slim").strip(),
+    )
+
+
+def _rlimit_preexec(policy: SandboxPolicy, landlock_workspace: str | None = None):
+    """Build a POSIX ``preexec_fn`` that enforces ``rlimit`` caps + optional Landlock."""
+    if os.name == "nt":
+        return None
+
+    def _apply() -> None:
+        try:
+            import resource
+            soft, hard = resource.getrlimit(resource.RLIMIT_CPU)
+            cap_cpu = policy.cpu_seconds if hard == resource.RLIM_INFINITY else min(policy.cpu_seconds, hard)
+            resource.setrlimit(resource.RLIMIT_CPU, (cap_cpu, hard))
+            s_nf, h_nf = resource.getrlimit(resource.RLIMIT_NOFILE)
+            cap_nf = policy.nofile if h_nf == resource.RLIM_INFINITY else min(policy.nofile, h_nf)
+            if cap_nf > 0:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (cap_nf, h_nf))
+        except Exception:
+            pass
+        if landlock_workspace:
+            _apply_landlock(landlock_workspace)
+
+    return _apply
+
+
+def sandbox_posture(cfg: dict[str, str] | None = None) -> dict[str, Any]:
+    """Honest disclosure of active sandbox isolation tier and OS capabilities."""
+    from .docker_sandbox import is_docker_available
+
+    cfg = cfg if cfg is not None else load_config()
+    pol = _build_policy(cfg)
+    os_mech = platform_mechanism()
+    docker_ok = is_docker_available()
+    rlimit_ok = os.name != "nt"
+
+    if pol.mode == "docker":
+        effective = "docker_container" if docker_ok else "docker_unavailable (fail-closed)"
+    elif pol.mode == "auto":
+        effective = "docker_container" if docker_ok else f"local-hardened ({os_mech}+rlimit)"
+    elif pol.mode == "local-hardened":
+        effective = f"{os_mech}+rlimit" if rlimit_ok else os_mech
+    else:
+        effective = "disabled (guardrails-only)"
+
+    return {
+        "configured_mode": pol.mode or "disabled",
+        "effective_isolation": effective,
+        "os_mechanism": os_mech,
+        "rlimit_supported": rlimit_ok,
+        "cpu_limit_s": pol.cpu_seconds,
+        "memory_limit_mb": pol.memory_mb,
+        "env_scrub": pol.scrub_env,
+        "docker_available": docker_ok,
+        "docker_image": pol.docker_image,
+    }
+
+
+def run(command: str, cwd: str = ".", timeout: int = 30,
+        *, mode: str | None = None, policy: SandboxPolicy | None = None) -> SandboxResult:
+    """Run *command* through the configured tiered sandbox policy.
+
+    Tiers:
+    - ``disabled`` (default legacy): plain execution with ``mechanism="none"``.
+    - ``local-hardened`` (or ``BAIZE_SANDBOX_ENABLED=1``): env scrubbing +
+      POSIX ``rlimit`` + OS Landlock (Linux) / Seatbelt (macOS).
+    - ``docker``: fail-closed container execution via :class:`DockerSandboxDriver`.
+    - ``auto``: Docker when reachable, else explicit ``local-hardened``.
+    """
+    cfg = load_config()
+    pol = policy or _build_policy(cfg, mode_override=mode)
+    if not pol.mode:
         return _plain(command, cwd, timeout)
 
-    mech = platform_mechanism()
-    if mech == "logical-only":
-        res = _plain(command, cwd, timeout)
-        res.degraded = True
-        res.mechanism = "logical-only"
-        logger.warning(
-            "OS sandbox unavailable on this platform; degraded to "
-            "logical-only (deny-list + workspace confinement only).")
-        return res
-
-    if mech == "landlock":  # pragma: no cover - Linux only
-        # proc.run, with the kernel restriction installed by preexec_fn. This
-        # branch kept a direct subprocess.run after the rest of the package was
-        # routed through proc.py - it needs preexec_fn, which proc.run did not
-        # accept yet - and so it kept the same unbounded-timeout defect: the
-        # timeout killed the shell while the grandchild held the pipe open.
+    # Tier 2: Docker container isolation (strict fail-closed or auto fallback)
+    if pol.mode in ("docker", "auto"):
+        from .docker_sandbox import DockerSandboxDriver
+        drv = DockerSandboxDriver(
+            image=pol.docker_image,
+            workspace=cwd,
+            timeout=timeout,
+            memory_limit=f"{pol.memory_mb}m",
+            network_mode=pol.docker_network,
+            strict=(pol.mode == "docker"),
+        )
+        if drv.docker_available or pol.mode == "docker":
+            dres = drv.run(command)
+            return SandboxResult(
+                returncode=int(dres.get("returncode", 1)),
+                stdout=redact(str(dres.get("stdout", ""))),
+                stderr=redact(str(dres.get("stderr", ""))),
+                degraded=bool(dres.get("degraded", False)),
+                mechanism=str(dres.get("driver") or "docker_container"),
+            )
+        # pol.mode == "auto" and docker unavailable -> explicit local-hardened fallback
+        mech = platform_mechanism()
+        child_env = scrub_environment() if pol.scrub_env else None
+        if mech == "landlock":
+            res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd,
+                               env=child_env, preexec_fn=_rlimit_preexec(pol, cwd))
+            if res.timed_out:
+                return SandboxResult(-1, "", f"command timed out after {timeout}s",
+                                     degraded=True, mechanism="landlock+rlimit (docker-fallback)")
+            return SandboxResult(res.returncode, redact(res.stdout or ""),
+                                 redact(res.stderr or ""), degraded=True,
+                                 mechanism="landlock+rlimit (docker-fallback)")
         res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd,
-                           preexec_fn=_landlock_preexec(cwd))
+                           env=child_env, preexec_fn=_rlimit_preexec(pol, None))
+        if res.timed_out:
+            return SandboxResult(-1, "", f"command timed out after {timeout}s",
+                                 degraded=True, mechanism="local-hardened (docker-fallback)")
+        return SandboxResult(res.returncode, redact(res.stdout or ""),
+                             redact(res.stderr or ""), degraded=True,
+                             mechanism="local-hardened (docker-fallback)")
+
+    # Tier 1: local-hardened (or BAIZE_SANDBOX_ENABLED=1)
+    mech = platform_mechanism()
+    child_env = scrub_environment() if pol.scrub_env else None
+    if mech == "logical-only":
+        res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd,
+                           env=child_env, preexec_fn=_rlimit_preexec(pol, None))
+        if res.timed_out:
+            return SandboxResult(-1, "", f"command timed out after {timeout}s",
+                                 degraded=True, mechanism="logical-only")
+        return SandboxResult(res.returncode, redact(res.stdout or ""),
+                             redact(res.stderr or ""), degraded=True,
+                             mechanism="logical-only")
+
+    if mech == "landlock":  # pragma: no cover - Linux 5.13+ only
+        res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd,
+                           env=child_env, preexec_fn=_rlimit_preexec(pol, cwd))
         if res.timed_out:
             return SandboxResult(-1, "", f"command timed out after {timeout}s",
                                  mechanism="landlock")
@@ -315,18 +472,15 @@ def run(command: str, cwd: str | None = None, timeout: int = 60,
                              redact(res.stderr or ""), mechanism="landlock")
 
     if mech == "seatbelt":  # pragma: no cover - macOS only
-        # proc.run (not subprocess.run) so a timeout kills the sandbox-exec tree
-        # rather than leaving the sandboxed child holding the pipe. See
-        # baize/proc.py.
         wrapped = _seatbelt_command(command, cwd)
-        res = proc_mod.run(wrapped, shell=True, timeout=timeout, cwd=cwd)
+        res = proc_mod.run(wrapped, shell=True, timeout=timeout, cwd=cwd,
+                           env=child_env, preexec_fn=_rlimit_preexec(pol, None))
         if res.timed_out:
             return SandboxResult(-1, "", f"command timed out after {timeout}s",
                                  mechanism="seatbelt")
         return SandboxResult(res.returncode, redact(res.stdout or ""),
                              redact(res.stderr or ""), mechanism="seatbelt")
 
-    # Fallback (should be unreachable); be honest.
     res = _plain(command, cwd, timeout)
     res.degraded = True
     res.mechanism = "logical-only"

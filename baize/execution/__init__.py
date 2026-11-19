@@ -15,6 +15,12 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "load_external_rules": (".tools", "load_external_rules"),
     "run_proc": (".proc", "run"),
     "is_docker_available": (".docker_sandbox", "is_docker_available"),
+    "Checkpoint": (".checkpoint", "Checkpoint"),
+    "GitCheckpointManager": (".checkpoint", "GitCheckpointManager"),
+    "SandboxPolicy": (".sandbox", "SandboxPolicy"),
+    "sandbox_posture": (".sandbox", "sandbox_posture"),
+    "resolve_sandbox_mode": (".sandbox", "resolve_sandbox_mode"),
+    "scrub_environment": (".sandbox", "scrub_environment"),
 }
 
 __all__ = list(_EXPORTS)

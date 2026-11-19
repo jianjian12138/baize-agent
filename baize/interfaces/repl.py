@@ -177,6 +177,7 @@ class BaizeREPL:
             client=self.client,
             session=self.session,
             on_event=self.ui.event,
+            on_token=lambda tok: sys.stdout.write(tok) or sys.stdout.flush(),
         )
 
     def print_banner(self) -> None:
@@ -209,6 +210,7 @@ class BaizeREPL:
                 client=self.client,
                 session=self.session,
                 on_event=self.ui.event,
+            on_token=lambda tok: sys.stdout.write(tok) or sys.stdout.flush(),
             )
             print(p.paint("green", f"✓ Started new session: {self.session_id}"))
             return
@@ -237,6 +239,7 @@ class BaizeREPL:
                     client=self.client,
                     session=self.session,
                     on_event=self.ui.event,
+            on_token=lambda tok: sys.stdout.write(tok) or sys.stdout.flush(),
                 )
                 print(p.paint("green", f"✓ Resumed session: {self.session_id} ({len(self.session.messages)} messages)"))
             except Exception as e:

@@ -53,6 +53,17 @@ _DEFAULTS = {
     "BAIZE_WORKSPACE_DIR": str(ROOT),    # tool sandbox root
     "BAIZE_ALLOW_OUTSIDE_WORKSPACE": "0",
     "BAIZE_SANDBOX_ENABLED": "0",        # V21 P0-1 optional OS-level sandbox (off by default)
+    # --- V40 industrial upgrade (tiered sandbox, checkpoints, diagnostics, jobs) ---
+    "BAIZE_SANDBOX_MODE": "",                  # "" | local-hardened | docker | auto
+    "BAIZE_SANDBOX_DOCKER_IMAGE": "python:3.11-slim",
+    "BAIZE_SANDBOX_CPU_LIMIT_S": "60",
+    "BAIZE_SANDBOX_MEM_LIMIT_MB": "1024",
+    "BAIZE_CHECKPOINT": "0",                   # auto Git tree checkpoint per agent run
+    "BAIZE_AUTO_ROLLBACK": "0",                # auto rollback workspace on failed run
+    "BAIZE_AUTO_DIAGNOSTICS": "1",             # automatic post-edit diagnostics
+    "BAIZE_LSP_CMD": "",                       # optional stdio LSP server command
+    "BAIZE_HTTP_RPM": "0",                     # per-client HTTP requests/min (0=disabled)
+    "BAIZE_JOB_WORKERS": "2",                  # persistent SQLite async job workers
     "BAIZE_SESSIONS_DIR": str(ROOT / "persistence" / "sessions"),
     # --- V20 runtime ---
     "BAIZE_PLUGINS_ENABLED": "1",

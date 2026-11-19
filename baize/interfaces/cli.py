@@ -827,7 +827,7 @@ _CLI_EPILOG = """\
 Command Domains:
   Core Runtime : chat, run, team, resume, ask, clarify, sessions, viewer, desktop, serve, dashboard
   Code & Skills: index, skill, recon, plugin, mcp, automations, schedule, setup
-  Governance   : doctor, gate, manifest, bench, memory, ralph, audit
+  Governance   : doctor, gate, manifest, bench, eval, rollback, diagnose, memory, ralph, audit
 """
 
 
@@ -974,6 +974,30 @@ def build_parser() -> argparse.ArgumentParser:
                          "(omit to list recent runs)")
 
 
+
+    # V40: coding eval harness
+    ev = sub.add_parser("eval", help="run multi-file coding evaluation harness and compare runs")
+    ev.add_argument("--mode", choices=("oracle", "live"), default="oracle",
+                    help="oracle (deterministic verification) or live (configured LLM)")
+    ev.add_argument("--task", action="append", default=None, help="filter specific task_id")
+    ev.add_argument("--list", action="store_true", help="list historical eval runs")
+    ev.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"),
+                    help="compare two recorded eval_run_ids")
+    ev.add_argument("--json", action="store_true", help="output JSON")
+
+    # V40: Git transactional checkpoint rollback
+    rb = sub.add_parser("rollback", help="list or roll back Git transactional checkpoints")
+    rb.add_argument("checkpoint_id", nargs="?", default="", help="checkpoint id to restore")
+    rb.add_argument("--list", action="store_true", help="list available checkpoints")
+    rb.add_argument("--diff", action="store_true", help="show diff stat since checkpoint without rolling back")
+    rb.add_argument("--json", action="store_true", help="output JSON")
+
+    # V40: zero-dependency LSP / compiler diagnostics
+    dg = sub.add_parser("diagnose", help="run fast compiler/AST and optional LSP diagnostics")
+    dg.add_argument("path", nargs="?", default="", help="file path to diagnose (omit for workspace)")
+    dg.add_argument("--lsp", action="store_true", help="also query configured/detected stdio LSP server")
+    dg.add_argument("--json", action="store_true", help="output JSON")
+
     # V33 Desktop Studio
     dt = sub.add_parser("desktop", help="launch Baize Desktop Studio application")
     dt.add_argument("--host", default="127.0.0.1")
@@ -1047,6 +1071,81 @@ def cmd_ralph(args) -> int:
 
 
 
+
+def cmd_eval(args) -> int:
+    from ..governance.eval_harness import compare_runs, load_eval_runs, run_eval_suite
+    if args.list:
+        runs = load_eval_runs()
+        if args.json:
+            print(json.dumps(runs, indent=2, ensure_ascii=False))
+        else:
+            for r in runs[-20:]:
+                print(f"  {r['eval_run_id']}  mode={r['mode']}  model={r['model']}  "
+                      f"pass={r['passed_tasks']}/{r['total_tasks']} ({r['pass_rate']*100:.1f}%)")
+        return 0
+    if args.compare:
+        runs = {r["eval_run_id"]: r for r in load_eval_runs()}
+        a, b = args.compare
+        if a not in runs or b not in runs:
+            print(f"ERROR: eval run not found ({a}, {b})", file=sys.stderr)
+            return 1
+        diff = compare_runs(runs[a], runs[b])
+        print(json.dumps(diff, indent=2, ensure_ascii=False))
+        return 0
+    summary = run_eval_suite(mode=args.mode, task_ids=args.task)
+    if args.json:
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(summary.format_summary())
+    return 0 if summary.passed_tasks == summary.total_tasks else 1
+
+
+def cmd_rollback(args) -> int:
+    from ..core.config import load_config
+    from ..execution.checkpoint import GitCheckpointManager
+    ws = load_config().get("BAIZE_WORKSPACE_DIR", ".")
+    mgr = GitCheckpointManager(ws)
+    if args.list or not args.checkpoint_id:
+        cps = mgr.list_checkpoints()
+        if args.json:
+            print(json.dumps(cps, indent=2, ensure_ascii=False))
+        elif not cps:
+            print("No checkpoints recorded.")
+        else:
+            for c in cps:
+                print(f"  {c['checkpoint_id']}  [{c['status']}]  files={c['files_count']}  {c.get('label', '')}")
+        return 0
+    if args.diff:
+        print(mgr.diff_stat(args.checkpoint_id) or "(no diff)")
+        return 0
+    res = mgr.rollback(args.checkpoint_id)
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(f"Rollback {'OK' if res.get('ok') else 'FAILED'}: {res}")
+    return 0 if res.get("ok") else 1
+
+
+def cmd_diagnose(args) -> int:
+    from ..core.config import load_config
+    from ..codebase.diagnostics import diagnose_file, diagnose_workspace
+    ws = load_config().get("BAIZE_WORKSPACE_DIR", ".")
+    if args.path:
+        rep = diagnose_file(args.path, workspace=ws, use_lsp=bool(args.lsp))
+        if args.json:
+            print(json.dumps(rep.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(rep.format_for_agent())
+        return 0 if rep.ok else 1
+    summary = diagnose_workspace(ws)
+    if args.json:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+    else:
+        print(f"Diagnostics: checked {summary['files_checked']} files, "
+              f"{summary['total_errors']} errors, {summary['total_warnings']} warnings")
+    return 0 if summary["ok"] else 1
+
+
 def cmd_impact(args) -> int:
     from ..codebase.impact import analyze_test_impact
     res = analyze_test_impact(args.target)
@@ -1084,7 +1183,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose"):
         try:
             validate()
         except ConfigError as e:
@@ -1095,6 +1194,9 @@ def main(argv: list[str] | None = None) -> int:
         "configure": cmd_setup,
         "chat": cmd_chat,
         "desktop": cmd_desktop,
+        "eval": cmd_eval,
+        "rollback": cmd_rollback,
+        "diagnose": cmd_diagnose,
         "doctor": cmd_doctor,
         "index": cmd_index,
         "skill": cmd_skill,

@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🏛️ 白泽引擎 (Baize Agent) — V39.0.0 Aegis
+# 🏛️ 白泽引擎 (Baize Agent) — V40.0.0 Vulcan
 
-**零第三方运行依赖 · 强物理门禁 (`NO FAKE DONE`) · 8 域 53 模块的纯 Python 自治工程智能体运行时**
+**零第三方运行依赖 · 强物理门禁 (`NO FAKE DONE`) · 8 域 57 模块的工业级纯 Python 自治工程运行时**
 
-[![Version](https://img.shields.io/badge/version-V39.0.0--Aegis-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1265%2F1268%20passed%20(99%25)-yellow?style=flat-square)](tests/)
+[![Version](https://img.shields.io/badge/version-V40.0.0--Vulcan-orange?style=flat-square)](baize/__init__.py)
+[![Tests](https://img.shields.io/badge/tests-1282%2F1285%20passed%20(99%25)-yellow?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -18,105 +18,60 @@
 
 ## 为什么是白泽引擎？
 
-大多数 Agent 框架要么依赖几十个第三方包、动辄几百 MB 运行时，要么把「模型说做完了」当成「真的做完了」。
+**Baize Agent V40 Vulcan** 走极简硬核工程路线，以 **0 第三方运行依赖（纯 Python 3.10+ 标准库）** 构建完整的工业级自主研发闭环：
 
-**Baize Agent V39 Aegis** 走极简硬核工程路线，只保留真正用于生产的 8 个核心域、53 个内聚模块：
-
-- **零第三方运行依赖 (`dependencies = []`)**：100% Python 3.10+ 标准库实现（HTTP 连接池、SQLite 架构缓存、AST 符号图、TF-IDF 向量检索、MCP JSON-RPC 2.0、SSE 服务全部原生构建），由门禁 `scripts/gates/check_zero_deps.py` 强制守护。
-- **NO FAKE DONE 物理门禁**：任何任务完成声称必须通过真实物理证据（编译、测试、文件哈希、契约检查）验证，并记录于只追加的 JSONL 运行账本（`RunLedger`）。
-- **Fail-Closed 安全边界**：HTTP 写操作默认拒绝无鉴权请求（强制 `BAIZE_AUTH_TOKEN`），CORS 严格白名单，Shell 沙箱静态拦截危险命令，未实现路由诚实返回 `501 Not Implemented`。
-- **静态代码库智能（6 个正交模块）**：基于 AST + 正则的多语言符号图（Python / TS / JS / Go / Rust / Java）、PageRank 排序、SQLite 增量缓存、分层 Repo Map 与爆炸半径 / 测试影响分析。
-- **Director → Executor → Verifier 编排**：角色边界受控的多 Agent DAG，支持预算守卫、长程不变量锚定、会话分叉与 Hermes 轨迹技能蒸馏。
-- **原生 Windows + 跨平台执行**：常驻 PowerShell 进程池、交互式提示检测、可选 Docker 沙箱与前端静态验证。
+- **内核提速与原子事务回滚**：端到端 Token 级流式响应（REPL & HTTP SSE）、只读工具并发批处理（写操作严格串行）、基于临时 Git 索引的非侵入式检查点（`GitCheckpointManager`）与失败自动/一键回滚（`baize rollback`）。
+- **分级强隔离沙箱**：默认本地加固（静态护栏 + Landlock/Seatbelt + POSIX `rlimit` CPU/FD 配额 + 敏感环境变量清洗），支持 `BAIZE_SANDBOX_MODE=docker|auto` 一键切换无网络/限核/限 PID 的 Docker 容器隔离（`docker` 模式严格 Fail-Closed）。
+- **零依赖 LSP 诊断桥与写后即查**：内置纯标准库 stdio JSON-RPC 2.0 LSP 客户端与多语言编译器/语法检查链（`baize diagnose`），每次 `write_file`/`patch_file` 自动触发即时诊断并回喂模型。
+- **可量化真实编码评测闭环**：内置多文件真实工程评测集（`baize eval`），支持 `oracle` 确定性 CI 验证与 `live` 真实大模型评测，持久化 JSONL 记分卡并支持跨版本回归对比（`--compare`）。
+- **生产化持久化异步服务**：基于 SQLite WAL 的持久化任务队列（`POST /api/jobs`、崩溃自动恢复、协作取消、SSE 进度流）、滑动窗口限流（`429`）、真实 `/team/dag` 编排与带检查点保护的 `/api/git/apply_hunk`。
+- **NO FAKE DONE 物理门禁与静态代码库智能**：多语言符号图（PageRank）、SQLite 增量缓存、分层 Repo Map、爆炸半径与测试影响矩阵，全部由可执行门禁强制守护。
 
 ---
 
 ## 快速开始
 
-### 1. 克隆并检查环境（无需安装任何 pip 运行依赖）
-
 ```bash
 git clone https://github.com/jianjian12138/baize-agent.git
 cd baize-agent
-cp .env.example .env            # 填入你的 OpenAI / Anthropic / DeepSeek / Ollama 兼容 API Key
-python -m baize doctor          # 检查运行时、配置与项目状态
+cp .env.example .env            # 配置 OpenAI / Anthropic / DeepSeek / Ollama 兼容 API Key
+python -m baize doctor          # 检查运行时、配置与分级沙箱隔离态势
 ```
 
-### 2. 日常核心命令
+### 日常核心命令
 
 ```bash
-python -m baize                 # 进入交互式终端 REPL
-python -m baize run "为 auth 模块补齐边界单测并运行验证"
-python -m baize team "重构支付状态机并验证回归测试"
-python -m baize impact baize/core/agent.py --run   # 分析变更影响面并运行受影响测试
-python -m baize blast run_gate                      # 计算符号调用爆炸半径
-python -m baize serve --port 8765                   # 启动 HTTP / SSE 服务与仪表盘
-python -m baize mcp                                 # 启动标准 JSON-RPC 2.0 MCP Server (stdio)
+python -m baize                                   # 进入实时流式终端 REPL
+python -m baize run "为 auth 模块补齐边界单测并验证"
+python -m baize team "重构支付状态机并运行回归测试"
+python -m baize diagnose baize/core/agent.py      # 运行即时编译器 / LSP 诊断
+python -m baize eval --mode oracle                # 运行多文件编码评测闭环（--mode live 接真实模型）
+python -m baize rollback --list                   # 查看或回滚 Git 事务检查点
+python -m baize impact baize/core/agent.py --run  # 计算变更影响面并运行受影响测试
+python -m baize serve --port 8765                 # 启动持久化 HTTP/SSE 服务与异步任务队列
+python -m baize mcp                               # 启动标准 JSON-RPC 2.0 MCP Server (stdio)
 ```
-
-> 也可以通过 `pip install -e .` 安装 `baize` 命令入口；完整入门指南见 [`docs/START-HERE.md`](docs/START-HERE.md)。
 
 ---
 
-## 核心架构（8 域 · 53 模块）
-
-```text
-  CLI / REPL / HTTP+SSE / Desktop / MCP          <- baize/interfaces/ & baize/ext/
-                      │
-                      ▼
-  System-1 Guard ──▶ Director -> Executor -> Verifier DAG   <- baize/orchestration/
-                      │                    │
-         ┌────────────┴───────────┐        └───────────┐
-         ▼                        ▼                    ▼
-  Core Runtime              Codebase Intel        Execution & Sandbox
-  (agent, llm, config,      (symbol_graph,        (tools, sandbox, proc,
-   sessions, autonomy)       repo_map, impact,     powershell, docker)
-                             arch_cache, search)
-         │                        │                    │
-         └────────────┬───────────┴────────────────────┘
-                      ▼
-       Knowledge (memory, graph, rag, skills)  +  Governance (gate, bench, mutation, doctor, obs)
-```
+## 核心架构（8 域 · 57 模块）
 
 | 领域包 | 模块数 | 职责说明 |
 | :--- | :---: | :--- |
-| **`baize/core/`** | 7 | Agent 主循环、多厂商 LLM 客户端（HTTP 连接池 + Prompt Cache）、配置/Schema/日志、会话持久化、自治策略与模式、插件与组件协议 |
-| **`baize/orchestration/`** | 7 | Director→Executor→Verifier 编排器、项目契约/不变量锚定/Ralph 闭环、角色团队与子 Agent、System-1 快速路由、钩子、运行账本、自动化触发 |
-| **`baize/execution/`** | 6 | 16 个内置工具 + Agent Rules + Tool SDK、Fail-Closed 沙箱、带交互检测的进程执行、Windows PowerShell 进程池、Docker 沙箱、前端校验 |
-| **`baize/codebase/`** | 6 | 多语言符号图（PageRank）、SQLite 增量架构缓存、分层 Repo Map & AST 切片、爆炸半径与测试影响矩阵、零依赖工作区搜索、先验侦察 |
-| **`baize/knowledge/`** | 6 | 分层情景/语义/团队记忆、知识图谱、TF-IDF 向量检索与 RAG、技能索引/目录/Hermes 蒸馏器、技能安全执行器、文档抓取 |
-| **`baize/governance/`** | 5 | NO FAKE DONE 物理门禁与 Manifest 校验、真实基准套件、AST 变异测试与混沌注入、环境体检 `doctor`、Prometheus 指标与性能剖析 |
-| **`baize/interfaces/`** | 9 | 29 个子命令 CLI、交互式 REPL、模块化 HTTP/SSE 服务（`server/` 4 模块）、桌面端 Studio、终端/Web UI 与配置向导 |
+| **`baize/core/`** | 7 | 流式 + 只读并发 Agent 主循环、多厂商 LLM 客户端（连接池 + Prompt Cache + 流式工具增量解析）、配置/Schema/日志、会话、自治策略、插件协议 |
+| **`baize/orchestration/`** | 7 | Director→Executor→Verifier 编排器、契约/不变量/Ralph 闭环、角色团队与子 Agent、System-1 快速路由、钩子、运行账本、自动化触发 |
+| **`baize/execution/`** | 7 | 17 个默认内置工具 + Tool SDK、分级强隔离沙箱（Landlock/Seatbelt + `rlimit` + 环境变量清洗 + Docker）、Git 原子检查点、进程超时、PowerShell 进程池、前端校验 |
+| **`baize/codebase/`** | 7 | 零依赖 stdio LSP/编译器诊断桥、多语言符号图（PageRank）、SQLite 增量架构缓存、分层 Repo Map & AST 切片、爆炸半径与测试影响矩阵、工作区搜索、先验侦察 |
+| **`baize/knowledge/`** | 6 | 分层情景/语义/团队记忆、知识图谱、TF-IDF 向量检索与 RAG、技能索引/目录/Hermes 蒸馏器、技能执行器、文档抓取 |
+| **`baize/governance/`** | 6 | NO FAKE DONE 物理门禁与清单校验、15 项内核基准、真实多文件编码评测闭环（`eval_harness`）、AST 变异与混沌注入、`doctor`、Prometheus 指标 |
+| **`baize/interfaces/`** | 10 | 32 个子命令 CLI、流式 REPL、模块化 HTTP/SSE 服务与 SQLite WAL 持久化异步任务队列（`server/` 5 模块）、桌面端 Studio、终端/Web UI |
 | **`baize/ext/`** | 7 | 标准 MCP 客户端/服务端/分发器（`mcp/` 5 模块）、聊天通道抽象、可观测性指标插件 |
 
 完整文件树由门禁 `scripts/gates/check_arch_tree.py` 与 [`docs/architecture.md`](docs/architecture.md) 强一致校验。
 
 ---
 
-## 仓库目录一览
-
-```text
-baize-agent/
-├── baize/              # 核心运行包（8 个领域子包，53 个生产模块，0 扁平杂项）
-├── tests/              # 10 域镜像测试套件（95 个测试文件）
-├── scripts/
-│   ├── gates/          # 工程门禁（零依赖、卫生、架构树、模块属性、端点诚实、真相校验、覆盖率）
-│   └── tools/          # 辅助工具（上下文切片基准、API 连通探测）
-├── assets/skills/      # 23 个内置结构化 SKILL.md 技能包
-├── docs/               # 架构、教程、基准、快速开始、Desktop Studio 与协议文档
-├── examples/           # 示例代码与 VS Code 伴侣插件（examples/vscode/）
-├── install/            # 跨平台安装与桌面端启动脚本
-├── projects/           # 本地项目隔离目录
-├── AGENT.md            # 白泽引擎自治协作协议
-├── baize.manifest.json # 工程交付证据清单
-└── pyproject.toml      # 纯 stdlib 包声明（dependencies = []）
-```
-
----
-
-## 工程诚实性与验证门禁
-
-任何提交都可通过以下物理门禁自证，无虚标、无隐藏脚本：
+## 验证门禁
 
 ```bash
 python scripts/gates/check_zero_deps.py         # 确认 baize/ 零第三方运行依赖
@@ -126,7 +81,8 @@ python scripts/gates/check_module_attrs.py      # 静态校验所有模块属性
 python scripts/gates/check_endpoint_honesty.py  # 确认无伪造成功响应、未实现端点均诚实返回 501
 python scripts/gates/sync_truth.py --check      # 校验版本号、徽章、教程与文档计数无漂移
 python -m baize manifest validate baize.manifest.json
-python -m baize bench                           # 运行 15 项本地端到端内核基准
+python -m baize bench                           # 运行 15 项本地内核基准
+python -m baize eval --mode oracle              # 验证多文件编码评测闭环
 pytest tests/                                   # 运行全量测试套件
 ```
 
@@ -134,7 +90,7 @@ pytest tests/                                   # 运行全量测试套件
 
 ## 历史里程碑标签
 
-早期单文件与历史架构快照保留为只读 Git Tag，方便回溯演进轨迹：`v26.0.0-legacy`、`v33.0.0-legacy`。
+早期单文件与历史架构快照保留为只读 Git Tag：`v26.0.0-legacy`、`v33.0.0-legacy`。
 
 ## 贡献与协议
 

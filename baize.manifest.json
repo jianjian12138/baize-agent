@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "39.0.0",
+  "version": "40.0.0",
   "phases": [
     {
       "id": "V68",
@@ -507,6 +507,25 @@
         "tests/codebase/test_hierarchical_map.py",
         "tests/codebase/test_blast_radius.py",
         "tests/codebase/test_test_impact.py"
+      ]
+    },
+    {
+      "id": "V136",
+      "name": "V40.0 工业级全面升级（端到端流式+只读并发工具+Git原子回滚+分级沙箱+零依赖LSP诊断+真实编码评测+SQLite持久化作业队列）",
+      "status": "done",
+      "evidence": [
+        "baize/core/llm.py",
+        "baize/core/agent.py",
+        "baize/execution/checkpoint.py",
+        "baize/execution/sandbox.py",
+        "baize/execution/docker_sandbox.py",
+        "baize/codebase/diagnostics.py",
+        "baize/governance/eval_harness.py",
+        "baize/interfaces/server/jobs.py",
+        "tests/core/test_v40_agent_acceleration.py",
+        "tests/execution/test_v40_tiered_sandbox.py",
+        "tests/codebase/test_v40_diagnostics_and_eval.py",
+        "tests/interfaces/test_v40_server_jobs_and_routes.py"
       ]
     }
   ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -137,6 +138,7 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
     if req_path == "/health":
         from ...execution.tools import EXECUTION_BOUNDARY
         return handler._send(200, {
+            "sandbox_posture": __import__("baize.execution.sandbox", fromlist=["sandbox_posture"]).sandbox_posture(load_config()),
             "status": "ok",
             "version": version,
             "execution_boundary": EXECUTION_BOUNDARY,
@@ -398,5 +400,70 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
             return handler._send(200, res.to_dict())
         except Exception as exc:
             return handler._send(500, {"error": str(exc)})
+
+
+    if req_path == "/api/jobs":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        params = parse_qs(urlparse(handler.path).query)
+        status_filter = (params.get("status") or [""])[0].strip()
+        store = deps["get_job_store"]()
+        jobs = store.list_jobs(status=status_filter)
+        return handler._send(200, {"jobs": jobs, "total": len(jobs)})
+
+    if req_path.startswith("/api/jobs/"):
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        rest = req_path[len("/api/jobs/"):].strip("/")
+        store = deps["get_job_store"]()
+        if rest.endswith("/stream"):
+            jid = rest[:-len("/stream")].strip("/")
+            job = store.get(jid)
+            if not job:
+                return handler._send(404, {"error": "job not found"})
+            handler.send_response(200)
+            handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            handler.send_header("Cache-Control", "no-cache")
+            handler.send_header("Connection", "close")
+            handler.close_connection = True
+            handler._emit_cors()
+            handler.end_headers()
+            seen_seq = 0
+            for _ in range(40):
+                cur = store.get(jid)
+                if not cur:
+                    break
+                for ev in cur.get("events", []):
+                    if ev["seq"] > seen_seq:
+                        seen_seq = ev["seq"]
+                        msg = f"event: {ev['kind']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                        try:
+                            handler.wfile.write(msg.encode("utf-8"))
+                            handler.wfile.flush()
+                        except OSError:
+                            return
+                if cur["status"] in ("succeeded", "failed", "cancelled"):
+                    done_msg = f"event: done\ndata: {json.dumps(cur, ensure_ascii=False)}\n\n"
+                    try:
+                        handler.wfile.write(done_msg.encode("utf-8"))
+                        handler.wfile.flush()
+                    except OSError:
+                        pass
+                    return
+                time.sleep(0.25)
+            return
+        job = store.get(rest)
+        if not job:
+            return handler._send(404, {"error": "job not found"})
+        return handler._send(200, job)
+
+    if req_path == "/api/checkpoints":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...execution.checkpoint import GitCheckpointManager
+        cfg = load_config()
+        mgr = GitCheckpointManager(cfg.get("BAIZE_WORKSPACE_DIR", "."))
+        cps = mgr.list_checkpoints()
+        return handler._send(200, {"checkpoints": cps, "total": len(cps)})
 
     return handler._send(404, {"error": "not found"})

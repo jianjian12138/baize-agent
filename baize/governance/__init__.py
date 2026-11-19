@@ -13,6 +13,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "run_ast_mutation_arena": (".mutation", "run_ast_mutation_arena"),
     "Chaos": (".mutation", "Chaos"),
     "ChaosError": (".mutation", "ChaosError"),
+    "EvalTask": (".eval_harness", "EvalTask"),
+    "EvalRunSummary": (".eval_harness", "EvalRunSummary"),
+    "run_eval_suite": (".eval_harness", "run_eval_suite"),
+    "compare_runs": (".eval_harness", "compare_runs"),
 }
 
 __all__ = list(_EXPORTS)

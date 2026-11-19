@@ -981,6 +981,29 @@ def _tool_find_files(
 _DEFAULT_REGISTRY: ToolRegistry | None = None
 
 
+
+def _tool_diagnostics(path: str = "", use_lsp: bool = False) -> str:
+    """Run fast compiler/AST or LSP diagnostics on a file or workspace."""
+    from ..codebase.diagnostics import diagnose_file, diagnose_workspace
+
+    ws = str(_workspace())
+    if path.strip():
+        p = _safe_path(path)
+        rep = diagnose_file(p, workspace=ws, use_lsp=bool(use_lsp))
+        return rep.format_for_agent()
+    summary = diagnose_workspace(ws)
+    if summary["ok"]:
+        return f"[diagnostics] OK: checked {summary['files_checked']} file(s), 0 errors"
+    lines = [
+        f"[diagnostics] FAILED: {summary['total_errors']} error(s), "
+        f"{summary['total_warnings']} warning(s) across {summary['files_checked']} file(s)"
+    ]
+    for r in summary["reports"][:10]:
+        for d in r["diagnostics"][:3]:
+            lines.append(f"  - {r['file']}:{d['line']}:{d['col']} [{d['severity']}] {d['message']}")
+    return "\n".join(lines)
+
+
 def default_registry() -> ToolRegistry:
     global _DEFAULT_REGISTRY
     if _DEFAULT_REGISTRY is None:
@@ -1079,6 +1102,13 @@ def default_registry() -> ToolRegistry:
                      _s(symbol={"type": "string"},
                         path={"type": "string", "_opt": True}),
                      _tool_blast_radius)
+        # V40: diagnostics - zero-dependency compiler/AST + optional LSP diagnostic bridge
+        reg.register("diagnostics",
+                     "Run fast syntax, compiler, and optional LSP diagnostics on a file "
+                     "(or entire workspace if path is omitted) to catch errors immediately.",
+                     _s(path={"type": "string", "_opt": True},
+                        use_lsp={"type": "boolean", "_opt": True}),
+                     _tool_diagnostics)
         # V33-A2: fetch_url - opt-in HTTP retrieval (BAIZE_ALLOW_FETCH_URL=1)
         cfg = load_config()
         if cfg.get("BAIZE_ALLOW_FETCH_URL", "0") == "1":

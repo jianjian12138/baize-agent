@@ -32,6 +32,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "extract_keywords": (".recon", "extract_keywords"),
     "run_recon": (".recon", "recon"),
     "recon_library": (".recon", "recon_library"),
+    "Diagnostic": (".diagnostics", "Diagnostic"),
+    "DiagnosticReport": (".diagnostics", "DiagnosticReport"),
+    "LspClient": (".diagnostics", "LspClient"),
+    "diagnose_file": (".diagnostics", "diagnose_file"),
+    "diagnose_workspace": (".diagnostics", "diagnose_workspace"),
 }
 
 __all__ = list(_EXPORTS)
