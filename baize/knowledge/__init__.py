@@ -23,6 +23,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "SkillRunner": (".skill_runner", "SkillRunner"),
     "verify_skill_draft": (".skill_runner", "verify_skill_draft"),
     "BoundedMemoryStore": (".memory", "BoundedMemoryStore"),
+    "HybridSearchIndex": (".hybrid_index", "HybridSearchIndex"),
+    "SearchHit": (".hybrid_index", "SearchHit"),
 }
 
 __all__ = list(_EXPORTS)

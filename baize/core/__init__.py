@@ -40,6 +40,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "build_session_tree": (".sessions", "build_session_tree"),
     "format_session_tree": (".sessions", "format_session_tree"),
     "rewind_session": (".sessions", "rewind_session"),
+    "CostLedger": (".cost_ledger", "CostLedger"),
+    "BudgetStatus": (".cost_ledger", "BudgetStatus"),
+    "BudgetExceededError": (".cost_ledger", "BudgetExceededError"),
+    "get_cost_ledger": (".cost_ledger", "get_cost_ledger"),
+    "encode_image_part": (".llm", "encode_image_part"),
 }
 
 __all__ = list(_EXPORTS)

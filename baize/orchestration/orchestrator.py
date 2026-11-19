@@ -392,7 +392,8 @@ class Orchestrator:
     # -- full run -----------------------------------------------------------
 
     def run(self, goal: str,
-            resume_run_id: str | None = None) -> OrchestrationResult:
+            resume_run_id: str | None = None,
+            parallel_worktrees: bool | None = None) -> OrchestrationResult:
         """Run the full Director→Executor→Verifier pipeline.
 
         V26-A3: Creates a RunLedger for this run. All task events are written
@@ -435,10 +436,27 @@ class Orchestrator:
         self._ledger.append("plan_created",
                             {"goal": goal, "task_count": len(plan)})
 
+        # V42: optional isolated Git Worktree pool for parallel DAG execution
+        use_wt = (
+            parallel_worktrees
+            if parallel_worktrees is not None
+            else str(self.cfg.get("BAIZE_WORKTREE_PARALLEL", "0")).strip().lower() in ("1", "true", "yes")
+        )
+        self._worktree_pool = None
+        if use_wt:
+            from ..execution.worktree import GitWorktreePool
+            pool = GitWorktreePool(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
+            if pool.is_git_repo():
+                self._worktree_pool = pool
+                self.on_event("phase", "worktree_pool: enabled (isolated parallel git worktrees)")
+
         # V33-D1: parallel DAG execution
         # Build dependency map: task_id -> set of task_ids it must wait for
         workers = int(self.cfg.get("BAIZE_ORCHESTRATOR_WORKERS", "4"))
-        reports = self._run_dag(plan, skip_task_ids, session_ids, workers)
+        try:
+            reports = self._run_dag(plan, skip_task_ids, session_ids, workers)
+        finally:
+            self._worktree_pool = None
 
         success = bool(reports) and all(r.verdict == "pass" for r in reports)
         obs.gauge("orchestration_success", int(success))
@@ -469,7 +487,23 @@ class Orchestrator:
         report = SubtaskReport(sub["id"], sub["task"], sub["verify"])
         self.hooks.pre_subtask(sub)
 
-        summary, sid = self.execute_subtask(sub)
+        wt_entry = None
+        wt_pool = getattr(self, "_worktree_pool", None)
+        sub_exec = dict(sub)
+        if wt_pool is not None:
+            try:
+                wt_entry = wt_pool.create(task_id)
+                sub_exec["worktree_path"] = wt_entry.worktree_path
+                sub_exec["task"] = (
+                    f"{sub['task']}\n\n[ISOLATED WORKTREE: {wt_entry.worktree_path} "
+                    f"(branch {wt_entry.branch_name})]"
+                )
+                self.on_event("worktree_created", f"#{task_id} -> {wt_entry.branch_name}")
+            except Exception as wt_exc:
+                self.on_event("warning", f"worktree creation failed for #{task_id}: {wt_exc}")
+                wt_entry = None
+
+        summary, sid = self.execute_subtask(sub_exec)
         if sid:
             with self._session_lock:
                 session_ids.append(sid)
@@ -504,6 +538,19 @@ class Orchestrator:
             report.verdict, report.evidence, report.issues = (
                 v["verdict"], v["evidence"], v["issues"])
             report.checks = v.get("checks", [])
+
+        # V42: verified three-way merge back to base branch (or safe abort/cleanup)
+        if wt_pool is not None and wt_entry is not None:
+            if report.verdict == "pass":
+                m_res = wt_pool.merge_verified(wt_entry.worktree_id, auto_cleanup=True)
+                if not m_res.get("ok"):
+                    report.verdict = "fail"
+                    report.issues.append(f"worktree merge conflict: {m_res.get('error', m_res)}")
+                    self.on_event("worktree_conflict", f"#{task_id}: {m_res.get('error')}")
+                else:
+                    self.on_event("worktree_merged", f"#{task_id}: {m_res.get('merge_commit', 'no-op')}")
+            else:
+                wt_pool.cleanup(wt_entry.worktree_id, force=True)
 
         # V26-A3: state gate
         if self._ledger:

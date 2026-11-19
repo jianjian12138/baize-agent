@@ -192,14 +192,19 @@ def test_team_memory_sanitizes_team_id(tmp_path):
     assert tm.file.parent.name == "team_memory"
 
 
-def test_shared_backend_fails_closed(tmp_path):
+def test_shared_backend_uses_sqlite_wal(tmp_path):
     cfg = cfg_for(tmp_path)
     cfg["BAIZE_TEAM_MEMORY_BACKEND"] = "shared"
-    try:
-        TeamMemory("run-7", cfg=cfg)
-        assert False, "should have raised"
-    except RuntimeError as exc:
-        assert "reserved" in str(exc)
+    tm = TeamMemory("run-7", cfg=cfg)
+    assert tm.backend in ("shared", "sqlite")
+    assert tm.file.suffix == ".sqlite3"
+    tm.post("planner", "shared note")
+    assert tm.claim("t-shared", "worker-a") is True
+    assert tm.claim("t-shared", "worker-b") is False
+    assert tm.owner_of("t-shared") == "worker-a"
+    assert len(tm.read()) == 1
+    tm.clear()
+    assert tm.read() == []
 
 
 def test_unknown_backend_rejected(tmp_path):

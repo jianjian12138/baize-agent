@@ -685,3 +685,57 @@
     white-space: pre-wrap;
   }
   .log-entry.info { color: #60a5fa; }
+
+
+/* --- V42 Helios Developer Console (Single-Elevation, Tabular Nums) --- */
+.tabular-nums { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.helios-shell { padding: 20px 24px 32px; max-width: 1400px; margin: 0 auto; height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.helios-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 14px; }
+.helios-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-main); margin-bottom: 4px; }
+.helios-subtitle { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+.helios-subnav { display: flex; gap: 6px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 10px; flex-wrap: wrap; }
+.helios-tab-btn { background: transparent; border: 1px solid transparent; color: var(--text-muted); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+.helios-tab-btn:hover { background: var(--bg-elevated); color: var(--text-main); }
+.helios-tab-btn.active { background: var(--bg-elevated); color: var(--text-main); border-color: var(--border-strong); font-weight: 600; }
+.helios-pane { display: none; flex-direction: column; gap: 16px; }
+.helios-pane.active { display: flex; }
+.helios-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.helios-kpi-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.helios-kpi-label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.helios-kpi-value { font-size: 22px; font-weight: 700; color: var(--text-main); letter-spacing: -0.02em; }
+.helios-kpi-meta { font-size: 11px; color: var(--text-dim); }
+.helios-two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+.helios-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.helios-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.helios-card-head h3 { font-size: 14px; font-weight: 600; color: var(--text-main); }
+.helios-hint { font-size: 11.5px; color: var(--text-dim); }
+.helios-section-label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-top: 4px; }
+.helios-form-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.helios-form-row label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-muted); flex: 1; min-width: 140px; }
+.helios-form-row input, .helios-form-row select, .helios-search-bar input, .helios-search-bar select, .helios-input-full, .helios-textarea { background: var(--bg-base); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12px; color: var(--text-main); outline: none; }
+.helios-input-full, .helios-textarea { width: 100%; font-family: var(--font-mono); }
+.helios-search-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.helios-search-bar input[type="text"] { flex: 1; min-width: 200px; }
+.helios-inline-check { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); flex: 0 0 auto !important; min-width: auto !important; }
+.helios-table-wrap { overflow-x: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.helios-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.helios-table th { text-align: left; padding: 8px 10px; background: var(--bg-elevated); color: var(--text-muted); font-weight: 600; font-size: 11px; border-bottom: 1px solid var(--border-subtle); }
+.helios-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); color: var(--text-main); vertical-align: top; }
+.helios-table tr:last-child td { border-bottom: none; }
+.helios-empty { color: var(--text-dim); font-size: 12px; padding: 14px 8px; text-align: center; }
+.helios-list { display: flex; flex-direction: column; gap: 8px; }
+.helios-item-card { background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.helios-item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+.helios-code-box { background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); max-height: 240px; overflow: auto; white-space: pre-wrap; user-select: text; }
+.helios-tree-box { max-height: 400px; line-height: 1.55; }
+.helios-feedback { font-size: 12px; min-height: 16px; color: var(--text-muted); }
+.helios-btn-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.helios-danger-btn { border-color: rgba(239, 68, 68, 0.4) !important; color: #f87171 !important; }
+.helios-status-ok { color: #16a34a; font-weight: 600; }
+.helios-status-warn { color: #d97706; font-weight: 600; }
+.helios-status-err { color: #dc2626; font-weight: 600; }
+.helios-mem-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.helios-mem-bar-card { background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 11.5px; }
+.helios-progress-track { width: 100%; height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.helios-progress-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+.helios-mem-previews { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

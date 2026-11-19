@@ -350,6 +350,8 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
                 {"id": "gpt-4o", "name": "OpenAI GPT-4o", "provider": "OpenAI"},
                 {"id": "gpt-4o-mini", "name": "OpenAI GPT-4o Mini", "provider": "OpenAI"},
                 {"id": "claude-3-7-sonnet", "name": "Claude 3.7 Sonnet", "provider": "Anthropic"},
+                {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "provider": "Gemini"},
+                {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "provider": "Gemini"},
                 {"id": "qwen2.5-coder:latest", "name": "Qwen 2.5 Coder (Local)", "provider": "Ollama"},
                 {"id": "llama3.3:latest", "name": "Llama 3.3 (Local)", "provider": "Ollama"},
             ],
@@ -481,5 +483,87 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         cfg = load_config()
         chans = list_channels(cfg)
         return handler._send(200, {"channels": chans, "total": len(chans)})
+
+    if req_path == "/api/sessions/tree":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...core.sessions import build_session_tree, format_session_tree
+        cfg = load_config()
+        tree = build_session_tree(cfg)
+        return handler._send(200, {
+            "tree": tree,
+            "formatted": format_session_tree(cfg),
+        })
+
+    if req_path == "/api/worktrees":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...execution.worktree import GitWorktreePool
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        pool = GitWorktreePool(ws)
+        wts = pool.list_worktrees()
+        return handler._send(200, {
+            "workspace": ws,
+            "is_git_repo": pool.is_git_repo(),
+            "parallel_enabled": cfg.get("BAIZE_WORKTREE_PARALLEL", "0") == "1",
+            "worktrees": wts,
+            "total": len(wts),
+        })
+
+    if req_path == "/api/approvals":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ..approval import get_approval_queue
+        q = get_approval_queue()
+        pending = q.list_pending()
+        return handler._send(200, {
+            "pending": pending,
+            "pending_count": len(pending),
+            "history": q.history(limit=30),
+        })
+
+    if req_path == "/api/bg-procs":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...execution.bg_proc import get_bg_manager
+        mgr = get_bg_manager()
+        params = parse_qs(urlparse(handler.path).query)
+        pid = (params.get("id") or [""])[0].strip()
+        tail = int((params.get("tail") or ["80"])[0] or 80)
+        payload = {
+            "procs": mgr.list_procs(),
+            "active": mgr.active_count(),
+        }
+        if pid:
+            payload["output"] = mgr.read_output(pid, tail_lines=max(1, min(tail, 500)))
+        return handler._send(200, payload)
+
+    if req_path == "/api/budget":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...core.cost_ledger import get_cost_ledger
+        cfg = load_config()
+        ledger = get_cost_ledger(cfg)
+        return handler._send(200, {
+            "summary": ledger.summary(),
+            "config": {
+                "max_session_usd": float(cfg.get("BAIZE_MAX_SESSION_USD", "0") or 0),
+                "max_session_tokens": int(cfg.get("BAIZE_MAX_SESSION_TOKENS", "0") or 0),
+                "warn_ratio": float(cfg.get("BAIZE_BUDGET_WARN_RATIO", "0.8") or 0.8),
+            },
+        })
+
+    if req_path == "/api/memory/bounded":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...knowledge.memory import BoundedMemoryStore
+        cfg = load_config()
+        store = BoundedMemoryStore(cfg)
+        return handler._send(200, {
+            "stats": store.stats(),
+            "memory": store.read("memory"),
+            "user": store.read("user"),
+        })
 
     return handler._send(404, {"error": "not found"})

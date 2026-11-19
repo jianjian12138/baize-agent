@@ -226,6 +226,8 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+from pathlib import Path
+from pathlib import Path
 import urllib.request
 import http.client
 from dataclasses import dataclass
@@ -610,8 +612,17 @@ class LLMClient:
             out["http_pool"] = get_http_pool_stats()
             return out
 
-    def _record_usage(self, raw: dict, latency_ms: float) -> None:
+    def _record_usage(
+        self,
+        raw: dict,
+        latency_ms: float,
+        *,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
         usage = raw.get("usage") if isinstance(raw, dict) else None
+        if usage is None and isinstance(raw, dict) and isinstance(raw.get("_usage"), dict):
+            usage = raw.get("_usage")
         p_tok = c_tok = cached = 0
         if isinstance(usage, dict):
             p_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
@@ -619,6 +630,7 @@ class LLMClient:
             details = usage.get("prompt_tokens_details") or {}
             cached = int(
                 usage.get("cache_read_input_tokens")
+                or usage.get("cached_tokens")
                 or (details.get("cached_tokens") if isinstance(details, dict) else 0)
                 or 0
             )
@@ -628,6 +640,19 @@ class LLMClient:
             self._telemetry["completion_tokens"] = int(self._telemetry["completion_tokens"]) + c_tok
             self._telemetry["cached_tokens"] = int(self._telemetry["cached_tokens"]) + cached
             self._telemetry["total_latency_ms"] = float(self._telemetry["total_latency_ms"]) + latency_ms
+            self._last_usage = {
+                "provider": provider or "openai",
+                "model": model or (self.models[0].name if self.models else "unknown"),
+                "prompt_tokens": p_tok,
+                "cached_tokens": cached,
+                "completion_tokens": c_tok,
+            }
+
+    @property
+    def last_usage(self) -> dict[str, Any] | None:
+        with self._telemetry_lock:
+            u = getattr(self, "_last_usage", None)
+            return dict(u) if isinstance(u, dict) else None
 
     def _route_from_config(self) -> None:
         self.models: list[ModelSpec] = []
@@ -757,12 +782,38 @@ class LLMClient:
                     if cache_on and spec.provider == "anthropic" and tools:
                         req_msgs = mark_cacheable(messages, "anthropic")
                     t0 = time.perf_counter()
+                    if spec.provider == "gemini":
+                        from ..ext.providers.gemini import GeminiProviderAdapter
+                        gem = GeminiProviderAdapter(
+                            api_key=spec.api_key,
+                            model=spec.name,
+                            base_url=spec.base_url or "https://generativelanguage.googleapis.com/v1beta",
+                            timeout=int(getattr(self, "timeout", 0) or self.cfg.get("BAIZE_MODEL_TIMEOUT", 120) or 120),
+                        )
+                        parsed_msg = gem.chat(
+                            req_msgs,
+                            tools=tools,
+                            temperature=0.2 if temperature is None else temperature,
+                        )
+                        self._record_usage(
+                            parsed_msg,
+                            (time.perf_counter() - t0) * 1000.0,
+                            provider="gemini",
+                            model=spec.name,
+                        )
+                        obs.inc("llm_calls")
+                        return parsed_msg
                     raw = self.transport(
                         _endpoint(spec),
                         self._headers(spec),
                         _build_request(spec, req_msgs, tools, temperature),
                     )
-                    self._record_usage(raw, (time.perf_counter() - t0) * 1000.0)
+                    self._record_usage(
+                        raw,
+                        (time.perf_counter() - t0) * 1000.0,
+                        provider=spec.provider,
+                        model=spec.name,
+                    )
                     obs.inc("llm_calls")
                     return _parse_response(raw, spec.provider)
                 except Exception as exc:
@@ -912,3 +963,37 @@ class LLMClient:
         if msg.get("tool_calls"):
             out["tool_calls"] = msg["tool_calls"]
         return out
+
+
+def encode_image_part(
+    image_path: str | Path,
+    *,
+    provider: str = "openai",
+    max_bytes: int = 4_194_304,
+) -> dict[str, Any]:
+    """Read a local image and encode it as a provider-appropriate multimodal content block."""
+    import base64
+    import mimetypes
+
+    p = Path(image_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Image file not found: {p}")
+    data = p.read_bytes()
+    if len(data) > max_bytes:
+        raise ValueError(f"Image {p.name} ({len(data)} bytes) exceeds BAIZE_MULTIMODAL_MAX_BYTES ({max_bytes})")
+    mime, _ = mimetypes.guess_type(str(p))
+    if not mime or not mime.startswith("image/"):
+        mime = "image/png"
+    b64 = base64.b64encode(data).decode("ascii")
+    prov = (provider or "openai").strip().lower()
+    if prov == "anthropic":
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime, "data": b64},
+        }
+    if prov == "gemini":
+        return {"type": "image_base64", "mime_type": mime, "data": b64}
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime};base64,{b64}"},
+    }

@@ -79,7 +79,7 @@ _DEFAULTS = {
     "BAIZE_EMBEDDING_URL": "",               # reserved embedding endpoint
     "BAIZE_DASHBOARD_HOST": "127.0.0.1",
     "BAIZE_DASHBOARD_PORT": "8788",
-    "BAIZE_TEAM_MEMORY_BACKEND": "local",    # local | shared(reserved)
+    "BAIZE_TEAM_MEMORY_BACKEND": "local",    # local | shared | sqlite (V42 SQLite WAL)
     "BAIZE_VAULT_URL": "",                   # reserved secret backend
     # --- V21 P1-1 hooks (lifecycle events, fail-closed) ---
     "BAIZE_HOOKS_FILE": "",                  # path to .baize/hooks.json (off by default)
@@ -163,6 +163,15 @@ _DEFAULTS = {
     "BAIZE_MEMORY_MAX_CHARS": "2400",        # memory.py: bounded MEMORY.md snapshot character cap
     "BAIZE_USER_PROFILE_MAX_CHARS": "1400",  # memory.py: bounded USER.md snapshot character cap
     "BAIZE_CHANNEL_ALLOWLIST": "",           # channels.py: comma-separated allowed IM sender IDs
+    # --- V42.0.0 Helios (Worktree Parallelism, Cost Breaker, Hybrid FTS5 & CDP) ---
+    "BAIZE_WORKTREE_PARALLEL": "0",          # orchestrator.py: 1 = run parallel DAG subtasks in isolated git worktrees
+    "BAIZE_MAX_SESSION_USD": "0",            # cost_ledger.py: hard USD cap per session (0 = unlimited)
+    "BAIZE_MAX_SESSION_TOKENS": "0",         # cost_ledger.py: hard token cap per session (0 = unlimited)
+    "BAIZE_BUDGET_WARN_RATIO": "0.8",        # cost_ledger.py: soft warning ratio (default 80%)
+    "BAIZE_HYBRID_INDEX_PATH": "",           # hybrid_index.py: optional SQLite FTS5 index path override
+    "BAIZE_CDP_BINARY": "",                  # cdp_browser.py: optional Chrome/Chromium/Edge binary path
+    "BAIZE_CDP_TIMEOUT": "15",               # cdp_browser.py: CDP command timeout seconds
+    "BAIZE_MULTIMODAL_MAX_BYTES": "4194304", # llm.py: max inline image attachment size (4 MB)
 }
 
 
@@ -267,7 +276,7 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_EMBEDDING_URL": ("any", None),
     "BAIZE_DASHBOARD_HOST": ("any", None),
     "BAIZE_DASHBOARD_PORT": ("int_range", (0, 65535)),
-    "BAIZE_TEAM_MEMORY_BACKEND": ("enum", ["local", "shared"]),
+    "BAIZE_TEAM_MEMORY_BACKEND": ("enum", ["local", "shared", "sqlite"]),
     "BAIZE_VAULT_URL": ("any", None),
     # --- V22 composition kernel (plugin architecture) ---
     "BAIZE_COMPONENTS": ("components", None),

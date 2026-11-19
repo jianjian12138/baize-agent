@@ -60,6 +60,10 @@ __STYLE_BLOCK__
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <span>工作台</span>
       </div>
+      <div class="rail-item" onclick="switchTab('tab-helios')" title="V42 Helios 观测台（会话树/Worktree/审批/进程/检索/成本）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        <span>观测台</span>
+      </div>
       <div class="rail-item" onclick="switchTab('tab-diff')" title="代码审查与 Git 变更">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
         <span>Git审查</span>
@@ -718,6 +722,250 @@ __STYLE_BLOCK__
             docker run -d -p 8787:8787 -p 50051:50051 -e BAIZE_AUTH_TOKEN=secret_token -v /workspace:/workspace baize/studio:v37.0.0
           </div>
           <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">支持 RESTful HTTP (8787) 与 gRPC 二进制双向流式协议 (50051)。</div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- Tab V42: Helios 观测台 -->
+    <section id="tab-helios" class="tab-pane">
+      <div class="helios-shell">
+        <header class="helios-header">
+          <div class="helios-title-group">
+            <h2>V42 Helios 运行时观测台</h2>
+            <p class="helios-subtitle">实时查看会话分支树、Git Worktree 并行沙箱、审批与后台进程、FTS5+Embedding 混合检索、有界记忆与会话成本熔断。</p>
+          </div>
+          <div class="helios-header-actions">
+            <button class="chip-btn" onclick="refreshHeliosAll()">刷新全部状态</button>
+          </div>
+        </header>
+
+        <nav class="helios-subnav" role="tablist" aria-label="Helios 观测台视图">
+          <button class="helios-tab-btn active" data-helios-pane="helios-cost" onclick="switchHeliosPane('helios-cost')">成本账本与 IM 渠道</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-ops" onclick="switchHeliosPane('helios-ops')">审批与后台进程</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-worktrees" onclick="switchHeliosPane('helios-worktrees')">并行 Worktree</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-rag" onclick="switchHeliosPane('helios-rag')">混合检索与记忆</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-tree" onclick="switchHeliosPane('helios-tree')">会话树与回溯</button>
+        </nav>
+
+        <!-- Sub-view 1: Cost Ledger & IM Channels -->
+        <div id="helios-cost" class="helios-pane active">
+          <div class="helios-kpi-grid">
+            <div class="helios-kpi-card">
+              <div class="helios-kpi-label">累计费用 (USD)</div>
+              <div class="helios-kpi-value tabular-nums" id="helios-kpi-usd">$0.0000</div>
+              <div class="helios-kpi-meta" id="helios-kpi-usd-cap">预算上限：未限制</div>
+            </div>
+            <div class="helios-kpi-card">
+              <div class="helios-kpi-label">累计 Token</div>
+              <div class="helios-kpi-value tabular-nums" id="helios-kpi-tokens">0</div>
+              <div class="helios-kpi-meta" id="helios-kpi-tok-cap">Token 上限：未限制</div>
+            </div>
+            <div class="helios-kpi-card">
+              <div class="helios-kpi-label">Prompt 缓存命中率</div>
+              <div class="helios-kpi-value tabular-nums" id="helios-kpi-cache">0.0%</div>
+              <div class="helios-kpi-meta" id="helios-kpi-calls">模型调用：0 次</div>
+            </div>
+            <div class="helios-kpi-card">
+              <div class="helios-kpi-label">预算熔断状态</div>
+              <div class="helios-kpi-value" id="helios-kpi-status">正常</div>
+              <div class="helios-kpi-meta" id="helios-kpi-warn-ratio">告警阈值：80%</div>
+            </div>
+          </div>
+
+          <div class="helios-two-col">
+            <div class="helios-card">
+              <div class="helios-card-head">
+                <h3>预算硬熔断配置</h3>
+                <span class="helios-hint">超过告警阈值发出提示，达到 100% 自动终止本轮循环</span>
+              </div>
+              <div class="helios-form-row">
+                <label>单会话 USD 上限 (0=不限)
+                  <input type="number" step="0.05" min="0" id="helios-cfg-usd" placeholder="例如 1.50">
+                </label>
+                <label>单会话 Token 上限 (0=不限)
+                  <input type="number" step="1000" min="0" id="helios-cfg-tokens" placeholder="例如 200000">
+                </label>
+                <label>告警比例 (0.1~1.0)
+                  <input type="number" step="0.05" min="0.1" max="1.0" id="helios-cfg-warn" placeholder="0.80">
+                </label>
+                <button class="primary-btn" onclick="saveHeliosBudgetConfig()">保存预算阈值</button>
+              </div>
+              <div id="helios-budget-msg" class="helios-feedback"></div>
+              <div class="helios-table-wrap">
+                <table class="helios-table">
+                  <thead>
+                    <tr><th>会话 ID</th><th>调用</th><th>总 Token</th><th>缓存命中</th><th>费用 (USD)</th><th>操作</th></tr>
+                  </thead>
+                  <tbody id="helios-budget-sessions">
+                    <tr><td colspan="6" class="helios-empty">加载会话成本记录中...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="helios-card">
+              <div class="helios-card-head">
+                <h3>IM 网关渠道状态</h3>
+                <button class="chip-btn" onclick="loadHeliosChannels()">刷新渠道</button>
+              </div>
+              <div class="helios-table-wrap">
+                <table class="helios-table">
+                  <thead>
+                    <tr><th>渠道</th><th>配置状态</th><th>Webhook 路径</th></tr>
+                  </thead>
+                  <tbody id="helios-channels-body">
+                    <tr><td colspan="3" class="helios-empty">点击刷新加载飞书 / 钉钉 / Telegram 状态</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-view 2: Approvals & Background Processes -->
+        <div id="helios-ops" class="helios-pane">
+          <div class="helios-two-col">
+            <div class="helios-card">
+              <div class="helios-card-head">
+                <h3>待审批队列</h3>
+                <button class="chip-btn" onclick="loadHeliosApprovals()">刷新审批</button>
+              </div>
+              <div id="helios-approvals-pending" class="helios-list">
+                <div class="helios-empty">当前无待审批的高风险操作</div>
+              </div>
+              <h4 class="helios-section-label">最近审批审计</h4>
+              <div id="helios-approvals-history" class="helios-list">
+                <div class="helios-empty">暂无历史审批记录</div>
+              </div>
+            </div>
+
+            <div class="helios-card">
+              <div class="helios-card-head">
+                <h3>后台进程监控台</h3>
+                <button class="chip-btn" onclick="loadHeliosBgProcs()">刷新进程</button>
+              </div>
+              <div class="helios-table-wrap">
+                <table class="helios-table">
+                  <thead>
+                    <tr><th>进程 ID</th><th>状态</th><th>命令</th><th>操作</th></tr>
+                  </thead>
+                  <tbody id="helios-bgprocs-body">
+                    <tr><td colspan="4" class="helios-empty">暂无后台进程</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <pre id="helios-bgproc-output" class="helios-code-box">选择任一后台进程查看最近日志输出...</pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-view 3: Parallel Git Worktrees -->
+        <div id="helios-worktrees" class="helios-pane">
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>Git Worktree 并行多 Agent 沙箱</h3>
+                <span class="helios-hint" id="helios-wt-meta">检测仓库状态中...</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosWorktrees()">刷新列表</button>
+                <button class="chip-btn helios-danger-btn" onclick="cleanupHeliosWorktree('')">清理全部临时 Worktree</button>
+              </div>
+            </div>
+            <div id="helios-wt-feedback" class="helios-feedback"></div>
+            <div class="helios-table-wrap">
+              <table class="helios-table">
+                <thead>
+                  <tr><th>Worktree ID</th><th>子任务</th><th>分支</th><th>状态</th><th>合并摘要</th><th>操作</th></tr>
+                </thead>
+                <tbody id="helios-wt-body">
+                  <tr><td colspan="6" class="helios-empty">当前没有活动的临时 Worktree</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-view 4: Hybrid Search & Bounded Memory -->
+        <div id="helios-rag" class="helios-pane">
+          <div class="helios-two-col">
+            <div class="helios-card">
+              <div class="helios-card-head">
+                <h3>FTS5 + Embedding 混合语义检索</h3>
+                <span class="helios-hint" id="helios-rag-meta">模式：RRF 融合</span>
+              </div>
+              <div class="helios-search-bar">
+                <input type="text" id="helios-rag-query" placeholder="输入符号名、设计意图或代码片段进行检索...">
+                <select id="helios-rag-mode">
+                  <option value="hybrid">Hybrid (RRF 融合)</option>
+                  <option value="fts5">FTS5 (纯 BM25 词法)</option>
+                  <option value="embedding">Embedding (纯向量)</option>
+                </select>
+                <label class="helios-inline-check"><input type="checkbox" id="helios-rag-reindex"> 重建索引</label>
+                <button class="primary-btn" onclick="runHeliosHybridSearch()">执行检索</button>
+              </div>
+              <div id="helios-rag-results" class="helios-list">
+                <div class="helios-empty">输入查询词并点击「执行检索」测试 FTS5 + Embedding RRF 排序。</div>
+              </div>
+            </div>
+
+            <div class="helios-card">
+              <div class="helios-card-head">
+                <h3>有界持久记忆编辑器 (MEMORY.md / USER.md)</h3>
+                <button class="chip-btn" onclick="loadHeliosBoundedMemory()">刷新记忆</button>
+              </div>
+              <div id="helios-mem-bars" class="helios-mem-bars"></div>
+              <div class="helios-form-row">
+                <select id="helios-mem-slot">
+                  <option value="memory">MEMORY.md (项目事实)</option>
+                  <option value="user">USER.md (用户偏好)</option>
+                </select>
+                <select id="helios-mem-action">
+                  <option value="add">追加条目 (add)</option>
+                  <option value="replace">替换片段 (replace)</option>
+                  <option value="remove">删除片段 (remove)</option>
+                </select>
+              </div>
+              <input type="text" id="helios-mem-target" class="helios-input-full" placeholder="replace / remove 时填写匹配子串（add 可留空）">
+              <textarea id="helios-mem-content" class="helios-textarea" rows="3" placeholder="输入要写入的新记忆内容..."></textarea>
+              <div class="helios-btn-group">
+                <button class="primary-btn" onclick="submitHeliosBoundedMemory()">提交记忆更新</button>
+                <span id="helios-mem-feedback" class="helios-feedback"></span>
+              </div>
+              <div class="helios-mem-previews">
+                <div>
+                  <h4 class="helios-section-label">MEMORY.md 预览</h4>
+                  <pre id="helios-mem-memory-text" class="helios-code-box">(空)</pre>
+                </div>
+                <div>
+                  <h4 class="helios-section-label">USER.md 预览</h4>
+                  <pre id="helios-mem-user-text" class="helios-code-box">(空)</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-view 5: Session Tree & Dual-Axis Rewind -->
+        <div id="helios-tree" class="helios-pane">
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>树状会话分支与双轴回溯</h3>
+                <span class="helios-hint">支持仅回溯对话上下文，或联动 Git Checkpoint 同步回滚工作区代码</span>
+              </div>
+              <button class="chip-btn" onclick="loadHeliosSessionTree()">刷新会话树</button>
+            </div>
+            <div class="helios-form-row">
+              <input type="text" id="helios-rewind-sid" placeholder="Session ID（例如 s-2026...）">
+              <input type="text" id="helios-rewind-node" placeholder="目标 Node ID（例如 n0002）">
+              <label class="helios-inline-check"><input type="checkbox" id="helios-rewind-code"> 同时回滚代码 (Git Checkpoint)</label>
+              <button class="primary-btn" onclick="submitHeliosRewind()">执行回溯并创建分支</button>
+            </div>
+            <div id="helios-rewind-feedback" class="helios-feedback"></div>
+            <pre id="helios-tree-ascii" class="helios-code-box helios-tree-box">点击「刷新会话树」查看当前所有会话与分支节点...</pre>
+          </div>
         </div>
       </div>
     </section>

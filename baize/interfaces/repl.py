@@ -53,6 +53,9 @@ Available Slash Commands:
   /approval [mode]     View or switch approval policy (tiered / auto / strict)
   /reload [plugin]     Hot-reload plugin with AST + smoke gate & rollback
   /bg [list|output|stop] Manage background shell processes
+  /budget [usd|reset]  Inspect session cost/cache ledger or set hard USD cap (V42)
+  /worktree [list|cleanup] Inspect or clean up isolated parallel Git worktrees (V42)
+  /search <query>      Run persistent SQLite FTS5 + Embedding hybrid search (V42)
   /cost                Inspect session token usage and estimated cost
   /trace               Inspect step-by-step tool execution timeline & latency
   /model [name]        View or instantly switch active LLM model
@@ -215,11 +218,14 @@ class BaizeREPL:
         st = self.agent.context_status()
         models = getattr(self.client, "models", [])
         model_name = models[0].name if models else (self.cfg.get("BAIZE_MODEL_NAME") or "unconfigured")
+        from ..core.cost_ledger import get_cost_ledger
+        bstat = get_cost_ledger(self.cfg).check_budget(self.session.id if self.session else "default")
         bar = format_status_bar(
             model=model_name,
             profile=st.get("profile", self.tool_profile),
             active_tools=int(st.get("active_tools", 0)),
             context_ratio=float(st.get("context_ratio", 0.0)),
+            cache_hit_ratio=float(bstat.cache_hit_ratio),
             bg_procs=get_bg_manager().active_count(),
             color=not self.no_color,
         )
@@ -435,6 +441,72 @@ class BaizeREPL:
             print(p.paint("yellow", "Usage: /bg [list | output <proc_id> | stop <proc_id>]"))
             return
 
+        if cmd == "/budget":
+            from ..core.cost_ledger import get_cost_ledger
+            ledger = get_cost_ledger(self.cfg)
+            sid = self.session.id if self.session else "default"
+            sub = arg.strip().lower()
+            if sub == "reset":
+                n = ledger.reset_session(sid)
+                print(p.paint("green", f"✓ Reset cost ledger for session {sid} ({n} records cleared)."))
+                return
+            if sub:
+                try:
+                    cap = float(sub)
+                    if cap < 0:
+                        raise ValueError("negative")
+                    os.environ["BAIZE_MAX_SESSION_USD"] = str(cap)
+                    self.cfg = load_config()
+                    print(p.paint("green", f"✓ Session hard USD budget set to ${cap:.4f} (0 = unlimited)."))
+                    return
+                except ValueError:
+                    print(p.paint("yellow", "Usage: /budget [max_usd | reset]"))
+                    return
+            st = ledger.check_budget(sid)
+            print(p.paint("bold", f"\nSession Cost & Cache Ledger ({sid}):"))
+            print(f"  • Prompt / Cached / Output: {st.prompt_tokens:,} / {st.cached_tokens:,} / {st.completion_tokens:,}")
+            print(f"  • Cache hit ratio:          {st.cache_hit_ratio * 100:.1f}%")
+            print(f"  • Estimated USD:            ${st.estimated_usd:.6f}")
+            cap_str = f"${st.max_usd:.4f} ({st.usd_ratio*100:.1f}%)" if st.max_usd > 0 else "unlimited"
+            print(f"  • Hard USD budget cap:      {cap_str}\n")
+            return
+
+        if cmd == "/worktree":
+            from ..execution.worktree import GitWorktreePool
+            pool = GitWorktreePool(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
+            sub = (arg.strip().lower() or "list")
+            if sub == "cleanup":
+                res = pool.cleanup_all()
+                print(p.paint("green", f"✓ Cleaned {res.get('count', 0)} worktree(s)."))
+                return
+            wts = pool.list_worktrees()
+            if not wts:
+                print(p.paint("dim", "No active or recorded Git worktrees."))
+                return
+            print(p.paint("bold", f"\nGit Worktrees ({len(wts)}):"))
+            for w in wts[:15]:
+                print(f"  • {w['worktree_id']} [{w['status']}] branch={w['branch_name']} files={len(w.get('changed_files') or [])}")
+            print()
+            return
+
+        if cmd == "/search":
+            if not arg.strip():
+                print(p.paint("yellow", "Usage: /search <query>"))
+                return
+            from ..knowledge.hybrid_index import HybridSearchIndex
+            idx = HybridSearchIndex(cfg=self.cfg)
+            if idx.stats()["total_docs"] == 0:
+                idx.index_workspace(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
+            hits = idx.search(arg.strip(), mode="hybrid", limit=6)
+            if not hits:
+                print(p.paint("dim", f"No hybrid matches for '{arg.strip()}'."))
+                return
+            print(p.paint("bold", f"\nHybrid Search Results ({len(hits)}):"))
+            for h in hits:
+                print(f"  • [{h.source} {h.score:.4f}] {h.title} — {h.snippet[:90]}")
+            print()
+            return
+
         if cmd == "/cost":
             if not self.session:
                 print(p.paint("dim", "No active session."))
@@ -593,8 +665,18 @@ class BaizeREPL:
             print(p.paint("red", "💡 未配置大模型端点。请输入 /setup 启动快速配置向导。\n"))
             return
 
-        # 1. Check for @file inclusions
+        # 1. Check for @file and @image inclusions (V42 multimodal support)
+        img_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        img_matches = re.findall(r'@([A-Za-z0-9_\-./\\]+\.(?:png|jpg|jpeg|webp|gif))', user_goal, re.I)
+        attached_images: list[str] = []
+        for im in img_matches:
+            ip = (ROOT / im).resolve()
+            if ip.is_file() and ip.suffix.lower() in img_exts:
+                attached_images.append(str(ip))
+                print(p.paint("cyan", f"  🖼 [Image Attached] {im}"))
+
         cleaned_goal, attached_files = _extract_at_files(user_goal, ROOT)
+        attached_files = [f for f in attached_files if Path(f["path"]).suffix.lower() not in img_exts]
         final_prompt = user_goal
 
         if attached_files:
@@ -606,9 +688,11 @@ class BaizeREPL:
 
         # 2. Execute agent turn (with soft-interrupt steering & status bar)
         prompt_to_run = final_prompt
+        images_to_send = attached_images or None
         while True:
             try:
-                res = self.agent.run(prompt_to_run)
+                res = self.agent.run(prompt_to_run, images=images_to_send)
+                images_to_send = None
                 if res.stopped_reason == "error":
                     friendly = _format_user_friendly_error(res.final_text)
                     print(p.paint("red", f"\n❌ {friendly}\n"))

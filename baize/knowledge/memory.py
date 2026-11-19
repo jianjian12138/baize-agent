@@ -327,13 +327,11 @@ class TeamMemory:
                                if c.isalnum() or c in "-_") or "default"
         self._lock = threading.RLock()
         self.backend = self.cfg.get("BAIZE_TEAM_MEMORY_BACKEND", "local")
-        if self.backend not in ("local", "shared"):
+        if self.backend not in ("local", "shared", "sqlite"):
             raise ValueError(f"unknown team memory backend: {self.backend}")
-        if self.backend == "shared":
-            obs.record_error("team_memory_backend_unavailable")
-            raise RuntimeError(
-                "shared team-memory backend is reserved and not enabled - "
-                "use BAIZE_TEAM_MEMORY_BACKEND=local")
+        self._use_sqlite = self.backend in ("shared", "sqlite")
+        if self._use_sqlite:
+            self._init_sqlite()
 
     # --- storage ------------------------------------------------------------
 
@@ -341,10 +339,47 @@ class TeamMemory:
     def file(self) -> Path:
         d = Path(self.cfg["BAIZE_PERSISTENCE_DIR"]) / "team_memory"
         d.mkdir(parents=True, exist_ok=True)
-        return d / f"{self.team_id}.jsonl"
+        ext = ".sqlite3" if self._use_sqlite else ".jsonl"
+        return d / f"{self.team_id}{ext}"
+
+    def _sqlite_conn(self):
+        import sqlite3
+        conn = sqlite3.connect(str(self.file), timeout=15.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    def _init_sqlite(self) -> None:
+        with self._lock, self._sqlite_conn() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS board_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS task_claims (
+                    task_id TEXT PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    ts TEXT NOT NULL
+                );
+                """
+            )
 
     def _read(self) -> list[dict]:
         with self._lock:
+            if self._use_sqlite:
+                if not self.file.exists():
+                    return []
+                with self._sqlite_conn() as conn:
+                    rows = conn.execute("SELECT payload_json FROM board_events ORDER BY id ASC").fetchall()
+                out = []
+                for (raw,) in rows:
+                    try:
+                        out.append(json.loads(raw))
+                    except json.JSONDecodeError:
+                        continue
+                return out
             f = self.file
             if not f.exists():
                 return []
@@ -358,6 +393,13 @@ class TeamMemory:
 
     def _append(self, rec: dict) -> dict:
         with self._lock:
+            if self._use_sqlite:
+                with self._sqlite_conn() as conn:
+                    conn.execute(
+                        "INSERT INTO board_events(kind, payload_json) VALUES (?, ?)",
+                        (str(rec.get("kind") or "note"), json.dumps(rec, ensure_ascii=False)),
+                    )
+                return rec
             with self.file.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             return rec
@@ -414,6 +456,25 @@ class TeamMemory:
         (reserved) ``shared`` backend would have to provide.
         """
         with self._lock:
+            if self._use_sqlite:
+                tid = str(task_id)
+                ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+                with self._sqlite_conn() as conn:
+                    cur = conn.execute(
+                        "INSERT OR IGNORE INTO task_claims(task_id, role, ts) VALUES (?, ?, ?)",
+                        (tid, role, ts),
+                    )
+                    if cur.rowcount == 0:
+                        row = conn.execute("SELECT role FROM task_claims WHERE task_id = ?", (tid,)).fetchone()
+                        obs.inc("team_memory_claim_conflicts")
+                        return bool(row and row[0] == role)
+                    rec = {"kind": "claim", "task_id": tid, "role": role, "ts": ts}
+                    conn.execute(
+                        "INSERT INTO board_events(kind, payload_json) VALUES (?, ?)",
+                        ("claim", json.dumps(rec, ensure_ascii=False)),
+                    )
+                obs.inc("team_memory_claims")
+                return True
             owner = self.owner_of(task_id)
             if owner is not None:
                 obs.inc("team_memory_claim_conflicts")
@@ -443,6 +504,12 @@ class TeamMemory:
         Truncates rather than unlinks: same semantics, but it keeps working
         under sandboxes and file-policy hooks that forbid deletion.
         """
+        if self._use_sqlite:
+            if self.file.exists():
+                with self._lock, self._sqlite_conn() as conn:
+                    conn.execute("DELETE FROM board_events")
+                    conn.execute("DELETE FROM task_claims")
+            return
         if self.file.exists():
             self.file.write_text("", encoding="utf-8")
 

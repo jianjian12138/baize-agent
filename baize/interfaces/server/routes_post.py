@@ -1,6 +1,7 @@
 """POST route dispatch and handlers for the Baize HTTP server."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -549,5 +550,146 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
                 "note": INERT_SETTINGS_NOTE,
             })
         return handler._send(400, {"error": "missing config field"})
+
+    if req_path == "/api/sessions/rewind":
+        sid = (data.get("session_id") or "").strip()
+        node_id = (data.get("node_id") or "").strip()
+        if not sid or not node_id:
+            return handler._send(400, {"error": "session_id and node_id are required"})
+        from ...core.sessions import rewind_session
+        cfg = load_config()
+        try:
+            res = rewind_session(
+                sid,
+                node_id,
+                restore_code=bool(data.get("restore_code", False)),
+                workspace=cfg.get("BAIZE_WORKSPACE_DIR", "."),
+                cfg=cfg,
+            )
+            return handler._send(200 if res.get("ok") else 404, res)
+        except FileNotFoundError as exc:
+            return handler._send(404, {"error": str(exc)})
+        except ValueError as exc:
+            return handler._send(400, {"error": str(exc)})
+
+    if req_path == "/api/worktrees/cleanup":
+        from ...execution.worktree import GitWorktreePool
+        cfg = load_config()
+        pool = GitWorktreePool(cfg.get("BAIZE_WORKSPACE_DIR", "."))
+        wt_id = (data.get("worktree_id") or "").strip()
+        if wt_id:
+            res = pool.cleanup(wt_id)
+            return handler._send(200 if res.get("ok") else 404, res)
+        return handler._send(200, pool.cleanup_all())
+
+    if req_path.startswith("/api/approvals/") and req_path.endswith("/resolve"):
+        req_id = req_path[len("/api/approvals/"):-len("/resolve")].strip("/")
+        if not req_id:
+            return handler._send(400, {"error": "missing approval request id"})
+        from ..approval import get_approval_queue
+        approved = bool(data.get("approved", False))
+        scope = (data.get("scope") or ("once" if approved else "deny")).strip()
+        reason = (data.get("reason") or "").strip()
+        res = get_approval_queue().resolve(req_id, approved=approved, scope=scope, reason=reason)
+        return handler._send(200 if res.get("ok") else 404, res)
+
+    if req_path.startswith("/api/bg-procs/") and req_path.endswith("/stop"):
+        proc_id = req_path[len("/api/bg-procs/"):-len("/stop")].strip("/")
+        if not proc_id:
+            return handler._send(400, {"error": "missing process id"})
+        from ...execution.bg_proc import get_bg_manager
+        res = get_bg_manager().stop(proc_id)
+        return handler._send(200 if res.get("ok") else 404, res)
+
+    if req_path == "/api/budget/config":
+        from ...core.cost_ledger import get_cost_ledger
+        cfg = load_config()
+        reset_sid = (data.get("reset_session_id") or "").strip()
+        if reset_sid:
+            ledger = get_cost_ledger(cfg)
+            removed = ledger.reset_session(reset_sid)
+            return handler._send(200, {
+                "ok": True,
+                "reset_session_id": reset_sid,
+                "deleted_rows": removed,
+                "summary": ledger.summary(),
+            })
+        updated: dict[str, Any] = {}
+        try:
+            if "max_session_usd" in data and data["max_session_usd"] is not None:
+                val_usd = float(data["max_session_usd"])
+                if val_usd < 0:
+                    return handler._send(400, {"error": "max_session_usd must be >= 0"})
+                updated["BAIZE_MAX_SESSION_USD"] = f"{val_usd:.4f}"
+            if "max_session_tokens" in data and data["max_session_tokens"] is not None:
+                val_tok = int(data["max_session_tokens"])
+                if val_tok < 0:
+                    return handler._send(400, {"error": "max_session_tokens must be >= 0"})
+                updated["BAIZE_MAX_SESSION_TOKENS"] = str(val_tok)
+            if "warn_ratio" in data and data["warn_ratio"] is not None:
+                val_ratio = float(data["warn_ratio"])
+                if not (0.0 < val_ratio <= 1.0):
+                    return handler._send(400, {"error": "warn_ratio must be in (0, 1]"})
+                updated["BAIZE_BUDGET_WARN_RATIO"] = f"{val_ratio:.2f}"
+        except (TypeError, ValueError) as exc:
+            return handler._send(400, {"error": f"invalid budget parameter: {exc}"})
+        if not updated:
+            return handler._send(400, {"error": "no budget config fields supplied"})
+        with ENV_WRITE_LOCK:
+            for k, v in updated.items():
+                os.environ[k] = v
+        cfg_now = load_config()
+        return handler._send(200, {
+            "ok": True,
+            "updated": updated,
+            "config": {
+                "max_session_usd": float(cfg_now.get("BAIZE_MAX_SESSION_USD", "0") or 0),
+                "max_session_tokens": int(cfg_now.get("BAIZE_MAX_SESSION_TOKENS", "0") or 0),
+                "warn_ratio": float(cfg_now.get("BAIZE_BUDGET_WARN_RATIO", "0.8") or 0.8),
+            },
+            "summary": get_cost_ledger(cfg_now).summary(),
+        })
+
+    if req_path == "/api/memory/bounded":
+        slot = (data.get("slot") or "memory").strip().lower()
+        action = (data.get("action") or "add").strip().lower()
+        content = str(data.get("content") or "")
+        target = str(data.get("target") or "")
+        from ...knowledge.memory import BoundedMemoryStore
+        cfg = load_config()
+        store = BoundedMemoryStore(cfg)
+        res = store.update(slot, action, content=content, target=target)
+        status = 200 if res.get("ok") else 400
+        return handler._send(status, {
+            **res,
+            "stats": store.stats(),
+            "memory": store.read("memory"),
+            "user": store.read("user"),
+        })
+
+    if req_path == "/api/search/hybrid":
+        query = (data.get("query") or "").strip()
+        mode = (data.get("mode") or "hybrid").strip().lower()
+        if mode not in ("hybrid", "fts5", "embedding"):
+            return handler._send(400, {"error": f"invalid search mode: {mode}"})
+        limit = max(1, min(int(data.get("limit", 8) or 8), 50))
+        reindex = bool(data.get("reindex", False))
+        from ...knowledge.hybrid_index import HybridSearchIndex
+        cfg = load_config()
+        idx = HybridSearchIndex(cfg=cfg)
+        st = idx.stats()
+        index_report = None
+        if reindex or st.get("total_docs", 0) == 0:
+            ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+            index_report = idx.index_workspace(ws)
+        hits = idx.search(query, mode=mode, limit=limit) if query else []
+        return handler._send(200, {
+            "query": query,
+            "mode": mode,
+            "embedding_configured": idx.embedding_configured,
+            "indexed": index_report,
+            "stats": idx.stats(),
+            "hits": [h.to_dict() for h in hits],
+        })
 
     return handler._send(404, {"error": "not found"})

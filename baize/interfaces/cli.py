@@ -243,6 +243,20 @@ def cmd_rag(args) -> int:
         if not args.query:
             print("usage: python -m baize rag search <query>")
             return 2
+        mode = getattr(args, "mode", "tfidf") or "tfidf"
+        if mode in ("hybrid", "fts5", "embedding"):
+            from ..core.config import load_config
+            from ..knowledge.hybrid_index import HybridSearchIndex
+            idx = HybridSearchIndex()
+            if idx.stats()["total_docs"] == 0:
+                idx.index_workspace(load_config().get("BAIZE_WORKSPACE_DIR", "."))
+            hhits = idx.search(args.query, mode=mode, limit=args.top_k)
+            if not hhits:
+                print("no context matched")
+                return 1
+            for h in hhits:
+                print(f"- [{h.source} {h.score:.4f}] {h.title}: {h.snippet[:80]}")
+            return 0
         hits = rag.retrieve(args.query, top_k=args.top_k)
         if not hits:
             print("no context matched")
@@ -537,7 +551,8 @@ def cmd_team(args) -> int:
     resume_run_id = getattr(args, "resume", "") or None
     if resume_run_id:
         print(f"[resume] run-id: {resume_run_id}")
-    res = orch.run(args.goal, resume_run_id=resume_run_id)
+    res = orch.run(args.goal, resume_run_id=resume_run_id,
+                   parallel_worktrees=True if getattr(args, 'parallel', False) else None)
     print("=" * 62)
     total = len(res.reports)
     for i, r in enumerate(res.reports, start=1):
@@ -935,6 +950,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "skipping already-verified tasks")
     tp.add_argument("--no-color", action="store_true", help="disable ANSI color")
     tp.add_argument("--quiet", action="store_true", help="summary only")
+    tp.add_argument("--parallel", action="store_true",
+                    help="(V42) isolate parallel DAG subtasks in ephemeral Git worktrees")
 
     route_p = sub.add_parser("route", help="System 1 fast intent routing & complexity analysis")
     route_p.add_argument("goal")
@@ -969,6 +986,8 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("action", choices=["search", "scores"])
     rg.add_argument("query", nargs="?", default="")
     rg.add_argument("--top-k", type=int, default=5)
+    rg.add_argument("--mode", choices=["tfidf", "hybrid", "fts5", "embedding"], default="tfidf",
+                    help="retrieval mode (default tfidf; V42 adds hybrid/fts5/embedding)")
 
     bp = sub.add_parser("bench", help="run deterministic core benchmarks")
     bp.add_argument("--public", action="store_true",
@@ -1086,6 +1105,16 @@ def build_parser() -> argparse.ArgumentParser:
     rpc_p.add_argument("--tool-profile", choices=("minimal", "tiered", "full"), default="",
                        help="tool exposure profile for RPC sessions")
 
+    # V42: Git Worktree pool management & Cost/Budget Ledger CLI
+    wt_p = sub.add_parser("worktree", help="inspect or clean up parallel Git worktrees (V42.0.0 Helios)")
+    wt_p.add_argument("action", nargs="?", choices=("list", "cleanup"), default="list")
+    wt_p.add_argument("--json", action="store_true", help="output JSON")
+
+    bg_p = sub.add_parser("budget", help="inspect or reset session cost/token budget ledger (V42.0.0 Helios)")
+    bg_p.add_argument("action", nargs="?", choices=("show", "reset"), default="show")
+    bg_p.add_argument("--session", default="", help="optional session_id to inspect or reset")
+    bg_p.add_argument("--json", action="store_true", help="output JSON")
+
     return p
 
 
@@ -1198,6 +1227,48 @@ def cmd_rpc(args) -> int:
     return srv.serve_forever()
 
 
+def cmd_worktree(args) -> int:
+    from ..core.config import load_config
+    from ..execution.worktree import GitWorktreePool
+    ws = load_config().get("BAIZE_WORKSPACE_DIR", ".")
+    pool = GitWorktreePool(ws)
+    if args.action == "cleanup":
+        res = pool.cleanup_all()
+        print(json.dumps(res, indent=2, ensure_ascii=False) if args.json else f"Cleaned {res['count']} worktree(s).")
+        return 0
+    wts = pool.list_worktrees()
+    if args.json:
+        print(json.dumps({"worktrees": wts, "total": len(wts)}, indent=2, ensure_ascii=False))
+    elif not wts:
+        print("No Git worktrees recorded.")
+    else:
+        for w in wts:
+            print(f"  {w['worktree_id']}  [{w['status']}]  branch={w['branch_name']}  files={len(w.get('changed_files') or [])}")
+    return 0
+
+
+def cmd_budget(args) -> int:
+    from ..core.cost_ledger import get_cost_ledger
+    ledger = get_cost_ledger()
+    if args.action == "reset":
+        sid = (args.session or "default").strip()
+        n = ledger.reset_session(sid)
+        print(json.dumps({"reset": sid, "deleted": n}) if args.json else f"Cleared {n} cost event(s) for {sid}.")
+        return 0
+    if args.session:
+        st = ledger.check_budget(args.session).to_dict()
+        print(json.dumps(st, indent=2, ensure_ascii=False) if args.json else
+              f"Session {st['session_id']}: tokens={st['total_tokens']:,} cache={st['cache_hit_ratio']*100:.1f}% usd=${st['estimated_usd']:.6f}")
+        return 0
+    summ = ledger.summary()
+    if args.json:
+        print(json.dumps(summ, indent=2, ensure_ascii=False))
+    else:
+        print(f"Total calls={summ['total_calls']} tokens={summ['total_tokens']:,} "
+              f"cache_hit={summ['cache_hit_ratio']*100:.1f}% est_usd=${summ['estimated_usd']:.6f}")
+    return 0
+
+
 def cmd_rollback(args) -> int:
     from ..core.config import load_config
     from ..execution.checkpoint import GitCheckpointManager
@@ -1281,7 +1352,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget"):
         try:
             validate()
         except ConfigError as e:
@@ -1321,6 +1392,8 @@ def main(argv: list[str] | None = None) -> int:
         "impact": cmd_impact,
         "blast": cmd_blast,
         "rpc": cmd_rpc,
+        "worktree": cmd_worktree,
+        "budget": cmd_budget,
     }
     return handlers[args.command](args)
 

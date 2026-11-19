@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "41.0.0",
+  "version": "42.0.0",
   "phases": [
     {
       "id": "V68",
@@ -546,6 +546,30 @@
         "tests/core/test_v41_context_and_plugins.py",
         "tests/execution/test_v41_bg_proc_and_channels.py",
         "tests/interfaces/test_v41_approval_rpc_and_tree.py"
+      ]
+    },
+    {
+      "id": "V138",
+      "name": "V42.0.0 Helios 全维进化（Git Worktree 真并行多 Agent 隔离合并与 SQLite WAL 共享团队黑板、SQLite FTS5 + HTTP Embedding RRF 混合语义检索、原生 Gemini REST 适配器与多模态图像输入、会话级 USD/Token 成本账本与 80%/100% 硬预算熔断、纯 stdlib RFC 6455 WebSocket CDP 浏览器自验与 Studio V42 Helios 观测台）",
+      "status": "done",
+      "evidence": [
+        "baize/execution/worktree.py",
+        "baize/knowledge/hybrid_index.py",
+        "baize/core/cost_ledger.py",
+        "baize/ext/providers/gemini.py",
+        "baize/execution/cdp_browser.py",
+        "baize/knowledge/memory.py",
+        "baize/orchestration/orchestrator.py",
+        "baize/core/agent.py",
+        "baize/core/llm.py",
+        "baize/interfaces/server/routes_get.py",
+        "baize/interfaces/server/routes_post.py",
+        "baize/interfaces/studio/index.html",
+        "baize/interfaces/studio/app.js",
+        "tests/execution/test_v42_worktree_and_cdp.py",
+        "tests/knowledge/test_v42_hybrid_and_shared_memory.py",
+        "tests/core/test_v42_cost_gemini_multimodal.py",
+        "tests/interfaces/test_v42_studio_routes.py"
       ]
     }
   ]

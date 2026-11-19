@@ -24,6 +24,12 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "BackgroundProcess": (".bg_proc", "BackgroundProcess"),
     "BackgroundProcessManager": (".bg_proc", "BackgroundProcessManager"),
     "get_bg_manager": (".bg_proc", "get_bg_manager"),
+    "GitWorktreePool": (".worktree", "GitWorktreePool"),
+    "WorktreeEntry": (".worktree", "WorktreeEntry"),
+    "CDPBrowserClient": (".cdp_browser", "CDPBrowserClient"),
+    "CDPUnavailableError": (".cdp_browser", "CDPUnavailableError"),
+    "SimpleWebSocketClient": (".cdp_browser", "SimpleWebSocketClient"),
+    "verify_url_with_cdp": (".browser_verify", "verify_url_with_cdp"),
 }
 
 __all__ = list(_EXPORTS)

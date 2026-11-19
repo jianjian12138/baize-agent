@@ -12,13 +12,13 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (63 modules)
-├── core/                           # 9 modules: agent loop, context engine, plugin lifecycle, LLM client, config, sessions, autonomy
-│   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  llm.py  plugin.py  plugin_lifecycle.py  sessions.py
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (68 modules)
+├── core/                           # 10 modules: agent loop, context engine, cost ledger, plugin lifecycle, LLM client, config, sessions, autonomy
+│   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  cost_ledger.py  llm.py  plugin.py  plugin_lifecycle.py  sessions.py
 ├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
 │   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  system1.py  team.py
-├── execution/                      # 8 modules: tools, bg_proc, tiered sandbox, Git checkpoints, proc, PowerShell, Docker, browser
-│   ├── bg_proc.py  browser_verify.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py
+├── execution/                      # 10 modules: tools, bg_proc, worktree pool, CDP browser, tiered sandbox, Git checkpoints, proc, PowerShell, Docker
+│   ├── bg_proc.py  browser_verify.py  cdp_browser.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py  worktree.py
 ├── codebase/                       # 7 orthogonal static code intelligence & diagnostics modules
 │   ├── arch_cache.py               # incremental mtime/size-keyed SQLite architecture cache
 │   ├── diagnostics.py              # zero-dependency stdio LSP client & compiler/linter diagnostic bridge
@@ -27,8 +27,8 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │   ├── repo_map.py                 # flat + L0/L1/L2 hierarchical repo maps & AST context slicer
 │   ├── symbol_graph.py             # AST/regex symbol graph, PageRank, canonical SKIP_DIRS/SUPPORTED_EXTS
 │   └── workspace_search.py         # zero-dependency workspace grep & glob search
-├── knowledge/                      # 6 modules: layered + bounded memory, graph, RAG/TF-IDF, skills & runner
-│   ├── doc_crawler.py  graph.py  memory.py  rag.py  skill_runner.py  skills.py
+├── knowledge/                      # 7 modules: layered + SQLite WAL + bounded memory, FTS5+Embedding hybrid index, graph, RAG/TF-IDF, skills & runner
+│   ├── doc_crawler.py  graph.py  hybrid_index.py  memory.py  rag.py  skill_runner.py  skills.py
 ├── governance/                     # 6 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs
 │   ├── bench.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py
 ├── interfaces/                     # 13 modules: CLI, REPL, Diff approval, JSONL RPC, HTTP/SSE server, jobs, ops, desktop, UI
@@ -40,13 +40,14 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │       ├── routes_post.py          # POST dispatch (/team/dag, /api/git/apply_hunk, /api/jobs, /api/channels/<ch>/webhook, etc.)
 │       ├── security.py             # fail-closed auth, CORS allowlist, path guards
 │       └── streaming.py            # real-time token + event SSE streaming for /run/stream
-└── ext/                            # 7 modules: optional extensions (lazily loaded, fail-closed)
+└── ext/                            # 8 modules: optional extensions (lazily loaded, fail-closed)
     ├── channels.py                 # bidirectional Feishu/DingTalk/Telegram/Slack webhook gateway
     ├── mcp/                        # unified Model Context Protocol client/server/dispatcher
     │   ├── client.py  component.py  dispatcher.py  server.py  transport.py
     ├── plugins/
     │   └── metrics.py              # feeds observability counters from lifecycle hooks
-    └── providers/                  # reserved - currently empty
+    └── providers/                  # native non-OpenAI provider adapters
+        └── gemini.py               # pure-stdlib Google Gemini generateContent REST adapter
 ```
 
 > This tree is generated from the filesystem by

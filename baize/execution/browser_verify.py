@@ -103,3 +103,48 @@ def verify_frontend_code(html_content: str, target_name: str = "index.html") -> 
         rendered_elements_count=elem_count,
     )
     return report.to_dict()
+
+
+def verify_url_with_cdp(
+    url: str,
+    *,
+    ws_url: str = "",
+    browser_binary: str = "",
+    screenshot_path: str | None = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Verify a live web page via real Chrome DevTools Protocol (pure stdlib).
+
+    Fails closed with ``mode='unavailable'`` and ``ok=False`` when no local
+    Chrome/Chromium/Edge binary or explicit CDP WebSocket endpoint is present.
+    """
+    from .cdp_browser import CDPBrowserClient, CDPUnavailableError
+
+    client = CDPBrowserClient(ws_url=ws_url, browser_binary=browser_binary, timeout=timeout)
+    try:
+        res = client.verify_page(url, screenshot_path=screenshot_path)
+        return res.to_dict()
+    except CDPUnavailableError as exc:
+        return {
+            "ok": False,
+            "url": url,
+            "mode": "unavailable",
+            "title": "",
+            "console_errors": [],
+            "exceptions": [],
+            "dom_snippet": "",
+            "screenshot_path": "",
+            "error": str(exc),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "url": url,
+            "mode": "cdp_error",
+            "title": "",
+            "console_errors": [],
+            "exceptions": [],
+            "dom_snippet": "",
+            "screenshot_path": "",
+            "error": str(exc),
+        }

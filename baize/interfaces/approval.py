@@ -265,3 +265,127 @@ def format_status_bar(
         return f"[{bar}]"
     ctx_col = _RED if ctx_pct >= 85 else (_YELLOW if ctx_pct >= 70 else _CYAN)
     return f"{_DIM}[{_RESET}{ctx_col}{bar}{_RESET}{_DIM}]{_RESET}"
+
+
+class ApprovalQueue:
+    """Thread-safe shared approval queue bridging CLI, RPC, and Baize Studio Web UI."""
+
+    def __init__(self) -> None:
+        import threading
+        self._lock = threading.Lock()
+        self._pending: dict[str, dict[str, Any]] = {}
+        self._history: list[dict[str, Any]] = []
+
+    def submit(self, req: ApprovalRequest, *, timeout: float = 300.0) -> ApprovalDecision:
+        import threading
+        import time
+        import uuid
+
+        req_id = req.request_id or f"apr-{uuid.uuid4().hex[:8]}"
+        ev = threading.Event()
+        entry: dict[str, Any] = {
+            "request_id": req_id,
+            "tool_name": req.tool_name,
+            "arguments": req.arguments,
+            "preview": req.preview,
+            "risk": req.risk,
+            "created_at": round(time.time(), 3),
+            "status": "pending",
+            "_event": ev,
+            "_decision": None,
+        }
+        with self._lock:
+            self._pending[req_id] = entry
+
+        waited = ev.wait(timeout=timeout)
+        with self._lock:
+            popped = self._pending.pop(req_id, entry)
+            dec = popped.get("_decision")
+            if not waited or dec is None:
+                dec = ApprovalDecision(approved=False, scope="denied", reason="Approval timed out")
+            self._history.append({
+                "request_id": req_id,
+                "tool_name": req.tool_name,
+                "risk": req.risk,
+                "approved": dec.approved,
+                "scope": dec.scope,
+                "reason": dec.reason,
+                "resolved_at": round(time.time(), 3),
+            })
+            self._history = self._history[-100:]
+            return dec
+
+    def enqueue_nonblocking(self, req: ApprovalRequest) -> dict[str, Any]:
+        """Register a pending approval item for asynchronous Web UI resolution."""
+        import threading
+        import time
+        import uuid
+
+        req_id = req.request_id or f"apr-{uuid.uuid4().hex[:8]}"
+        entry: dict[str, Any] = {
+            "request_id": req_id,
+            "tool_name": req.tool_name,
+            "arguments": req.arguments,
+            "preview": req.preview,
+            "risk": req.risk,
+            "created_at": round(time.time(), 3),
+            "status": "pending",
+            "_event": threading.Event(),
+            "_decision": None,
+        }
+        with self._lock:
+            self._pending[req_id] = entry
+        return {k: v for k, v in entry.items() if not k.startswith("_")}
+
+    def resolve(
+        self,
+        request_id: str,
+        *,
+        approved: bool,
+        scope: str = "once",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        import time
+        with self._lock:
+            entry = self._pending.get(request_id)
+            if entry is None:
+                return {"ok": False, "error": f"pending approval not found: {request_id}"}
+            dec = ApprovalDecision(
+                approved=bool(approved),
+                scope=scope if approved else "denied",
+                reason=reason or ("" if approved else "Denied via Studio"),
+            )
+            entry["_decision"] = dec
+            entry["status"] = "approved" if approved else "denied"
+            entry["_event"].set()
+            if request_id in self._pending:
+                self._pending.pop(request_id, None)
+                self._history.append({
+                    "request_id": request_id,
+                    "tool_name": entry["tool_name"],
+                    "risk": entry["risk"],
+                    "approved": dec.approved,
+                    "scope": dec.scope,
+                    "reason": dec.reason,
+                    "resolved_at": round(time.time(), 3),
+                })
+                self._history = self._history[-100:]
+            return {"ok": True, "request_id": request_id, "approved": dec.approved, "scope": dec.scope, "reason": dec.reason}
+
+    def list_pending(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [
+                {k: v for k, v in e.items() if not k.startswith("_")}
+                for e in self._pending.values()
+            ]
+
+    def history(self, limit: int = 30) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._history[-limit:])
+
+
+_GLOBAL_APPROVAL_QUEUE = ApprovalQueue()
+
+
+def get_approval_queue() -> ApprovalQueue:
+    return _GLOBAL_APPROVAL_QUEUE

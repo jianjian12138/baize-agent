@@ -17,6 +17,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "format_status_bar": (".approval", "format_status_bar"),
     "StreamJsonEmitter": (".rpc", "StreamJsonEmitter"),
     "RpcServer": (".rpc", "RpcServer"),
+    "ApprovalQueue": (".approval", "ApprovalQueue"),
+    "get_approval_queue": (".approval", "get_approval_queue"),
 }
 
 __all__ = list(_EXPORTS)

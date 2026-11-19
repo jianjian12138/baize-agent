@@ -468,14 +468,21 @@ class Agent:
             return False, "plan mode allows read-only tools only"
         return self.autonomy.allow(name, args)
 
-    def run(self, goal: str, extra_system: str = "") -> AgentResult:
+    def run(
+        self,
+        goal: str,
+        extra_system: str = "",
+        images: list[str] | None = None,
+    ) -> AgentResult:
         """Run the agent to completion via the active loop strategy.
 
         V22 #96 (review downgrade): the loop is a swappable strategy rather
         than a ``kind=loop`` component. Default strategy is ``DefaultLoop``;
         a custom strategy may be injected via ``loop_strategy=`` (e.g.
         ``ProgrammaticLoop`` for the opt-in / eval path).
+        V42: Optional ``images`` paths are encoded as multimodal user parts.
         """
+        self._pending_images = list(images or [])
         return self.loop.run(self, goal, extra_system)
 
 
@@ -580,15 +587,30 @@ class Agent:
 
         sys_prompt = build_system_prompt(self.role, self.cfg,
                                          self.registry, extra)
+        pending_imgs = getattr(self, "_pending_images", None) or []
+        self._pending_images = []
         if not self.session.messages:
             self.session.append({"role": "system", "content": sys_prompt})
             mem = "" if getattr(self, "_no_memory", False) else recall_context(goal, self.cfg)
-            user_content = f"{mem}\n\nTASK: {goal}" if mem else goal
-            self.session.append({"role": "user", "content": user_content})
-            self.hooks.user_prompt_submit(user_content)
+            user_text = f"{mem}\n\nTASK: {goal}" if mem else goal
         else:  # resumed session - just add the new user turn
-            self.session.append({"role": "user", "content": goal})
-            self.hooks.user_prompt_submit(goal)
+            user_text = goal
+        if pending_imgs:
+            from .llm import encode_image_part
+            max_img_bytes = int(self.cfg.get("BAIZE_MULTIMODAL_MAX_BYTES", "4194304") or "4194304")
+            models_list = getattr(self.client, "models", [])
+            prov = models_list[0].provider if models_list else "openai"
+            content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+            for img_p in pending_imgs:
+                try:
+                    content_parts.append(encode_image_part(img_p, provider=prov, max_bytes=max_img_bytes))
+                except Exception as img_exc:
+                    self._emit("warning", f"skipped image {img_p}: {img_exc}")
+            self.session.append({"role": "user", "content": content_parts})
+            self.hooks.user_prompt_submit(user_text)
+        else:
+            self.session.append({"role": "user", "content": user_text})
+            self.hooks.user_prompt_submit(user_text)
 
         from .context_engine import ToolProfileManager, compact_messages_structured, spill_tool_output
         profile_mgr = ToolProfileManager(
@@ -673,6 +695,28 @@ class Agent:
                     self._emit("compress", f"compressed {n} old observations")
                     self.session.append({"compressed": n}, kind="compress")
 
+            # V42: session cost/token budget guard (80% soft warning, 100% hard circuit breaker)
+            from .cost_ledger import get_cost_ledger
+            _ledger = get_cost_ledger(self.cfg)
+            _bstat = _ledger.check_budget(self.session.id)
+            if _bstat.exceeded:
+                self._emit("budget_exceeded", _bstat.reason)
+                self.session.append({"role": "assistant", "content": f"[budget_exceeded] {_bstat.reason}"})
+                res = AgentResult(
+                    self.session.id,
+                    f"Session halted by hard budget circuit breaker: {_bstat.reason}",
+                    step,
+                    n_tool_calls,
+                    "budget_exceeded",
+                    self.session.messages,
+                )
+                res = self._finish_checkpoint(cp_mgr, cp_id, res)
+                self.hooks.session_end(res)
+                return res
+            if _bstat.warning and not getattr(self, "_budget_warned", False):
+                self._budget_warned = True
+                self._emit("budget_warning", _bstat.reason)
+
             try:
                 # P3-4: pin the cacheable prefix (system prompt first) so the
                 # stable block is unambiguous - required for prompt caching.
@@ -684,6 +728,20 @@ class Agent:
                     )
                 else:
                     msg = self.client.chat(msgs, tools=tool_schemas)
+                _usage = getattr(self.client, "last_usage", None) or (
+                    msg.get("_usage") if isinstance(msg, dict) else None
+                )
+                if isinstance(_usage, dict) and (
+                    int(_usage.get("prompt_tokens") or 0) > 0 or int(_usage.get("completion_tokens") or 0) > 0
+                ):
+                    _ledger.record(
+                        session_id=self.session.id,
+                        provider=str(_usage.get("provider") or "openai"),
+                        model=str(_usage.get("model") or self.cfg.get("BAIZE_MODEL_NAME") or "unknown"),
+                        prompt_tokens=int(_usage.get("prompt_tokens") or 0),
+                        cached_tokens=int(_usage.get("cached_tokens") or 0),
+                        completion_tokens=int(_usage.get("completion_tokens") or 0),
+                    )
             except LLMError as exc:
                 plugin_registry.fire("on_error", exc)
                 obs.record_error("agent_errors")

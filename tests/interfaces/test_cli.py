@@ -369,13 +369,15 @@ def test_cli_team_memory_lifecycle(tmp_path, capsys, monkeypatch):
     assert rc == 1
 
 
-def test_cli_team_memory_unavailable(tmp_path, capsys, monkeypatch):
+def test_cli_team_memory_shared_sqlite(tmp_path, capsys, monkeypatch):
+    from baize.knowledge.memory import TeamMemory
     _make_env(tmp_path, monkeypatch)
     monkeypatch.setenv("BAIZE_TEAM_MEMORY_BACKEND", "shared")
-    rc = main(["team-memory", "show"])
+    TeamMemory("shared-cli").post("executor", "hello wal")
+    rc = main(["team-memory", "show", "shared-cli"])
     out = capsys.readouterr().out
-    assert rc == 2
-    assert "unavailable" in out
+    assert rc == 0
+    assert "hello wal" in out
 
 
 def test_cli_team_memory_unknown_action(capsys):

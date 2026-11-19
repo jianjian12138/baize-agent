@@ -49,6 +49,7 @@ function switchTab(tabId) {
   if (tabId === 'tab-skills') loadSkills();
   if (tabId === 'tab-memory') loadMemory();
   if (tabId === 'tab-doctor') runDoctorHealthCheck();
+  if (tabId === 'tab-helios') refreshHeliosAll();
 }
 
 function toggleTheme() {
@@ -1707,3 +1708,384 @@ window.addEventListener('DOMContentLoaded', () => {
   loadLineageTree();
   renderDagCanvas();
 });
+
+
+// --- V42 Helios Developer Console ---
+function heliosAuthHeaders(extra = {}) {
+  const h = { ...extra };
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tok = params.get('token') || localStorage.getItem('baize_auth_token') || '';
+    if (tok) h['Authorization'] = `Bearer ${tok}`;
+  } catch (e) {}
+  return h;
+}
+
+function switchHeliosPane(paneId) {
+  document.querySelectorAll('.helios-tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.heliosPane === paneId);
+  });
+  document.querySelectorAll('.helios-pane').forEach(p => {
+    p.classList.toggle('active', p.id === paneId);
+  });
+  if (paneId === 'helios-cost') { loadHeliosBudget(); loadHeliosChannels(); }
+  if (paneId === 'helios-ops') { loadHeliosApprovals(); loadHeliosBgProcs(); }
+  if (paneId === 'helios-worktrees') loadHeliosWorktrees();
+  if (paneId === 'helios-rag') loadHeliosBoundedMemory();
+  if (paneId === 'helios-tree') loadHeliosSessionTree();
+}
+
+function refreshHeliosAll() {
+  loadHeliosBudget();
+  loadHeliosChannels();
+  loadHeliosApprovals();
+  loadHeliosBgProcs();
+  loadHeliosWorktrees();
+  loadHeliosBoundedMemory();
+  loadHeliosSessionTree();
+}
+
+async function loadHeliosBudget() {
+  try {
+    const res = await fetch('/api/budget', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    if (!res.ok) return;
+    const s = d.summary || {};
+    const cfg = d.config || {};
+    const elUsd = document.getElementById('helios-kpi-usd');
+    const elTok = document.getElementById('helios-kpi-tokens');
+    const elCache = document.getElementById('helios-kpi-cache');
+    const elStatus = document.getElementById('helios-kpi-status');
+    if (elUsd) elUsd.textContent = `$${Number(s.estimated_usd || 0).toFixed(4)}`;
+    if (elTok) elTok.textContent = Number(s.total_tokens || 0).toLocaleString();
+    if (elCache) elCache.textContent = `${(Number(s.cache_hit_ratio || 0) * 100).toFixed(1)}%`;
+    const elCalls = document.getElementById('helios-kpi-calls');
+    if (elCalls) elCalls.textContent = `模型调用：${s.total_calls || 0} 次`;
+    const elUsdCap = document.getElementById('helios-kpi-usd-cap');
+    if (elUsdCap) elUsdCap.textContent = cfg.max_session_usd > 0 ? `单会话上限：$${Number(cfg.max_session_usd).toFixed(2)}` : '预算上限：未限制';
+    const elTokCap = document.getElementById('helios-kpi-tok-cap');
+    if (elTokCap) elTokCap.textContent = cfg.max_session_tokens > 0 ? `单会话上限：${Number(cfg.max_session_tokens).toLocaleString()}` : 'Token 上限：未限制';
+    const elWarn = document.getElementById('helios-kpi-warn-ratio');
+    if (elWarn) elWarn.textContent = `告警阈值：${Math.round(Number(cfg.warn_ratio || 0.8) * 100)}%`;
+
+    const inUsd = document.getElementById('helios-cfg-usd');
+    const inTok = document.getElementById('helios-cfg-tokens');
+    const inWarn = document.getElementById('helios-cfg-warn');
+    if (inUsd && !inUsd.value) inUsd.value = cfg.max_session_usd || 0;
+    if (inTok && !inTok.value) inTok.value = cfg.max_session_tokens || 0;
+    if (inWarn && !inWarn.value) inWarn.value = cfg.warn_ratio || 0.8;
+
+    const sessions = s.sessions || [];
+    const maxSessUsd = sessions.reduce((acc, x) => Math.max(acc, Number(x.estimated_usd || 0)), 0);
+    if (elStatus) {
+      if (cfg.max_session_usd > 0 && maxSessUsd >= cfg.max_session_usd) {
+        elStatus.innerHTML = '<span class="helios-status-err">已触发熔断</span>';
+      } else if (cfg.max_session_usd > 0 && maxSessUsd >= cfg.max_session_usd * (cfg.warn_ratio || 0.8)) {
+        elStatus.innerHTML = '<span class="helios-status-warn">接近上限告警</span>';
+      } else {
+        elStatus.innerHTML = '<span class="helios-status-ok">正常</span>';
+      }
+    }
+
+    const tbody = document.getElementById('helios-budget-sessions');
+    if (tbody) {
+      if (!sessions.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="helios-empty">暂无会话成本记录</td></tr>';
+      } else {
+        tbody.innerHTML = sessions.map(row => `
+          <tr>
+            <td class="tabular-nums">${escapeHtml(row.session_id || '')}</td>
+            <td class="tabular-nums">${row.calls || 0}</td>
+            <td class="tabular-nums">${Number((row.prompt_tokens || 0) + (row.completion_tokens || 0)).toLocaleString()}</td>
+            <td class="tabular-nums">${(Number(row.cache_hit_ratio || 0) * 100).toFixed(1)}%</td>
+            <td class="tabular-nums">$${Number(row.estimated_usd || 0).toFixed(4)}</td>
+            <td><button class="chip-btn" onclick="resetHeliosSessionBudget('${escapeHtml(row.session_id || '')}')">重置</button></td>
+          </tr>
+        `).join('');
+      }
+    }
+  } catch (e) {}
+}
+
+async function saveHeliosBudgetConfig() {
+  const msg = document.getElementById('helios-budget-msg');
+  const payload = {
+    max_session_usd: parseFloat(document.getElementById('helios-cfg-usd')?.value || '0'),
+    max_session_tokens: parseInt(document.getElementById('helios-cfg-tokens')?.value || '0', 10),
+    warn_ratio: parseFloat(document.getElementById('helios-cfg-warn')?.value || '0.8'),
+  };
+  try {
+    const res = await fetch('/api/budget/config', {
+      method: 'POST',
+      headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (msg) msg.innerHTML = res.ok
+      ? '<span class="helios-status-ok">预算配置已生效（当前服务进程内）</span>'
+      : `<span class="helios-status-err">保存失败：${escapeHtml(d.error || res.statusText)}</span>`;
+    if (res.ok) loadHeliosBudget();
+  } catch (e) {
+    if (msg) msg.innerHTML = `<span class="helios-status-err">请求失败：${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function resetHeliosSessionBudget(sessionId) {
+  await fetch('/api/budget/config', {
+    method: 'POST',
+    headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ reset_session_id: sessionId }),
+  });
+  loadHeliosBudget();
+}
+
+async function loadHeliosChannels() {
+  const tbody = document.getElementById('helios-channels-body');
+  if (!tbody) return;
+  try {
+    const res = await fetch('/api/channels', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    const chans = d.channels || [];
+    if (!chans.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="helios-empty">未检测到渠道适配器</td></tr>';
+      return;
+    }
+    tbody.innerHTML = chans.map(c => `
+      <tr>
+        <td><strong>${escapeHtml(c.name || '')}</strong></td>
+        <td>${c.configured ? '<span class="helios-status-ok">已配置</span>' : '<span class="helios-hint">未配置密钥</span>'}</td>
+        <td class="tabular-nums">${escapeHtml(c.webhook_path || `/api/channels/${c.name}/webhook`)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" class="helios-empty">加载失败：${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function loadHeliosApprovals() {
+  const pBox = document.getElementById('helios-approvals-pending');
+  const hBox = document.getElementById('helios-approvals-history');
+  if (!pBox || !hBox) return;
+  try {
+    const res = await fetch('/api/approvals', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    const pending = d.pending || [];
+    const hist = d.history || [];
+    pBox.innerHTML = pending.length ? pending.map(r => `
+      <div class="helios-item-card">
+        <div class="helios-item-head">
+          <strong>${escapeHtml(r.tool_name || 'tool')}</strong>
+          <span class="helios-status-warn">待审批 · ${escapeHtml(r.request_id || '')}</span>
+        </div>
+        <div class="helios-hint">${escapeHtml(r.risk || '')}</div>
+        ${r.preview ? `<pre class="helios-code-box">${escapeHtml(r.preview)}</pre>` : ''}
+        <div class="helios-btn-group">
+          <button class="primary-btn" onclick="resolveHeliosApproval('${escapeHtml(r.request_id)}', true, 'once')">批准一次</button>
+          <button class="chip-btn" onclick="resolveHeliosApproval('${escapeHtml(r.request_id)}', true, 'session')">本会话信任</button>
+          <button class="chip-btn helios-danger-btn" onclick="resolveHeliosApproval('${escapeHtml(r.request_id)}', false, 'deny')">拒绝</button>
+        </div>
+      </div>
+    `).join('') : '<div class="helios-empty">当前无待审批的高风险操作</div>';
+
+    hBox.innerHTML = hist.length ? hist.slice(0, 10).map(h => `
+      <div class="helios-item-card">
+        <div class="helios-item-head">
+          <span>${escapeHtml(h.tool_name || '')} · ${escapeHtml(h.request_id || '')}</span>
+          <span class="${h.approved ? 'helios-status-ok' : 'helios-status-err'}">${h.approved ? '已批准' : '已拒绝'} (${escapeHtml(h.scope || '')})</span>
+        </div>
+      </div>
+    `).join('') : '<div class="helios-empty">暂无历史审批记录</div>';
+  } catch (e) {}
+}
+
+async function resolveHeliosApproval(reqId, approved, scope) {
+  await fetch(`/api/approvals/${encodeURIComponent(reqId)}/resolve`, {
+    method: 'POST',
+    headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ approved, scope }),
+  });
+  loadHeliosApprovals();
+}
+
+async function loadHeliosBgProcs(selectedId = '') {
+  const tbody = document.getElementById('helios-bgprocs-body');
+  const outEl = document.getElementById('helios-bgproc-output');
+  if (!tbody) return;
+  try {
+    const qs = selectedId ? `?id=${encodeURIComponent(selectedId)}&tail=80` : '';
+    const res = await fetch(`/api/bg-procs${qs}`, { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    const procs = d.procs || [];
+    tbody.innerHTML = procs.length ? procs.map(p => `
+      <tr>
+        <td class="tabular-nums">${escapeHtml(p.proc_id || '')}</td>
+        <td><span class="${(p.status === 'running') ? 'helios-status-ok' : 'helios-hint'}">${(p.status === 'running') ? '运行中' : `已退出 (${p.returncode})`}</span></td>
+        <td class="tabular-nums">${escapeHtml(p.command || '')}</td>
+        <td class="helios-btn-group">
+          <button class="chip-btn" onclick="loadHeliosBgProcs('${escapeHtml(p.proc_id || '')}')">日志</button>
+          ${(p.status === 'running') ? `<button class="chip-btn helios-danger-btn" onclick="stopHeliosBgProc('${escapeHtml(p.proc_id || '')}')">终止</button>` : ''}
+        </td>
+      </tr>
+    `).join('') : '<tr><td colspan="4" class="helios-empty">暂无后台进程</td></tr>';
+    if (d.output && outEl) {
+      outEl.textContent = d.output.output || '(无日志输出)';
+    }
+  } catch (e) {}
+}
+
+async function stopHeliosBgProc(procId) {
+  await fetch(`/api/bg-procs/${encodeURIComponent(procId)}/stop`, {
+    method: 'POST',
+    headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({}),
+  });
+  loadHeliosBgProcs();
+}
+
+async function loadHeliosWorktrees() {
+  const tbody = document.getElementById('helios-wt-body');
+  const meta = document.getElementById('helios-wt-meta');
+  if (!tbody) return;
+  try {
+    const res = await fetch('/api/worktrees', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    if (meta) {
+      meta.textContent = `仓库：${d.is_git_repo ? 'Git 仓库就绪' : '非 Git 仓库'} · 并行隔离默认：${d.parallel_enabled ? '已开启' : '按需开启 (--parallel)'}`;
+    }
+    const wts = d.worktrees || [];
+    tbody.innerHTML = wts.length ? wts.map(w => `
+      <tr>
+        <td class="tabular-nums">${escapeHtml(w.worktree_id || '')}</td>
+        <td>${escapeHtml(w.subtask_id || '')}</td>
+        <td class="tabular-nums">${escapeHtml(w.branch_name || '')}</td>
+        <td><span class="${w.status === 'conflict' ? 'helios-status-err' : (w.status === 'merged' ? 'helios-status-ok' : 'helios-status-warn')}">${escapeHtml(w.status || 'active')}</span></td>
+        <td>${escapeHtml(w.merge_commit || w.error || w.worktree_path || '')}</td>
+        <td><button class="chip-btn helios-danger-btn" onclick="cleanupHeliosWorktree('${escapeHtml(w.worktree_id || '')}')">清理</button></td>
+      </tr>
+    `).join('') : '<tr><td colspan="6" class="helios-empty">当前没有活动的临时 Worktree</td></tr>';
+  } catch (e) {}
+}
+
+async function cleanupHeliosWorktree(wtId) {
+  const fb = document.getElementById('helios-wt-feedback');
+  const res = await fetch('/api/worktrees/cleanup', {
+    method: 'POST',
+    headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(wtId ? { worktree_id: wtId } : {}),
+  });
+  const d = await res.json();
+  if (fb) fb.textContent = res.ok ? `清理完成：${JSON.stringify(d)}` : `清理失败：${d.error || res.statusText}`;
+  loadHeliosWorktrees();
+}
+
+async function runHeliosHybridSearch() {
+  const query = (document.getElementById('helios-rag-query')?.value || '').trim();
+  const mode = document.getElementById('helios-rag-mode')?.value || 'hybrid';
+  const reindex = Boolean(document.getElementById('helios-rag-reindex')?.checked);
+  const box = document.getElementById('helios-rag-results');
+  const meta = document.getElementById('helios-rag-meta');
+  if (!box) return;
+  box.innerHTML = '<div class="helios-empty">正在执行混合检索...</div>';
+  try {
+    const res = await fetch('/api/search/hybrid', {
+      method: 'POST',
+      headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ query, mode, reindex, limit: 8 }),
+    });
+    const d = await res.json();
+    if (meta && d.stats) {
+      meta.textContent = `索引文档：${d.stats.total_docs || 0} · 向量缓存：${d.stats.embedded_docs || 0} · Embedding：${d.embedding_configured ? '已配置' : '离线 FTS5 模式'}`;
+    }
+    const hits = d.hits || [];
+    if (!hits.length) {
+      box.innerHTML = '<div class="helios-empty">未找到匹配结果</div>';
+      return;
+    }
+    box.innerHTML = hits.map(h => `
+      <div class="helios-item-card">
+        <div class="helios-item-head">
+          <strong>${escapeHtml(h.title || h.doc_id || '')}</strong>
+          <span class="tabular-nums helios-status-ok">${escapeHtml(h.mode || mode)} · ${Number(h.score || 0).toFixed(4)}</span>
+        </div>
+        <div class="helios-hint">${escapeHtml(h.snippet || '')}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="helios-empty">检索失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadHeliosBoundedMemory() {
+  const bars = document.getElementById('helios-mem-bars');
+  const mPre = document.getElementById('helios-mem-memory-text');
+  const uPre = document.getElementById('helios-mem-user-text');
+  if (!bars) return;
+  try {
+    const res = await fetch('/api/memory/bounded', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    const st = d.stats || {};
+    const mPct = Math.min(100, Math.round((st.memory_chars || 0) / Math.max(1, st.memory_limit || 2200) * 100));
+    const uPct = Math.min(100, Math.round((st.user_chars || 0) / Math.max(1, st.user_limit || 1375) * 100));
+    bars.innerHTML = `
+      <div class="helios-mem-bar-card">
+        <div>MEMORY.md <span class="tabular-nums">${st.memory_chars || 0} / ${st.memory_limit || 2200} (${mPct}%)</span></div>
+        <div class="helios-progress-track"><div class="helios-progress-fill" style="width:${mPct}%"></div></div>
+      </div>
+      <div class="helios-mem-bar-card">
+        <div>USER.md <span class="tabular-nums">${st.user_chars || 0} / ${st.user_limit || 1375} (${uPct}%)</span></div>
+        <div class="helios-progress-track"><div class="helios-progress-fill" style="width:${uPct}%"></div></div>
+      </div>
+    `;
+    if (mPre) mPre.textContent = d.memory || '(空)';
+    if (uPre) uPre.textContent = d.user || '(空)';
+  } catch (e) {}
+}
+
+async function submitHeliosBoundedMemory() {
+  const fb = document.getElementById('helios-mem-feedback');
+  const payload = {
+    slot: document.getElementById('helios-mem-slot')?.value || 'memory',
+    action: document.getElementById('helios-mem-action')?.value || 'add',
+    target: document.getElementById('helios-mem-target')?.value || '',
+    content: document.getElementById('helios-mem-content')?.value || '',
+  };
+  const res = await fetch('/api/memory/bounded', {
+    method: 'POST',
+    headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  const d = await res.json();
+  if (fb) fb.innerHTML = res.ok
+    ? '<span class="helios-status-ok">已更新有界记忆</span>'
+    : `<span class="helios-status-err">${escapeHtml(d.error || d.message || '更新失败')}</span>`;
+  if (res.ok) loadHeliosBoundedMemory();
+}
+
+async function loadHeliosSessionTree() {
+  const pre = document.getElementById('helios-tree-ascii');
+  if (!pre) return;
+  try {
+    const res = await fetch('/api/sessions/tree', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    pre.textContent = d.formatted || JSON.stringify(d.tree || {}, null, 2) || '(暂无会话节点)';
+  } catch (e) {
+    pre.textContent = `加载会话树失败：${e.message}`;
+  }
+}
+
+async function submitHeliosRewind() {
+  const fb = document.getElementById('helios-rewind-feedback');
+  const session_id = (document.getElementById('helios-rewind-sid')?.value || '').trim();
+  const node_id = (document.getElementById('helios-rewind-node')?.value || '').trim();
+  const restore_code = Boolean(document.getElementById('helios-rewind-code')?.checked);
+  const res = await fetch('/api/sessions/rewind', {
+    method: 'POST',
+    headers: heliosAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ session_id, node_id, restore_code }),
+  });
+  const d = await res.json();
+  if (fb) fb.innerHTML = res.ok
+    ? `<span class="helios-status-ok">已回溯并生成新分支：${escapeHtml(d.new_session_id || d.session_id || '')}</span>`
+    : `<span class="helios-status-err">回溯失败：${escapeHtml(d.error || res.statusText)}</span>`;
+  if (res.ok) loadHeliosSessionTree();
+}
