@@ -15,12 +15,14 @@ let availableModels = [];
 // render "✓ undefined". Every fetch handler for a stub route must go through
 // this check so the UI reports the stub instead of inventing an outcome.
 function isStubResponse(res, d) {
-  return res.status === 501 || (d && d.error === 'not_implemented');
+  return res.status === 501 || res.status === 410 || (d && (d.error === 'not_implemented' || d.error === 'gone'));
 }
 
 function stubNoticeHtml(d) {
-  const reason = (d && d.reason) || '该功能尚未实现';
-  return `<span style="color:var(--danger)">✗ 未实现（HTTP 501）：${reason}</span>`;
+  const isGone = d && (d.error === 'gone' || d.status === 'retired');
+  const label = isGone ? '已下线（HTTP 410）' : '未实现（HTTP 501）';
+  const reason = escapeHtml((d && (d.reason || d.message)) || '该端点不可用');
+  return `<span style="color:var(--danger)">✗ ${label}：${reason}</span>`;
 }
 
 function toggleSessionSidebar() {
@@ -1338,20 +1340,23 @@ async function loadMetricsSummary() {
 
 async function testWebhookDispatch() {
   const target = document.getElementById('webhook-target-select').value;
+  const urlEl = document.getElementById('webhook-url');
+  const rawUrl = urlEl ? urlEl.value.trim() : '';
+  const url = rawUrl && !/^https?:\/\//i.test(rawUrl) ? ('https://' + rawUrl) : rawUrl;
   const resEl = document.getElementById('webhook-test-result');
-  resEl.innerHTML = '<span style="color:var(--accent)">正在推送 Webhook...</span>';
+  resEl.innerHTML = '<span style="color:var(--accent)">正在推送真实 Webhook...</span>';
   try {
     const res = await fetch('/api/webhook/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target: target, event: 'task_verification_passed' })
+      body: JSON.stringify({ target: target, url: url, event: 'task_verification_passed' })
     });
     const d = await res.json();
-    if (isStubResponse(res, d)) {
-      resEl.innerHTML = stubNoticeHtml(d);
+    if (!res.ok) {
+      resEl.innerHTML = `<span style="color:var(--danger)">✗ HTTP ${res.status}：${escapeHtml(d.message || d.error || '派发失败')}</span>`;
       return;
     }
-    resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message}</span>`;
+    resEl.innerHTML = `<span style="color:var(--success)">✓ ${escapeHtml(d.message)}</span>`;
   } catch (e) {
     resEl.innerHTML = `<span style="color:var(--danger)">推送失败: ${e.message}</span>`;
   }
@@ -1408,8 +1413,10 @@ async function applyRbacRules() {
       resEl.innerHTML = stubNoticeHtml(d);
       return;
     }
-    document.getElementById('security-watermark').innerText = d.commit_watermark;
-    resEl.innerHTML = `<span style="color:var(--success)">✓ ${d.message} [水印: ${d.commit_watermark}]</span>`;
+    const digest = d.policy_digest || '';
+    const wmEl = document.getElementById('security-watermark');
+    if (wmEl && digest) wmEl.innerText = digest;
+    resEl.innerHTML = `<span style="color:var(--success)">✓ ${escapeHtml(d.message)}</span>`;
   } catch (e) {
     resEl.innerHTML = `<span style="color:var(--danger)">配置失败: ${e.message}</span>`;
   }

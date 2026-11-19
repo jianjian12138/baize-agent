@@ -237,20 +237,20 @@ def check_source_markers() -> list[str]:
 
 
 def check_live_routes() -> list[str]:
-    """Start the real server and probe every stub route plus one control route."""
+    """Start the real server and probe stubs (501), retired routes (410),
+    real validation routes (400 on bad input), and one control route (200)."""
     os.environ["BAIZE_AUTH_TOKEN"] = GATE_TOKEN
     try:
         from http.server import ThreadingHTTPServer
 
-        from baize.interfaces.serve import STUB_ROUTES, Handler
+        from baize.interfaces.serve import RETIRED_ROUTES, STUB_ROUTES, Handler
     except Exception as exc:  # noqa: BLE001 - any import failure is the gate failing
         return [f"could not import the server to probe it: {exc!r}"]
 
-    if not STUB_ROUTES:
+    if not STUB_ROUTES and not RETIRED_ROUTES:
         return [
-            "baize/serve.STUB_ROUTES is empty. If the stubs were genuinely "
-            "implemented, delete them from this gate's expectations; if they were "
-            "deleted, restore the 501s - they did not become real."
+            "Both STUB_ROUTES and RETIRED_ROUTES are empty - the gate has "
+            "nothing to verify against regressions."
         ]
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -279,6 +279,37 @@ def check_live_routes() -> list[str]:
                 )
             if not body.get("reason"):
                 problems.append(f"{path}: stub body has no 'reason' explaining what is missing")
+
+        for path in sorted(RETIRED_ROUTES):
+            code, body = _request(base, path, {})
+            if code != 410:
+                problems.append(
+                    f"{path}: retired route answered {code}, expected 410 Gone"
+                )
+                continue
+            if body.get("error") != "gone":
+                problems.append(
+                    f"{path}: 410 body has error={body.get('error')!r}, expected 'gone'"
+                )
+            extra = set(body) - STUB_BODY_KEYS
+            if extra:
+                problems.append(
+                    f"{path}: retired body carries unexpected fields {sorted(extra)}"
+                )
+            if not body.get("reason"):
+                problems.append(f"{path}: retired body has no 'reason'")
+
+        for path, bad_payload in (
+            ("/api/webhook/dispatch", {}),
+            ("/api/security/rbac", {"rules": [{"path": ".env", "perm": "bogus"}]}),
+            ("/api/tools/import", {"name": "__nonexistent_tool_probe__"}),
+            ("/api/ci/autofix", {}),
+        ):
+            code, body = _request(base, path, bad_payload)
+            if code != 400:
+                problems.append(
+                    f"{path}: bad input answered {code}, expected 400 (must validate, never fake 200)"
+                )
 
         code, body = _request(base, CONTROL_ROUTE, CONTROL_PAYLOAD)
         if code != 200:

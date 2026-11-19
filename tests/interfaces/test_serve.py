@@ -24,7 +24,7 @@ import pytest  # noqa: E402
 
 from baize import __version__  # noqa: E402
 from baize.governance.observability import obs  # noqa: E402
-from baize.interfaces.serve import STUB_ROUTES, Handler  # noqa: E402
+from baize.interfaces.serve import RETIRED_ROUTES, STUB_ROUTES, Handler  # noqa: E402
 
 
 #: Token the fixture server is configured with. Not a secret - it exists only
@@ -365,34 +365,29 @@ class TestCors:
 
 
 class TestStubRoutes:
-    """Stub endpoints must answer 501, never a fabricated 200.
+    """All former 501 stubs were resolved in V40.1: 6 implemented for real and
+    5 retired with HTTP 410 Gone. Keep STUB_ROUTES empty and pin the 410 contract."""
 
-    Each route below used to return HTTP 200 with a hardcoded success payload
-    ("PR #43 opened", "4/4 checks green", "hunk merged") while doing no work. The
-    only way to keep that from creeping back is to assert the 501 contract.
-    """
+    def test_zero_remaining_stub_routes(self):
+        assert STUB_ROUTES == {}, f"unexpected remaining 501 stub routes: {sorted(STUB_ROUTES)}"
 
-    @pytest.mark.parametrize("path", sorted(STUB_ROUTES))
-    def test_stub_route_returns_501(self, server, path):
+    @pytest.mark.parametrize("path", sorted(RETIRED_ROUTES))
+    def test_retired_route_returns_410(self, server, path):
         status, body = post(server, path, {})
-        assert status == 501, f"{path} answered {status}, expected 501"
+        assert status == 410, f"{path} answered {status}, expected 410"
         payload = json.loads(body)
-        assert payload["error"] == "not_implemented"
+        assert payload["error"] == "gone"
         assert payload["path"] == path
-        # `reason` must say what is missing, and `message` must be present so a
-        # caller reading only `message` sees something truthful.
         assert payload["reason"]
-        assert "尚未实现" in payload["message"]
+        assert "410" in payload["message"]
 
-    @pytest.mark.parametrize("path", sorted(STUB_ROUTES))
-    def test_stub_route_reports_no_fabricated_success(self, server, path):
-        """The old bodies carried fake artefacts ("pr_number": 43,
-        "tests_passed": 4, "executed_nodes": [...]). Pin the key set exactly, so
-        no fabricated field can be added back alongside the 501."""
+    @pytest.mark.parametrize("path", sorted(RETIRED_ROUTES))
+    def test_retired_route_reports_no_fabricated_success(self, server, path):
+        """Pin the 410 key set exactly so no fabricated field can ride along."""
         _, body = post(server, path, {})
         payload = json.loads(body)
         assert set(payload) == {"error", "status", "path", "reason", "message"}, (
-            f"{path} stub body has unexpected keys: "
+            f"{path} retired body has unexpected keys: "
             f"{sorted(set(payload) - {'error', 'status', 'path', 'reason', 'message'})}"
         )
 

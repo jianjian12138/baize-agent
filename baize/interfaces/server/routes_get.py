@@ -200,6 +200,14 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
             })
         return handler._send(200, {"nodes": tree})
 
+    if req_path == "/api/security/rbac":
+        from .operations import load_rbac_policy
+        return handler._send(200, load_rbac_policy(load_config()))
+
+    if req_path == "/api/tools/imported":
+        from .operations import list_imported_tools
+        return handler._send(200, list_imported_tools(load_config()))
+
     if req_path == "/api/tools/hub":
         return handler._send(200, {
             "tools": [

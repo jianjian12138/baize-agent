@@ -265,6 +265,30 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
     if req_path in stub_routes:
         return handler._send(501, deps["stub_body"](req_path))
 
+    retired_routes = deps.get("RETIRED_ROUTES", {})
+    if req_path in retired_routes:
+        return handler._send(410, deps["retired_body"](req_path))
+
+    if req_path == "/api/webhook/dispatch":
+        from .operations import dispatch_webhook
+        code, body = dispatch_webhook(data, load_config())
+        return handler._send(code, body)
+
+    if req_path == "/api/security/rbac":
+        from .operations import apply_and_evaluate_rbac
+        code, body = apply_and_evaluate_rbac(data, load_config())
+        return handler._send(code, body)
+
+    if req_path == "/api/tools/import":
+        from .operations import import_runtime_tool
+        code, body = import_runtime_tool(data, load_config())
+        return handler._send(code, body)
+
+    if req_path == "/api/ci/autofix":
+        from .operations import trigger_ci_autofix
+        code, body = trigger_ci_autofix(data, load_config(), deps)
+        return handler._send(code, body)
+
     if req_path == "/api/mcp/call":
         server = data.get("server") or "sqlite"
         tool = data.get("tool") or "sqlite_query"

@@ -2,10 +2,10 @@
 
 # 🏛️ Baize Agent — V40.0.0 Vulcan
 
-**Zero Runtime Dependencies · Physical Verification Gates (`NO FAKE DONE`) · 8-Domain, 57-Module Industrial Pure-Python Autonomous Engineering Runtime**
+**Zero Runtime Dependencies · Physical Verification Gates (`NO FAKE DONE`) · 8-Domain, 58-Module Industrial Pure-Python Autonomous Engineering Runtime**
 
 [![Version](https://img.shields.io/badge/version-V40.0.0--Vulcan-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1282%2F1285%20passed%20(99%25)-yellow?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1284%2F1287%20passed%20(99%25)-yellow?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -54,7 +54,7 @@ python -m baize mcp                               # run standard JSON-RPC 2.0 MC
 
 ---
 
-## Architecture (8 Domains · 57 Modules)
+## Architecture (8 Domains · 58 Modules)
 
 | Package | Modules | Responsibility |
 | :--- | :---: | :--- |
@@ -64,7 +64,7 @@ python -m baize mcp                               # run standard JSON-RPC 2.0 MC
 | **`baize/codebase/`** | 7 | Zero-dep stdio LSP/compiler diagnostics bridge, polyglot symbol graph (PageRank), incremental SQLite cache, hierarchical repo maps & AST slicer, blast-radius/test-impact, workspace search, recon |
 | **`baize/knowledge/`** | 6 | Episodic/semantic/team memory, knowledge graph, TF-IDF vector index & RAG, skill index/catalog/Hermes harvester, skill runner, doc crawler |
 | **`baize/governance/`** | 6 | NO FAKE DONE verification gates & manifest validator, 15-case kernel benchmark suite, real multi-file coding eval harness, AST mutation & chaos injection, `doctor`, Prometheus metrics |
-| **`baize/interfaces/`** | 10 | 32-subcommand CLI, streaming REPL, modular HTTP/SSE server with SQLite WAL persistent job queue (`server/` 5 modules), Desktop Studio, terminal/web UI |
+| **`baize/interfaces/`** | 11 | 32-subcommand CLI, streaming REPL, modular HTTP/SSE server with SQLite WAL persistent job queue (`server/` 6 modules), Desktop Studio, terminal/web UI |
 | **`baize/ext/`** | 7 | Unified MCP client/server/dispatcher (`mcp/` 5 modules), chat channel adapters, lifecycle metrics plugin |
 
 The module layout is verified against the filesystem on every commit by `scripts/gates/check_arch_tree.py` and documented in [`docs/architecture.md`](docs/architecture.md).
@@ -78,7 +78,7 @@ python scripts/gates/check_zero_deps.py         # assert 0 third-party runtime i
 python scripts/gates/check_hygiene.py           # assert clean tracked tree & valid imports
 python scripts/gates/check_arch_tree.py         # assert docs/architecture.md matches baize/ 1:1
 python scripts/gates/check_module_attrs.py      # statically verify imported module attributes exist
-python scripts/gates/check_endpoint_honesty.py  # assert zero fabricated success payloads & honest 501 stubs
+python scripts/gates/check_endpoint_honesty.py  # assert zero fabricated payloads, zero 501 stubs & honest 410 retirements
 python scripts/gates/sync_truth.py --check      # verify version labels, badges, and doc counts
 python -m baize manifest validate baize.manifest.json
 python -m baize bench                           # run 15 built-in kernel benchmarks

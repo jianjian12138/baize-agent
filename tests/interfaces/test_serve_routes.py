@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest  # noqa: E402
 
-from baize.interfaces.serve import STUB_ROUTES, Handler  # noqa: E402
+from baize.interfaces.serve import RETIRED_ROUTES, STUB_ROUTES, Handler  # noqa: E402
 
 TEST_TOKEN = "route-tests-token-not-a-secret"
 
@@ -126,41 +126,39 @@ def test_delete_requires_a_token(server):
 
 
 @pytest.mark.parametrize("path", [
-    "/api/tools/import",
-    "/api/security/rbac",
-    "/api/chaos/simulate",
     "/v30/speculative",
+    "/v30/speculative/merge",
+    "/v30/causal/heal",
+    "/api/vision/analyze",
+    "/api/chaos/simulate",
 ])
-def test_second_pass_stub_routes_answer_501(server, path):
+def test_retired_legacy_routes_answer_410(server, path):
     base, _sessions = server
     status, body = _call(f"{base}{path}", method="POST", payload={"goal": "x"})
-    assert status == 501
+    assert status == 410
     payload = _json(body)
-    assert payload["error"] == "not_implemented"
+    assert payload["error"] == "gone"
     assert payload["path"] == path
-    assert payload["reason"] == STUB_ROUTES[path]
+    assert payload["reason"] == RETIRED_ROUTES[path]
 
 
-def test_tools_import_does_not_claim_to_have_loaded_a_tool(server):
+def test_tools_import_rejects_unknown_tool_honestly(server):
     base, _sessions = server
     status, body = _call(f"{base}/api/tools/import", method="POST",
-                         payload={"name": "my_tool"})
+                         payload={"name": "my_nonexistent_tool"})
     payload = _json(body)
-    assert status == 501
-    # Assert on the parsed field, not on a substring: the stub's own `reason`
-    # text quotes the old "status 'imported'" value, so a substring scan of the
-    # body would match the explanation of the bug and cry wolf.
-    assert payload["status"] == "not_implemented"
-    assert "name" not in payload, "the handler used to echo the caller's name back"
+    assert status == 400
+    assert payload["error"] == "unknown_tool"
+    assert "name" not in payload, "handler must not blindly echo unknown tool names"
 
 
 def test_speculative_points_callers_at_the_real_endpoint(server):
-    """/v30/speculative and /v30/swarm/speculate look interchangeable and are
-    not; the stub body must not leave that ambiguity to the reader."""
+    """/v30/speculative is retired (410 Gone) and directs callers to /v30/swarm/speculate."""
     base, _sessions = server
-    _status, body = _call(f"{base}/v30/speculative", method="POST",
-                          payload={"goal": "x"})
-    assert "timeline" in _json(body)["reason"]
+    status, body = _call(f"{base}/v30/speculative", method="POST",
+                         payload={"goal": "x"})
+    assert status == 410
+    assert "/v30/swarm/speculate" in _json(body)["reason"]
 
 
 # ------------------------------------------- overclaims fixed in place -----

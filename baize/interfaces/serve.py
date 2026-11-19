@@ -47,33 +47,36 @@ from .server import (
 log = get_logger("serve")
 SERVER_START_TIME = time.time()
 
-STUB_ROUTES: dict[str, str] = {
-    "/api/webhook/dispatch":
-        "no outbound webhook is sent - no HTTP client is constructed or invoked",
-    "/api/vision/analyze":
-        "no multimodal model is called - the component list and colour palette "
-        "were hardcoded literals",
-    "/api/ci/autofix":
-        "no CI run is inspected and no pull request is opened - the PR number "
-        "was a literal",
-    "/v30/speculative/merge":
-        "no timeline is merged and no regression test is run",
-    "/v30/causal/heal":
-        "no mutation test is run - the 4/4 counts were literals",
-    "/api/tools/import":
-        "no tool is registered or hot-loaded - the handler echoed the request's "
-        "own name back and returned status 'imported'",
-    "/api/security/rbac":
-        "no permission rule is applied and no signature is produced - the "
-        "watermark was a hash of the current time",
-    "/api/chaos/simulate":
-        "no fault is injected and no recovery is observed - faults_injected, "
-        "auto_healed and the 100% recovery rate were literals",
+# All former 501 stubs have been resolved in V40.1:
+#   - 6 routes implemented for real (/team/dag, /api/git/apply_hunk,
+#     /api/webhook/dispatch, /api/security/rbac, /api/tools/import, /api/ci/autofix)
+#   - 5 legacy V30 demo routes retired below with HTTP 410 Gone
+STUB_ROUTES: dict[str, str] = {}
+
+RETIRED_ROUTES: dict[str, str] = {
     "/v30/speculative":
-        "no branch is explored - the three candidate timelines were constructed "
-        "in the handler with literal churn_lines and status 'verified', and the "
-        "engine then picked a winner among them",
+        "retired in V40.1 - use POST /v30/swarm/speculate for real git-worktree exploration",
+    "/v30/speculative/merge":
+        "retired in V40.1 - legacy demo timeline merge endpoint removed",
+    "/v30/causal/heal":
+        "retired in V40.1 - use POST /api/causal/mutation_test or baize.governance.mutation directly",
+    "/api/vision/analyze":
+        "retired in V40.1 - legacy UI palette demo endpoint removed",
+    "/api/chaos/simulate":
+        "retired in V40.1 - chaos testing lives in tests/core/test_llm_chaos.py, not as a production HTTP route",
 }
+
+
+def _retired_body(path: str) -> dict:
+    """Response body for a retired route in :data:`RETIRED_ROUTES` (HTTP 410 Gone)."""
+    reason = RETIRED_ROUTES[path]
+    return {
+        "error": "gone",
+        "status": "retired",
+        "path": path,
+        "reason": reason,
+        "message": f"该历史端点已正式下线（HTTP 410 Gone）：{reason}。",
+    }
 
 
 def _stub_body(path: str) -> dict:
@@ -142,6 +145,8 @@ def _live_deps() -> dict:
         "Orchestrator": Orchestrator,
         "SERVER_START_TIME": SERVER_START_TIME,
         "STUB_ROUTES": STUB_ROUTES,
+        "RETIRED_ROUTES": RETIRED_ROUTES,
+        "retired_body": _retired_body,
         "Session": Session,
         "bench_mod": bench_mod,
         "bench_public_mod": bench_public_mod,

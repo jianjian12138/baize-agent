@@ -12,7 +12,7 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (57 modules)
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (58 modules)
 ├── core/                           # 7 modules: agent loop (streaming+parallel), LLM client, config, sessions, autonomy
 │   ├── agent.py  autonomy.py  component.py  config.py  llm.py  plugin.py  sessions.py
 ├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
@@ -31,10 +31,11 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │   ├── doc_crawler.py  graph.py  memory.py  rag.py  skill_runner.py  skills.py
 ├── governance/                     # 6 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs
 │   ├── bench.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py
-├── interfaces/                     # 10 modules: CLI, REPL, HTTP/SSE server, persistent jobs, desktop, UI
+├── interfaces/                     # 11 modules: CLI, REPL, HTTP/SSE server, persistent jobs, ops, desktop, UI
 │   ├── cli.py  desktop.py  repl.py  serve.py  ui.py
 │   └── server/                     # decomposed HTTP server subpackage
 │       ├── jobs.py                 # SQLite WAL persistent async job queue & sliding-window rate limiter
+│       ├── operations.py           # real outbound webhook, persistent RBAC, tool importer & CI autofix
 │       ├── routes_get.py           # GET routes (/health, /api/jobs, /api/checkpoints, /api/workspace/search, etc.)
 │       ├── routes_post.py          # POST dispatch (/team/dag, /api/git/apply_hunk, /api/jobs, /api/diagnostics, etc.)
 │       ├── security.py             # fail-closed auth, CORS allowlist, path guards

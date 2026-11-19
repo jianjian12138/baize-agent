@@ -2,10 +2,10 @@
 
 # 🏛️ 白泽引擎 (Baize Agent) — V40.0.0 Vulcan
 
-**零第三方运行依赖 · 强物理门禁 (`NO FAKE DONE`) · 8 域 57 模块的工业级纯 Python 自治工程运行时**
+**零第三方运行依赖 · 强物理门禁 (`NO FAKE DONE`) · 8 域 58 模块的工业级纯 Python 自治工程运行时**
 
 [![Version](https://img.shields.io/badge/version-V40.0.0--Vulcan-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1282%2F1285%20passed%20(99%25)-yellow?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1284%2F1287%20passed%20(99%25)-yellow?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -54,7 +54,7 @@ python -m baize mcp                               # 启动标准 JSON-RPC 2.0 MC
 
 ---
 
-## 核心架构（8 域 · 57 模块）
+## 核心架构（8 域 · 58 模块）
 
 | 领域包 | 模块数 | 职责说明 |
 | :--- | :---: | :--- |
@@ -64,7 +64,7 @@ python -m baize mcp                               # 启动标准 JSON-RPC 2.0 MC
 | **`baize/codebase/`** | 7 | 零依赖 stdio LSP/编译器诊断桥、多语言符号图（PageRank）、SQLite 增量架构缓存、分层 Repo Map & AST 切片、爆炸半径与测试影响矩阵、工作区搜索、先验侦察 |
 | **`baize/knowledge/`** | 6 | 分层情景/语义/团队记忆、知识图谱、TF-IDF 向量检索与 RAG、技能索引/目录/Hermes 蒸馏器、技能执行器、文档抓取 |
 | **`baize/governance/`** | 6 | NO FAKE DONE 物理门禁与清单校验、15 项内核基准、真实多文件编码评测闭环（`eval_harness`）、AST 变异与混沌注入、`doctor`、Prometheus 指标 |
-| **`baize/interfaces/`** | 10 | 32 个子命令 CLI、流式 REPL、模块化 HTTP/SSE 服务与 SQLite WAL 持久化异步任务队列（`server/` 5 模块）、桌面端 Studio、终端/Web UI |
+| **`baize/interfaces/`** | 11 | 32 个子命令 CLI、流式 REPL、模块化 HTTP/SSE 服务与 SQLite WAL 持久化异步任务队列（`server/` 6 模块）、桌面端 Studio、终端/Web UI |
 | **`baize/ext/`** | 7 | 标准 MCP 客户端/服务端/分发器（`mcp/` 5 模块）、聊天通道抽象、可观测性指标插件 |
 
 完整文件树由门禁 `scripts/gates/check_arch_tree.py` 与 [`docs/architecture.md`](docs/architecture.md) 强一致校验。
@@ -78,7 +78,7 @@ python scripts/gates/check_zero_deps.py         # 确认 baize/ 零第三方运�
 python scripts/gates/check_hygiene.py           # 确认仓库卫生、无残留垃圾、无未追踪引用
 python scripts/gates/check_arch_tree.py         # 确认 docs/architecture.md 与文件系统 100% 一致
 python scripts/gates/check_module_attrs.py      # 静态校验所有模块属性导入真实存在
-python scripts/gates/check_endpoint_honesty.py  # 确认无伪造成功响应、未实现端点均诚实返回 501
+python scripts/gates/check_endpoint_honesty.py  # 确认零伪造响应、零 501 占位、已下线历史路由诚实返回 410 Gone
 python scripts/gates/sync_truth.py --check      # 校验版本号、徽章、教程与文档计数无漂移
 python -m baize manifest validate baize.manifest.json
 python -m baize bench                           # 运行 15 项本地内核基准
