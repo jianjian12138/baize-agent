@@ -96,11 +96,13 @@ def run_checks(cfg: dict | None = None) -> DoctorReport:
     #    shield is unavailable on this platform and baize will degrade to the
     #    deny-list + workspace confinement (enable with BAIZE_SANDBOX_ENABLED=1).
     mech = sandbox.platform_mechanism()
+    posture = sandbox.sandbox_posture(cfg)
     report.add(
-        "os sandbox", mech != "logical-only", required=False,
-        detail=f"mechanism={mech}"
-        + ("" if mech != "logical-only"
-           else " (degrades to logical-only; OS shield unavailable here)"),
+        "os sandbox", mech != "logical-only" or posture.get("docker_available", False), required=False,
+        detail=(
+            f"mode={posture.get('mode')} effective={posture.get('effective_isolation')} "
+            f"mechanism={mech} rlimits={posture.get('rlimits_supported')}"
+        ),
     )
 
     # 8. Configuration schema (fail-fast guard against a mis-typed value the
