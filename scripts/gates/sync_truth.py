@@ -196,7 +196,7 @@ SURFACES: dict[str, list[tuple[Surface, int]]] = {
     # Doc titles that name the release without the codename. Both were still
     # claiming V33.0.0 five releases after the fact - found by
     # skills/repo-truth-and-hygiene/scripts/audit_repo_truth.py [2].
-    "START-HERE.md": [(VERSION_ONLY, 1)],
+    "docs/START-HERE.md": [(VERSION_ONLY, 1)],
     # Two V-labels, and both must be the release. The table header used to read
     # "(Baize Agent V33)" five releases after the fact while the title on line 1
     # was correct - and this entry said min_hits=1, so the gate counted the one
@@ -420,11 +420,24 @@ def check_pyproject() -> list[str]:
 
 def measure_config_keys() -> tuple[int, int]:
     """``(BAIZE_* key count, total _DEFAULTS entry count)``."""
+    import ast
     src = (ROOT / "baize" / "core" / "config.py").read_text(encoding="utf-8")
-    keys = re.findall(r'^\s{4}"([A-Z][A-Z0-9_]*)"\s*:', src, re.M)
+    tree = ast.parse(src)
+    keys: list[str] = []
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "_DEFAULTS" for t in node.targets)
+            and isinstance(node.value, ast.Dict)
+        ):
+            keys = [
+                k.value for k in node.value.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            ]
+            break
     if not keys:
         raise SystemExit(
-            "TRUTH ERROR: found no config keys in baize/config.py. If _DEFAULTS was "
+            "TRUTH ERROR: found no config keys in baize/core/config.py._DEFAULTS. If _DEFAULTS was "
             "reformatted, update measure_config_keys() in this script."
         )
     return sum(1 for k in keys if k.startswith("BAIZE_")), len(keys)

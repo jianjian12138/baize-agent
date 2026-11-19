@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 from baize.governance import bench
-from baize.governance import bench_public
+from baize.governance import bench as bench_public
 
 
 def test_all_benchmarks_pass():

@@ -1,56 +1,66 @@
-"""Process execution whose timeout is actually enforced.
+"""Subprocess execution with interactive prompt detection and bounded timeouts."""
 
-Why this exists
----------------
-``subprocess.run(cmd, shell=True, timeout=N)`` does **not** bound wall time on
-Windows. Python spawns ``cmd.exe /c <command>``; when the timeout fires it calls
-``process.kill()``, which terminates ``cmd.exe`` alone. The grandchild the shell
-started keeps running and keeps the stdout/stderr pipe handles open, so the
-``communicate()`` that ``subprocess.run`` performs internally never reaches EOF
-and blocks until the grandchild exits on its own.
-
-Measured on this machine before the fix: a hook configured with ``timeout=0.5``
-whose command slept ~11s returned after **11.35s** wall time. The caller was told
-the hook timed out, and the timeout had not been enforced - the only reason the
-call ever returned was that the grandchild eventually finished.
-
-``run()`` below fixes that with three changes:
-
-  1. the child is put in its own process group (POSIX) / new process group
-     (Windows), so the tree can be addressed as a unit;
-  2. on timeout the whole tree is killed - ``taskkill /F /T`` on Windows,
-     ``killpg`` with SIGKILL on POSIX;
-  3. the pipes are then drained with a *bounded* second wait, so a process that
-     survives the kill cannot block the caller forever.
-
-Point 3 matters as much as point 2: draining without a bound is how a "fixed"
-timeout turns into an unbounded hang instead.
-
-What ``run`` is, and is not, the only instance of
--------------------------------------------------
-An earlier revision of this docstring said "this is the only place in the package
-allowed to spawn a timed subprocess". That was **false**, and nothing asserted
-it, so it stayed false. What is actually true, and is now checked by
-``tests/test_proc_timeout.py::test_run_is_the_only_tree_killing_spawn``:
-
-* ``run`` is the only place that puts the child in its own process group and
-  kills the **whole tree** on timeout. Every other timed spawn in the package
-  either is a short-lived probe (``docker info``, ``wsl -l -q``, the PowerShell
-  version probe, ``taskkill`` itself) or has been routed through ``run``.
-* ``sandbox.py``'s landlock branch used to be the last hold-out: it needs a
-  ``preexec_fn`` to install the kernel restriction, so it kept calling
-  ``subprocess.run`` directly and kept the unbounded timeout with it. ``run``
-  therefore accepts ``preexec_fn`` and forwards it.
-* ``docker_sandbox.py`` keeps a direct ``subprocess.run`` for the ``docker run``
-  **client**, because killing that client does not stop the container - the leak
-  is the container, not the process tree. It therefore gives the container an
-  explicit name and force-removes it by name on timeout.
-
-The enforceable claim is the narrow one: *tree-bounded timed spawns all go
-through ``run``*. Widening it back to "all timed spawns" requires deleting the
-probes and the docker client, which is not what anyone wants.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: interactive_detector.py
+# ===========================================================================
+
+import re
+from typing import Any
+
+__all__ = [
+    "detect_interactive_prompt",
+    "get_safe_auto_answer",
+]
+
+# Patterns for common blocking CLI prompts
+_INTERACTIVE_PATTERNS = [
+    (r'(?i)\[y/n\]|\(y/n\)|\(yes/no\)|\[yes/no\]', "confirmation", "y\n"),
+    (r'(?i)password\b.*:\s*$', "password_prompt", "\n"),
+    (r'(?i)passphrase\b.*:\s*$', "password_prompt", "\n"),
+    (r'(?i)press\s+(?:any\s+key|enter)\s+to\s+continue', "press_enter", "\n"),
+    (r'(?i)package\s+name\s*:\s*(?:\([^)]*\))?\s*$', "npm_init_field", "\n"),
+    (r'(?i)version\s*:\s*(?:\([^)]*\))?\s*$', "npm_init_field", "\n"),
+    (r'(?i)author\s*:\s*(?:\([^)]*\))?\s*$', "npm_init_field", "\n"),
+    (r'(?i)license\s*:\s*(?:\([^)]*\))?\s*$', "npm_init_field", "\n"),
+    (r'(?i)is\s+this\s+ok\?\s*\(yes\)\s*$', "npm_confirm", "yes\n"),
+    (r'(?i)are\s+you\s+sure\s+you\s+want\s+to\s+continue\s+connecting', "ssh_fingerprint", "yes\n"),
+]
+
+
+def detect_interactive_prompt(text: str) -> dict[str, Any]:
+    """Scan stdout/stderr text chunk to detect if subprocess is waiting for interactive user input."""
+    if not text:
+        return {"is_interactive": False, "prompt_type": None, "suggested_answer": None}
+
+    cleaned = text.strip()
+    # Check last line or last 200 chars
+    tail = cleaned[-200:] if len(cleaned) > 200 else cleaned
+
+    for pattern, ptype, answer in _INTERACTIVE_PATTERNS:
+        if re.search(pattern, tail):
+            return {
+                "is_interactive": True,
+                "prompt_type": ptype,
+                "suggested_answer": answer,
+                "matched_snippet": tail[-80:],
+                "message": f"嗅探到交互式 CLI 提示 [{ptype}]，已自动注入安全默认应答避免 60s 超时死锁！"
+            }
+
+    return {"is_interactive": False, "prompt_type": None, "suggested_answer": None}
+
+
+def get_safe_auto_answer(prompt_type: str) -> str:
+    """Return default safe newline response."""
+    for _, ptype, answer in _INTERACTIVE_PATTERNS:
+        if ptype == prompt_type:
+            return answer
+    return "\n"
+
+# ===========================================================================
+# Section: proc.py
+# ===========================================================================
 
 import os
 import signal

@@ -22,7 +22,7 @@
 | **技能自进化** | **`save_skill` / `SkillHarvester` 自动编译** | 自进化技能 | 手动沉淀 | 手动沉淀 |
 | **CLI 交互体验** | **@文件注入 / 多行块 / /cost / /trace / 历史持久** | 丰富 CLI | 基础 CLI | 专有 CLI |
 | **会话持久化** | **Append-only JSONL + Fork / Rewind 时间旅行** | JSONL | JSONL + checkpoint | 云端持久化 |
-| **自动化测试覆盖**| **全量测试 1388 项收集（通过 / 失败 / 跳过见 `python -m pytest -q` 末行）** | 部分 | 部分 | 黑盒闭源 |
+| **自动化测试覆盖**| **全量测试 1268 项收集（通过 / 失败 / 跳过见 `python -m pytest -q` 末行）** | 部分 | 部分 | 黑盒闭源 |
 
 ---
 

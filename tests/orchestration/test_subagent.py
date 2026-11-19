@@ -6,7 +6,7 @@ import pytest
 
 from baize.core.config import load_config
 from baize.core.llm import LLMClient
-from baize.orchestration.subagent import (
+from baize.orchestration.team import (
     SubagentDef,
     build_scoped_registry,
     load_subagent,

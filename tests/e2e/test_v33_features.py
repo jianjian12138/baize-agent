@@ -12,9 +12,9 @@ import time
 import unittest
 from pathlib import Path
 
-from baize.interfaces.session_viewer import render_session, find_session_file
+from baize.interfaces.ui import render_session, find_session_file
 from baize.knowledge.memory import archive_old_logs, log_event
-from baize.knowledge.vector import TfidfIndex, tokenize
+from baize.knowledge.rag import TfidfIndex, tokenize
 from baize.knowledge.rag import expand_query, retrieve, build_corpus
 from baize.orchestration.orchestrator import Orchestrator, SubtaskReport
 

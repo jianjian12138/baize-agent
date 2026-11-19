@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..core.config import load_config
-from ..core.logging_setup import get_logger
+from ..core.config import get_logger
 from ..governance.observability import obs
 
 log = get_logger("automations")

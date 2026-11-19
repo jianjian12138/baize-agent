@@ -34,13 +34,13 @@ except Exception:
 
 from .. import __version__
 from ..governance import doctor as doctor_mod
-from ..governance import manifest as manifest_mod
+from ..governance import gate as manifest_mod
 from ..knowledge import memory as memory_mod
-from ..knowledge import skill_index
+from ..knowledge import skills as skill_index
 from ..core.agent import Agent, Session
 from ..core.llm import LLMClient
 from ..orchestration.orchestrator import Orchestrator
-from ..core.config_schema import ConfigError, validate
+from ..core.config import ConfigError, validate
 from ..core.plugin import registry
 from .ui import ProgressUI
 
@@ -260,7 +260,7 @@ def cmd_rag(args) -> int:
 
 
 def cmd_team_memory(args) -> int:
-    from ..knowledge.team_memory import TeamMemory
+    from ..knowledge.memory import TeamMemory
     try:
         tm = TeamMemory(team_id=args.team_id)
     except (RuntimeError, ValueError) as exc:
@@ -334,7 +334,7 @@ def cmd_gate(args) -> int:
 
 def cmd_bench(args) -> int:
     from ..governance import bench
-    from ..governance import bench_public
+    from ..governance import bench as bench_public
     if getattr(args, "public", False):
         rep = bench_public.coverage_report()
         print("公开基准诚实覆盖对照 (baize 不运行公开 harness, 仅映射能力):")
@@ -448,7 +448,7 @@ def cmd_chat(args) -> int:
 
 
 def cmd_setup(args) -> int:
-    from .setup_wizard import run_setup_wizard
+    from .ui import run_setup_wizard
     success = run_setup_wizard()
     return 0 if success else 1
 
@@ -519,7 +519,7 @@ def cmd_sessions(args) -> int:
         print("no sessions yet")
         return 0
     if args.session_id:
-        from .session_viewer import render_session, find_session_file
+        from .ui import render_session, find_session_file
         if getattr(args, "inspect", False):
             s_file = find_session_file(args.session_id)
             if not s_file:
@@ -719,7 +719,7 @@ def cmd_plugins(args) -> int:
             if tmp_path and tmp_path.exists():
                 tmp_path.unlink()
 
-        from ..knowledge import skill_index
+        from ..knowledge import skills as skill_index
         # `skill_index.build` does not exist - the function is `build_index`, and
         # it returns the index dict, not a count. Both install and remove called
         # the wrong name, so `plugin install` crashed after downloading and
@@ -755,7 +755,7 @@ def cmd_plugins(args) -> int:
             print(f"error: plugin '{target}' not found in {user_skills}")
             return 1
         shutil.rmtree(target_dir, ignore_errors=True)
-        from ..knowledge import skill_index
+        from ..knowledge import skills as skill_index
         count = skill_index.build_index(cfg)["count"]   # see the note above
         print(f"✓ Removed plugin '{target}'")
         print(f"✓ Rebuilt skill index: {count} total skill(s) indexed.")
@@ -809,7 +809,7 @@ def cmd_mcp(args) -> int:
 
 
 def cmd_route(args) -> int:
-    from ..orchestration.intent_router import IntentRouter
+    from ..orchestration.system1 import IntentRouter
     router = IntentRouter()
     dec = router.route(args.goal)
     if getattr(args, "explain", False):
@@ -827,7 +827,7 @@ _CLI_EPILOG = """\
 Command Domains:
   Core Runtime : chat, run, team, resume, ask, clarify, sessions, viewer, desktop, serve, dashboard
   Code & Skills: index, skill, recon, plugin, mcp, automations, schedule, setup
-  Governance   : doctor, gate, manifest, bench, memory, ralph, audit, speculative, replay, swarm
+  Governance   : doctor, gate, manifest, bench, memory, ralph, audit
 """
 
 
@@ -973,10 +973,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run-id from a previous 'baize team' run "
                          "(omit to list recent runs)")
 
-    # V30-1: Speculative time-travel exploration
-    spec = sub.add_parser("speculative",
-                          help="V30 speculative time-travel multi-branch exploration")
-    spec.add_argument("goal", help="Task goal to explore across candidate timelines")
 
     # V33 Desktop Studio
     dt = sub.add_parser("desktop", help="launch Baize Desktop Studio application")
@@ -1007,7 +1003,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_ralph(args) -> int:
-    from ..orchestration.ralph import RalphLoopEngine, PRDDocument
+    from ..orchestration.contract import RalphLoopEngine, PRDDocument
     from pathlib import Path
 
     prd_file = args.prd
@@ -1049,35 +1045,6 @@ def cmd_ralph(args) -> int:
         print(f"⚠️ [Ralph 循环暂停] 已执行 {res['total_iterations']} 轮迭代。如需继续请执行: baize ralph --resume")
         return 0
 
-
-def cmd_speculative(args) -> int:
-    """Print a speculative-timeline comparison.
-
-    HONESTY: the three timelines below are a HARDCODED FIXTURE. No code is
-    generated, no check is executed and no file is inspected - `checks_passed`,
-    `churn_lines` and `duration_ms` are literals typed into this function, and
-    `status="verified"` is a label, not a result. The output always looks the
-    same regardless of `args.goal`. Replacing this fixture with a real
-    exploration is tracked as P4-1; until then the printed banner says so.
-    """
-    from ..labs.forking import SpeculativeTimeline, SpeculativeEngine
-    print(f"Running V30 speculative exploration for: '{args.goal}'...")
-    print("[!] NOTE: this is a hardcoded demo fixture - nothing is generated,")
-    print("    executed or verified. 'checks' and 'churn' are preset literals.")
-    engine = SpeculativeEngine()
-    timelines = [
-        SpeculativeTimeline(timeline_id="tl_patch", strategy="minimal_patch", status="verified", checks_passed=3, total_checks=3, churn_lines=5, duration_ms=150),
-        SpeculativeTimeline(timeline_id="tl_refactor", strategy="modular_refactor", status="verified", checks_passed=3, total_checks=3, churn_lines=25, duration_ms=420),
-        SpeculativeTimeline(timeline_id="tl_contract", strategy="contract_driven", status="verified", checks_passed=3, total_checks=3, churn_lines=14, duration_ms=310),
-    ]
-    winner = engine.select_and_merge(timelines)
-    print("\n--- Speculative Time-Travel Results (preset fixture) ---")
-    for t in timelines:
-        mark = "WINNER" if t.timeline_id == winner.timeline_id else "DISCARDED"
-        print(f"  [{mark}] {t.timeline_id} ({t.strategy}): score={t.score:.3f}, churn={t.churn_lines} lines, checks={t.checks_passed}/{t.total_checks}")
-    print(f"\nWinning branch '{winner.timeline_id}' selected with score {winner.score:.3f}")
-    print("Note: the winner is determined entirely by the preset literals above.")
-    return 0
 
 
 def cmd_impact(args) -> int:
@@ -1137,7 +1104,6 @@ def main(argv: list[str] | None = None) -> int:
         "memory": cmd_memory,
         "run": cmd_run,
         "team": cmd_team,
-        "speculative": cmd_speculative,  # V30-1
         "sessions": cmd_sessions,
         "session": cmd_sessions,
         "status": cmd_status,      # V26-A5

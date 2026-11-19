@@ -13,7 +13,6 @@ legacy
 tests
 docs
 benchmarks
-openspec
 install
 .env
 Dockerfile

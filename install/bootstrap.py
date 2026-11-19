@@ -262,7 +262,7 @@ def main() -> int:
     print("  Environment: python -m baize doctor")
     print('  Run agent:   python -m baize run "<your goal>"')
     print('  Team mode:   python -m baize team "<your goal>"')
-    print("  Docs:        cat START-HERE.md")
+    print("  Docs:        cat docs/START-HERE.md")
     return 0
 
 

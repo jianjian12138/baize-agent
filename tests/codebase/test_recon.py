@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from baize.codebase import recon
-from baize.knowledge import skill_index
+from baize.knowledge import skills as skill_index
 
 
 def _make_cfg(tmp_path: Path) -> dict:

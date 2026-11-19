@@ -19,7 +19,7 @@
 ## 🧭 根目录协议与规范索引
 
 - [README.md](file:///d:/tc/baize-agent/README.md)：项目简介、特性亮点与极速上手
-- [START-HERE.md](file:///d:/tc/baize-agent/START-HERE.md)：5 分钟新开发者引导
+- [START-HERE.md](./START-HERE.md)：5 分钟新开发者引导
 - [AGENT.md](file:///d:/tc/baize-agent/AGENT.md)：Agent 运行时行为协议与工具规约
-- [SKILL.md](file:///d:/tc/baize-agent/SKILL.md)：12 阶段研发流水线主技能
+- [SKILL.md](./SKILL.md)：12 阶段研发流水线主技能
 - [baize.manifest.json](file:///d:/tc/baize-agent/baize.manifest.json)：NO FAKE DONE 物理证据事实清单

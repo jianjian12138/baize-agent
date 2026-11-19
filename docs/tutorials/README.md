@@ -50,7 +50,7 @@
 | 内置工具 | **16 个**（开启 `BAIZE_ALLOW_FETCH_URL=1` 后 17 个） | `python -c "from baize.execution.tools import default_registry as d; print(len(d().names()))"` |
 | 内置技能 | **23 个** `SKILL.md` | `python -c "import glob; print(len(glob.glob('assets/**/SKILL.md', recursive=True)))"` |
 | 配置项 | **72 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 74 项） | `python -c "from baize.core.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
-| CLI 子命令 | **30 个** | `python -m baize --help` |
+| CLI 子命令 | **29 个** | `python -m baize --help` |
 | 模型要求 | 任意 OpenAI 兼容端点（需自备） | —— |
 
 > **维护提示**：测试数、覆盖率、配置项数、子命令数都是会随提交漂移的数字。本仓库的 `scripts/gates/sync_truth.py` 会校验其中一部分；改动 `baize/config.py` 或 `baize/cli.py` 后请重新跑一遍上面的命令并更新本表。
@@ -80,7 +80,7 @@
 | [`../../README.md`](../../README.md) | 项目总览（架构图、快速开始、对比表） |
 | [`../QUICKSTART_CN.md`](../QUICKSTART_CN.md) | 快速开始（更短，只求跑起来） |
 | [`../USAGE_GUIDE.md`](../USAGE_GUIDE.md) | 命令参考与配置手册 |
-| [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) | 贡献流程与门禁说明 |
+| [`../../.github/CONTRIBUTING.md`](../../.github/CONTRIBUTING.md) | 贡献流程与门禁说明 |
 | [`../benchmarks.md`](../benchmarks.md) | 基准测试说明 |
 
 ---

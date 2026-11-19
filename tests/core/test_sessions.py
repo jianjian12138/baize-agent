@@ -11,7 +11,7 @@ import re
 from baize.core import sessions as S
 from baize.core.agent import Session
 from baize.interfaces import ui
-from baize.interfaces import dashboard
+from baize.interfaces import ui as dashboard
 
 
 def _build(tmp_path, msgs):

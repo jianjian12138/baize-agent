@@ -8,7 +8,7 @@ from __future__ import annotations
 import importlib
 
 from baize.governance.observability import obs
-from baize.execution.tool_sdk import tool
+from baize.execution.tools import tool
 
 
 def test_obs_counters_and_prometheus():

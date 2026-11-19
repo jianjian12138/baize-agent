@@ -33,7 +33,7 @@ def test_real_package_is_clean():
 
 def test_missing_module_attribute_is_caught(tmp_path):
     f = _write(tmp_path, (
-        "from .knowledge import skill_index\n"
+        "from .knowledge import skills as skill_index\n"
         "def go():\n"
         "    return skill_index.build({})\n"
     ))
@@ -45,7 +45,7 @@ def test_missing_module_attribute_is_caught(tmp_path):
 
 def test_existing_module_attribute_passes(tmp_path):
     f = _write(tmp_path, (
-        "from .knowledge import skill_index\n"
+        "from .knowledge import skills as skill_index\n"
         "def go():\n"
         "    return skill_index.build_index()\n"
     ))
@@ -99,21 +99,21 @@ def test_a_missing_imported_name_is_caught(tmp_path):
     raised ImportError on every request. The attribute check alone never looked
     at the binding itself, only at attributes reached through it."""
     f = _write(tmp_path, (
-        "from .labs.causal import CausalDebugger\n"
+        "from .codebase.symbol_graph import NoSuchSymbol\n"
         "def go():\n"
-        "    return CausalDebugger()\n"
+        "    return NoSuchSymbol()\n"
     ))
     problems = check_module_attrs.scan_file(f)
     assert len(problems) == 1, problems
-    assert "CausalDebugger" in problems[0]
-    assert "baize.labs.causal" in problems[0]
+    assert "NoSuchSymbol" in problems[0]
+    assert "baize.codebase.symbol_graph" in problems[0]
 
 
 def test_a_real_imported_name_passes(tmp_path):
     f = _write(tmp_path, (
-        "from .labs.causal import ASTCausalTracker\n"
+        "from .codebase.symbol_graph import SymbolGraph\n"
         "def go():\n"
-        "    return ASTCausalTracker()\n"
+        "    return SymbolGraph()\n"
     ))
     assert check_module_attrs.scan_file(f) == []
 
@@ -131,7 +131,7 @@ def test_relative_import_depth_is_resolved_against_the_file(tmp_path):
 
 
 def test_star_imports_are_skipped_rather_than_guessed(tmp_path):
-    f = _write(tmp_path, "from .labs.causal import *\n")
+    f = _write(tmp_path, "from .codebase.symbol_graph import *\n")
     assert check_module_attrs.scan_file(f) == []
 
 
@@ -151,10 +151,10 @@ def test_repo_root_is_on_sys_path():
 def test_main_exit_codes(tmp_path, capsys):
     clean = tmp_path / "clean"
     clean.mkdir()
-    _write(clean, "from .knowledge import skill_index\ndef go():\n    return skill_index.build_index()\n")
+    _write(clean, "from .knowledge import skills as skill_index\ndef go():\n    return skill_index.build_index()\n")
     assert check_module_attrs.main([str(clean)]) == 0
 
     dirty = tmp_path / "dirty"
     dirty.mkdir()
-    _write(dirty, "from .knowledge import skill_index\ndef go():\n    return skill_index.build()\n")
+    _write(dirty, "from .knowledge import skills as skill_index\ndef go():\n    return skill_index.build()\n")
     assert check_module_attrs.main([str(dirty)]) == 1

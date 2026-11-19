@@ -51,31 +51,6 @@ def _handle_team(handler, data: dict, deps: dict[str, Any]) -> None:
     })
 
 
-def _handle_causal(handler, data: dict) -> None:
-    code = data.get("code") or "def divide(a, b):\n    return a / b"
-    fn_name = data.get("target_function") or "divide"
-    error_context = data.get("error_context") or ""
-    from ...labs.causal import ASTCausalTracker, MutationFuzzer
-    cslice = ASTCausalTracker().extract_slice(code, fn_name, error_context)
-    mutations = MutationFuzzer().generate_mutations(fn_name, cslice.culprit_variables)
-    handler._send(200, {
-        "target_function": cslice.target_function,
-        "line_range": cslice.line_range,
-        "culprit_variables": cslice.culprit_variables,
-        "ast_node_type": cslice.ast_node_type,
-        "snippet": cslice.source_snippet,
-        "mutations_executed": False,
-        "mutations_note": (
-            "these are generated case descriptors - no payload was applied to "
-            "the target function and no result was observed"
-        ),
-        "mutations": [
-            {"name": m.name, "type": m.mutation_type, "desc": m.description,
-             "payload": {k: repr(v) for k, v in m.payload.items()}}
-            for m in mutations
-        ],
-    })
-
 
 def _handle_save_skill(handler, data: dict) -> None:
     name = (data.get("name") or "").strip()
@@ -120,28 +95,6 @@ def _handle_compress(handler, data: dict, deps: dict[str, Any]) -> None:
     handler._send(200, report)
 
 
-def _handle_synthesize(handler, data: dict) -> None:
-    name = (data.get("name") or "").strip()
-    code = data.get("code") or ""
-    test = data.get("test") or ""
-    if not name or not code:
-        return handler._send(400, {"error": "missing name or code"})
-    from ...labs.synthesizer import MetaToolSynthesizer
-    tool = MetaToolSynthesizer().certify_tool(
-        name=name, description=data.get("description", ""), code_source=code, test_source=test,
-    )
-    handler._send(200, {"name": tool.name, "certified": tool.certified, "gene_signature": tool.gene_signature})
-
-
-def _handle_adversarial(handler, data: dict) -> None:
-    blue_code = data.get("blue_code") or ""
-    red_input = data.get("red_input") or {}
-    if not blue_code:
-        return handler._send(400, {"error": "missing blue_code"})
-    from ...labs.adversarial import ByzantineJudge
-    round_res = ByzantineJudge().arbitrate(1, blue_code, red_input)
-    handler._send(200, {"verdict": round_res.verdict, "attack_succeeded": round_res.attack_succeeded})
-
 
 def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> None:
     stub_routes = deps["STUB_ROUTES"]
@@ -155,17 +108,11 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         from ...ext.mcp.dispatcher import call_mcp_tool
         return handler._send(200, call_mcp_tool(server, tool, args, load_config().get("BAIZE_WORKSPACE_DIR", ".")))
 
-    if req_path == "/v30/swarm/speculate":
-        from ...labs.swarm import run_parallel_swarm_speculation
-        return handler._send(200, run_parallel_swarm_speculation(data.get("goal") or "优化系统并发安全性"))
 
     if req_path == "/api/context/slice":
         from ...codebase.repo_map import slice_code_context
         return handler._send(200, slice_code_context(data.get("code") or "", data.get("focus_symbol") or ""))
 
-    if req_path == "/api/market/publish":
-        from ...labs.tool_market import publish_market_tool
-        return handler._send(200, publish_market_tool(data))
 
     if req_path == "/api/causal/mutation_test":
         code = data.get("code") or "def add(a, b):\n    return a + b if a > 0 else 0"
@@ -173,19 +120,11 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         from ...governance.mutation import run_ast_mutation_arena
         return handler._send(200, run_ast_mutation_arena(code, fn))
 
-    if req_path == "/api/byzantine/arbitrate":
-        from ...labs.byzantine import DEFAULT_QUORUM, run_byzantine_consensus
-        verdicts = data.get("verdicts") or None
-        quorum = int(data.get("quorum") or DEFAULT_QUORUM)
-        return handler._send(200, run_byzantine_consensus(
-            data.get("code") or "", data.get("goal") or "核心支付状态机发布评审",
-            verdicts=verdicts, quorum=quorum,
-        ))
 
     if req_path == "/api/invariants/anchor":
         goal = data.get("goal") or "长期重构任务"
         constraints = data.get("constraints") or None
-        from ...orchestration.invariants_anchor import create_invariants_anchor
+        from ...orchestration.contract import create_invariants_anchor
         anchor = create_invariants_anchor(goal, constraints)
         sample_prompt = data.get("prompt") or "请开始第 42 步执行"
         wrapped = anchor.inject_anchor_header(sample_prompt, turn_index=int(data.get("turn_index", 42)))
@@ -197,7 +136,7 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         })
 
     if req_path == "/api/interactive/detect":
-        from ...execution.interactive_detector import detect_interactive_prompt
+        from ...execution.proc import detect_interactive_prompt
         return handler._send(200, detect_interactive_prompt(data.get("text") or "Do you want to continue? [y/N]"))
 
     if req_path == "/api/docs/fetch":
@@ -239,16 +178,6 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
     if req_path == "/team":
         return _handle_team(handler, data, deps)
 
-    if req_path == "/v30/synthesize":
-        if code_exec_gate(handler) is not None:
-            return
-        return _handle_synthesize(handler, data)
-    if req_path == "/v30/adversarial":
-        if code_exec_gate(handler) is not None:
-            return
-        return _handle_adversarial(handler, data)
-    if req_path == "/v30/causal":
-        return _handle_causal(handler, data)
 
     if req_path == "/v30/causal/persist_test":
         fn = (data.get("target_function") or "divide").strip()

@@ -235,25 +235,6 @@ def check_source_markers() -> list[str]:
     return problems
 
 
-def check_cli_fixture_warning() -> list[str]:
-    """`baize speculative` must announce that its data is a hardcoded fixture."""
-    proc = subprocess.run(
-        [sys.executable, "-m", "baize", "speculative", "honesty-gate"],
-        cwd=ROOT, capture_output=True, text=True, errors="replace", timeout=180,
-    )
-    out = proc.stdout + proc.stderr
-    if proc.returncode != 0:
-        return [f"`baize speculative` exited {proc.returncode}; cannot verify honesty"]
-    missing = [phrase for phrase in ("hardcoded demo fixture", "preset fixture")
-               if phrase not in out]
-    if missing:
-        return [
-            "`baize speculative` no longer warns that its numbers are a hardcoded "
-            f"fixture (missing {missing}). The three timelines in cmd_speculative "
-            "are literals - restore the warning or implement it for real."
-        ]
-    return []
-
 
 def check_live_routes() -> list[str]:
     """Start the real server and probe every stub route plus one control route."""
@@ -315,7 +296,6 @@ def main(argv: list[str]) -> int:
     checks = [
         ("source fabrication markers", check_source_markers),
         ("live stub routes", check_live_routes),
-        ("CLI fixture warning", check_cli_fixture_warning),
     ]
     problems: list[str] = []
     for name, fn in checks:

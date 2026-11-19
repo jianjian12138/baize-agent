@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from baize.governance import bench
 from baize.knowledge import graph, rag
 from baize.knowledge.memory import log_event, remember  # noqa: E402
-from baize.knowledge.vector import EmbeddingBackend, TfidfIndex, tokenize  # noqa: E402
+from baize.knowledge.rag import EmbeddingBackend, TfidfIndex, tokenize  # noqa: E402
 
 
 def cfg_for(tmp_path: Path) -> dict:

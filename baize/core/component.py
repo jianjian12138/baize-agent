@@ -35,7 +35,7 @@ from enum import Enum
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .config import load_config
-from .logging_setup import get_logger
+from .config import get_logger
 from ..governance.observability import obs
 
 log = get_logger("component")
@@ -235,7 +235,7 @@ def _build_tool(cfg: dict) -> Any:
 
 
 def _build_skill(cfg: dict) -> Any:
-    from ..knowledge import skill_index
+    from ..knowledge import skills as skill_index
     return skill_index
 
 

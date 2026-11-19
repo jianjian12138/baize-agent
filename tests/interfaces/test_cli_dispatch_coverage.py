@@ -39,8 +39,8 @@ import baize.interfaces.cli as cli
 import baize.core.config as config_mod
 import baize.core.plugin as plugin_mod
 import baize.orchestration.run_ledger as ledger_mod
-import baize.interfaces.session_viewer as viewer_mod
-import baize.knowledge.skill_index as skill_index
+import baize.interfaces.ui as viewer_mod
+import baize.knowledge.skills as skill_index
 import baize.orchestration.team as team_mod
 from baize.execution import tools as tools_mod
 
@@ -343,7 +343,7 @@ def test_gate_still_renders_quality_from_a_report_without_a_status(monkeypatch, 
 # ---------------------------------------------------------------------------
 
 def test_bench_public_maps_benchmarks_to_capabilities(monkeypatch, capsys):
-    import baize.governance.bench_public as bp
+    import baize.governance.bench as bp
     monkeypatch.setattr(bp, "coverage_report", lambda: {
         "benchmarks": [{"status": "covered", "name": "swe-bench", "measures": "patch",
                         "capability": "tool loop"}],
@@ -926,7 +926,7 @@ class _FakeEngine:
 
 @pytest.fixture()
 def ralph(monkeypatch, tmp_path):
-    import baize.orchestration.ralph as ralph_mod
+    import baize.orchestration.contract as ralph_mod
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(ralph_mod, "RalphLoopEngine", _FakeEngine)
     monkeypatch.setattr(ralph_mod, "PRDDocument", _FakePRD)
@@ -1007,7 +1007,7 @@ def test_main_without_arguments_enters_the_repl(monkeypatch):
 
 
 def test_main_refuses_to_run_on_an_invalid_configuration(monkeypatch, capsys):
-    from baize.core.config_schema import ConfigError
+    from baize.core.config import ConfigError
 
     def boom():
         raise ConfigError("BAIZE_MODEL_NAME is empty")

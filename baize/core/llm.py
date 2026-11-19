@@ -1,18 +1,224 @@
-"""Model-agnostic LLM client (OpenAI-compatible chat completions) — V20.
+"""Multi-provider LLM client with pooled HTTP keep-alive and prompt prefix caching."""
 
-Design borrowed from hermes-agent: no vendor lock-in. Any endpoint speaking the
-OpenAI chat-completions dialect works (OpenAI, OpenRouter, Ollama, vLLM ...).
-
-V20 additions over V19:
-- Multi-model router with weighted selection and cross-model fallback.
-- Streaming output (SSE) via ``chat(..., stream=True)``.
-- Rate limiting (requests/min and tokens/min) with bounded backoff.
-
-Stdlib only; the transport is injectable so the agent loop can be tested
-deterministically with a scripted fake model — request-building, retry,
-fallback and response-parsing are always exercised for real.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: http_pool.py
+# ===========================================================================
+
+import http.client
+import io
+import json
+import threading
+import time
+import urllib.error
+import urllib.parse
+from typing import Any
+
+__all__ = [
+    "HTTPConnPool",
+    "get_http_pool",
+    "get_http_pool_stats",
+    "pooled_post_json",
+]
+
+
+class HTTPConnPool:
+    """Thread-safe per-(scheme, host, port) Keep-Alive HTTP/HTTPS pool."""
+
+    def __init__(self, max_per_host: int = 8, idle_ttl: float = 60.0) -> None:
+        self.max_per_host = max_per_host
+        self.idle_ttl = idle_ttl
+        self._lock = threading.Lock()
+        self._pool: dict[tuple[str, str, int], list[tuple[http.client.HTTPConnection, float]]] = {}
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+
+    def acquire(self, scheme: str, host: str, port: int) -> tuple[http.client.HTTPConnection, bool]:
+        key = (scheme, host, port)
+        now = time.monotonic()
+        with self._lock:
+            bucket = self._pool.get(key)
+            while bucket:
+                conn, ts = bucket.pop()
+                if now - ts <= self.idle_ttl and conn.sock is not None:
+                    self.hits += 1
+                    return conn, True
+                self.evictions += 1
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self.misses += 1
+        conn = (
+            http.client.HTTPSConnection(host, port, timeout=120)
+            if scheme == "https"
+            else http.client.HTTPConnection(host, port, timeout=120)
+        )
+        return conn, False
+
+    def release(self, scheme: str, host: str, port: int, conn: http.client.HTTPConnection) -> None:
+        key = (scheme, host, port)
+        with self._lock:
+            bucket = self._pool.setdefault(key, [])
+            if len(bucket) < self.max_per_host and conn.sock is not None:
+                bucket.append((conn, time.monotonic()))
+                return
+            self.evictions += 1
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            pooled = sum(len(v) for v in self._pool.values())
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "evictions": self.evictions,
+                "pooled": pooled,
+            }
+
+    def close_all(self) -> None:
+        with self._lock:
+            for bucket in self._pool.values():
+                for conn, _ in bucket:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            self._pool.clear()
+
+
+_CONN_POOL = HTTPConnPool()
+
+
+def get_http_pool() -> HTTPConnPool:
+    return _CONN_POOL
+
+
+def get_http_pool_stats() -> dict[str, int]:
+    """Return live Keep-Alive connection pool telemetry."""
+    return _CONN_POOL.stats()
+
+
+def pooled_post_json(url: str, headers: dict, payload: dict) -> dict[str, Any]:
+    """POST JSON using the shared Keep-Alive connection pool with stale-socket retry."""
+    parsed = urllib.parse.urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https") or not parsed.hostname:
+        raise urllib.error.URLError(f"unknown url type: {url}")
+    host = parsed.hostname
+    port = parsed.port or (443 if scheme == "https" else 80)
+    target = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+    data = json.dumps(payload).encode("utf-8")
+    req_headers = dict(headers)
+    req_headers.setdefault("Connection", "keep-alive")
+    req_headers["Content-Length"] = str(len(data))
+
+    for retry_stale in (True, False):
+        conn, from_pool = _CONN_POOL.acquire(scheme, host, port)
+        try:
+            conn.request("POST", target, body=data, headers=req_headers)
+            resp = conn.getresponse()
+            raw_bytes = resp.read()
+            if getattr(resp, "will_close", True):
+                conn.close()
+            else:
+                _CONN_POOL.release(scheme, host, port, conn)
+            if resp.status >= 400:
+                raise urllib.error.HTTPError(
+                    url, resp.status, resp.reason, resp.headers, io.BytesIO(raw_bytes)
+                )
+            return json.loads(raw_bytes.decode("utf-8"))
+        except (http.client.HTTPException, OSError):
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if from_pool and retry_stale:
+                continue
+            raise
+    raise urllib.error.URLError(f"request failed for {url}")
+
+# ===========================================================================
+# Section: prompt_cache.py
+# ===========================================================================
+
+__all__ = ["estimate_tokens", "cacheable_prefix",
+           "build_cacheable_messages", "mark_cacheable"]
+
+
+def estimate_tokens(text: str, approx: bool = True) -> int:
+    """APPROXIMATE token count.
+
+    Heuristic of ~4 characters per token (English baseline). This is
+    intentionally coarse: real tokenizers differ by model and by language.
+    The ``approx`` flag is True by default and the result must never be
+    reported as an exact token count.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return max(1, len(text) // 4)
+
+
+def cacheable_prefix(system_prompt: str,
+                     tool_schemas: list[dict] | None = None) -> list[dict]:
+    """The stable leading block that should be cached across turns.
+
+    Returns ``[{"role": "system", "content": system_prompt}]`` - the system
+    prompt is the primary cache anchor. Tool definitions, when supplied to the
+    model via the ``tools=`` parameter, form a second stable block and are
+    treated as part of the same cached prefix. The output is deterministic:
+    identical inputs always yield an identical, ordered structure.
+    """
+    block: list[dict] = [{"role": "system", "content": system_prompt}]
+    return block
+
+
+def build_cacheable_messages(system_prompt: str,
+                             tool_schemas: list[dict] | None,
+                             conversation: list[dict]) -> list[dict]:
+    """Pin the cacheable prefix first, then append the conversation.
+
+    Any pre-existing ``system`` message in ``conversation`` is collapsed into
+    the single canonical system prompt so the prefix is unambiguous and stable
+    (a requirement for reliable prompt caching).
+    """
+    convo = [m for m in conversation if m.get("role") != "system"]
+    return cacheable_prefix(system_prompt, tool_schemas) + convo
+
+
+def mark_cacheable(messages: list[dict], provider: str) -> list[dict]:
+    """Attach the provider-native cache marker to the prefix.
+
+    - Anthropic: adds ``cache_control: {"type": "ephemeral"}`` to the last
+      system block (the cache breakpoint sits at the end of the stable prefix).
+    - OpenAI / Ollama: returned unchanged - they cache identical prefixes
+      automatically, no marker required.
+
+    Returns a NEW list; the input is never mutated.
+    """
+    if provider != "anthropic":
+        return list(messages)
+    out = []
+    last_sys_idx = -1
+    for i, m in enumerate(messages):
+        if m.get("role") == "system":
+            last_sys_idx = i
+        out.append(dict(m))
+    if last_sys_idx >= 0:
+        out[last_sys_idx] = {
+            **out[last_sys_idx],
+            "cache_control": {"type": "ephemeral"},
+        }
+    return out
+
+# ===========================================================================
+# Section: llm.py
+# ===========================================================================
 
 import json
 import re
@@ -26,9 +232,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
 from .config import load_config
-from .logging_setup import get_logger
+from .config import get_logger
 from ..governance.observability import obs
-from ..governance.chaos import Chaos
+from ..governance.mutation import Chaos
 
 log = get_logger("llm")
 
@@ -116,9 +322,7 @@ def _infer_provider(base_url: str) -> str:
     return "openai"
 
 
-from .http_pool import get_http_pool, get_http_pool_stats, pooled_post_json
 
-_CONN_POOL = get_http_pool()
 
 
 def _http_transport(url: str, headers: dict, payload: dict) -> dict:
@@ -504,14 +708,12 @@ class LLMClient:
     @staticmethod
     def cache_prefix(system_prompt: str,
                      tool_schemas: list[dict] | None = None) -> list[dict]:
-        from . import prompt_cache
-        return prompt_cache.cacheable_prefix(system_prompt, tool_schemas)
+        return cacheable_prefix(system_prompt, tool_schemas)
 
     @staticmethod
     def build_messages(system_prompt: str, tool_schemas: list[dict] | None,
                        conversation: list[dict]) -> list[dict]:
-        from . import prompt_cache
-        return prompt_cache.build_cacheable_messages(
+        return build_cacheable_messages(
             system_prompt, tool_schemas, conversation)
 
     def _select(self, tools: list[dict] | None = None) -> list[ModelSpec]:
@@ -553,8 +755,7 @@ class LLMClient:
                     self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
                     req_msgs = messages
                     if cache_on and spec.provider == "anthropic" and tools:
-                        from . import prompt_cache
-                        req_msgs = prompt_cache.mark_cacheable(messages, "anthropic")
+                        req_msgs = mark_cacheable(messages, "anthropic")
                     t0 = time.perf_counter()
                     raw = self.transport(
                         _endpoint(spec),

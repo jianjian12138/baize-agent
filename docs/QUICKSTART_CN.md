@@ -55,7 +55,7 @@ BAIZE_WINDOWS_POWERSHELL_FIRST=true
 ## 🔌 进阶生态集成
 
 ### 1. VS Code & Cursor 伴侣插件
-- 在 VS Code 中打开本仓库，加载 `extensions/vscode`；
+- 在 VS Code 中打开本仓库，加载 `examples/vscode`；
 - 使用快捷键 **`Ctrl+Shift+B`** 一键唤醒白泽 Studio；
 - 选中代码按 **`Ctrl+K`** 触发 AST 就地重构！
 

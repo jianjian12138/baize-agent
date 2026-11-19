@@ -35,14 +35,14 @@ from .. import __version__
 from .config import ROOT, load_config
 from ..orchestration.hooks import HookRegistry
 from .autonomy import AutonomyPolicy, READONLY_TOOLS, build_policy
-from .modes import resolve_mode
+from .autonomy import resolve_mode
 from .llm import LLMClient, LLMError
-from .logging_setup import redact
+from .config import redact
 from ..governance.observability import obs
 from .plugin import registry as plugin_registry
 from ..execution.tools import ToolRegistry, default_registry
 from ..knowledge import memory as memory_mod
-from ..execution import agent_rules
+from ..execution import tools as agent_rules
 
 MAX_OBSERVATION_CHARS = 8000
 COMPRESSED_OBSERVATION_CHARS = 400   # size of an observation after compression
@@ -473,7 +473,7 @@ class Agent:
                                   self.session.messages)
                 if str(self.cfg.get("BAIZE_AUTO_HARVEST_SKILLS", "1")).lower() in ("1", "true"):
                     try:
-                        from ..knowledge.skill_harvester import SkillHarvester
+                        from ..knowledge.skills import SkillHarvester
                         harvester = SkillHarvester(self.cfg)
                         if harvester.should_harvest(res):
                             h_path = harvester.harvest(res, goal=goal)

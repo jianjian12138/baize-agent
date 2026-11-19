@@ -30,9 +30,9 @@ from pathlib import Path
 import pytest
 
 import baize.interfaces.repl as repl_mod
-import baize.interfaces.session_viewer as viewer_mod
-import baize.interfaces.setup_wizard as wizard_mod
-import baize.knowledge.skill_index as skill_index
+import baize.interfaces.ui as viewer_mod
+import baize.interfaces.ui as wizard_mod
+import baize.knowledge.skills as skill_index
 
 
 def ns(**kw) -> types.SimpleNamespace:

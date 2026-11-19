@@ -12,16 +12,13 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 9 domain subpackages
-├── core/                           # agent loop, LLM adapters, config, sessions, autonomy
-│   ├── agent.py  autonomy.py  component.py  config.py  config_schema.py  http_pool.py
-│   ├── llm.py  logging_setup.py  modes.py  plugin.py  prompt_cache.py  sessions.py
-├── orchestration/                  # Director->Executor->Verifier DAG, contracts, hooks, ledger
-│   ├── automations.py  contract.py  hooks.py  intent_router.py  invariants_anchor.py
-│   ├── orchestrator.py  ralph.py  run_ledger.py  subagent.py  system1.py  team.py
-├── execution/                      # tool registry, sandboxes, proc timeouts, PowerShell/Docker
-│   ├── agent_rules.py  browser_verify.py  docker_sandbox.py  interactive_detector.py
-│   ├── powershell.py  proc.py  safe_exec.py  sandbox.py  tool_sdk.py  tools.py
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (53 modules)
+├── core/                           # 7 modules: agent loop, LLM client, config, sessions, autonomy
+│   ├── agent.py  autonomy.py  component.py  config.py  llm.py  plugin.py  sessions.py
+├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
+│   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  system1.py  team.py
+├── execution/                      # 6 modules: tools, sandboxes, proc timeouts, PowerShell, Docker, browser
+│   ├── browser_verify.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py
 ├── codebase/                       # 6 orthogonal static code intelligence modules
 │   ├── arch_cache.py               # incremental mtime/size-keyed SQLite architecture cache
 │   ├── impact.py                   # blast-radius analyzer, test-impact matrix & unified change-impact
@@ -29,30 +26,24 @@ baize/                              # 0 flat modules + __main__.py, 9 domain sub
 │   ├── repo_map.py                 # flat + L0/L1/L2 hierarchical repo maps & AST context slicer
 │   ├── symbol_graph.py             # AST/regex symbol graph, PageRank, canonical SKIP_DIRS/SUPPORTED_EXTS
 │   └── workspace_search.py         # zero-dependency workspace grep & glob search
-├── knowledge/                      # layered memory, semantic RAG, vectors, skills catalog & index
-│   ├── doc_crawler.py  graph.py  memory.py  rag.py  skill_harvester.py
-│   ├── skill_index.py  skill_runner.py  skills_catalog.py  team_memory.py  vector.py
-├── governance/                     # NO FAKE DONE gate, manifest, doctor, bench, chaos, mutation, obs
-│   ├── bench.py  bench_public.py  chaos.py  doctor.py  gate.py
-│   ├── manifest.py  mutation.py  observability.py  perf.py
-├── interfaces/                     # CLI, REPL, HTTP/SSE server, dashboard, desktop UI, setup wizard
-│   ├── cli.py  dashboard.py  desktop.py  desktop_ui.py  repl.py
-│   ├── serve.py  session_viewer.py  setup_wizard.py  ui.py
+├── knowledge/                      # 6 modules: layered memory, graph, RAG/TF-IDF, skills & runner
+│   ├── doc_crawler.py  graph.py  memory.py  rag.py  skill_runner.py  skills.py
+├── governance/                     # 5 modules: NO FAKE DONE gate, bench, doctor, mutation, observability
+│   ├── bench.py  doctor.py  gate.py  mutation.py  observability.py
+├── interfaces/                     # 9 modules: CLI, REPL, HTTP/SSE server, desktop, terminal/web UI
+│   ├── cli.py  desktop.py  repl.py  serve.py  ui.py
 │   └── server/                     # decomposed HTTP server subpackage
 │       ├── routes_get.py           # GET routes (/health, /api/workspace/search, /api/perf/profile, etc.)
 │       ├── routes_post.py          # POST dispatch & handlers
 │       ├── security.py             # fail-closed auth, CORS allowlist, path guards
 │       └── streaming.py            # real-time SSE streaming for /run/stream
-├── ext/                            # optional extensions (lazily loaded, fail-closed)
-│   ├── channels.py                 # conversation adapter interface for chat channels
-│   ├── mcp/                        # unified Model Context Protocol client/server/dispatcher
-│   │   ├── client.py  component.py  dispatcher.py  server.py  transport.py
-│   ├── plugins/
-│   │   └── metrics.py              # feeds observability counters from lifecycle hooks
-│   └── providers/                  # reserved - currently empty
-└── labs/                           # experimental engines (causal, forking, replay, swarm, radar)
-    ├── adversarial.py  byzantine.py  causal.py  forking.py  intelligence_radar.py
-    └── replay.py  snapshot.py  swarm.py  synthesizer.py  tool_market.py
+└── ext/                            # 7 modules: optional extensions (lazily loaded, fail-closed)
+    ├── channels.py                 # conversation adapter interface for chat channels
+    ├── mcp/                        # unified Model Context Protocol client/server/dispatcher
+    │   ├── client.py  component.py  dispatcher.py  server.py  transport.py
+    ├── plugins/
+    │   └── metrics.py              # feeds observability counters from lifecycle hooks
+    └── providers/                  # reserved - currently empty
 ```
 
 > This tree is generated from the filesystem by

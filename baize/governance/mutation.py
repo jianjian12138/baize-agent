@@ -1,38 +1,99 @@
-"""Anti-Fragile AST Mutation Testing & Counterfactual Guardrail Generator.
+"""AST mutation testing arena, guardrail synthesis, and chaos fault injection."""
 
-Pure Python standard library — zero third-party dependencies.
-
-WHAT THIS ACTUALLY DOES
------------------------
-It flips comparison and arithmetic operators in the submitted source, loads the
-original and each mutant into the constrained namespace from
-``baize/safe_exec.py``, calls both with a fixed probe corpus and compares the
-results. A mutant whose behaviour differs on at least one probe is *killed*; one
-that agrees on every probe is *survived*. ``mutation_score`` is
-``killed / (killed + survived)`` over the probes that actually ran.
-
-The emitted guardrail test is not text anyone has to trust: it embeds the source
-under test verbatim, so it runs standalone, and it is executed against the
-original (must pass) and against every killed mutant (must fail) before it is
-returned. The verdict of those runs is reported in ``guardrail_verification``.
-
-WHAT IT DOES NOT ESTABLISH
---------------------------
-See :data:`LIMITATIONS`. The short version: the probe corpus is fixed rather than
-derived from the code under test, so a mutant can survive because no probe
-happens to cross its boundary. A high score is evidence about *this corpus*, not
-proof that the code is correct.
-
-WHY THIS FILE WAS REWRITTEN
----------------------------
-The previous revision computed ``killed_count = len(mutants)``, i.e. it reported
-a 100% mutation score without ever executing a single mutant, and emitted
-``assert True`` as the "synthesized guardrail test". ``README.md`` advertised
-that constant as a product feature ("AST 变异测试网 (100% 击杀率)"). Reporting
-100% because the arithmetic is ``n / n`` is the exact failure mode ``AGENT.md``
-calls NO FAKE DONE: the number looked like evidence and was never measured.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: chaos.py
+# ===========================================================================
+
+import random
+
+from ..core.config import load_config
+from .observability import obs
+
+__all__ = ["ChaosError", "Chaos", "FAULTS"]
+
+FAULTS = ("timeout", "http_500", "malformed_json", "empty_response",
+          "connection_reset", "slow_response")
+
+
+class ChaosError(Exception):
+    """Raised by an injected fault. Callers must survive this."""
+
+
+class Chaos:
+    """Deterministic fault injector (seeded RNG = reproducible failures)."""
+
+    def __init__(self, cfg: dict | None = None, faults: tuple | None = None):
+        cfg = cfg or load_config()
+        self.enabled = str(cfg.get("BAIZE_CHAOS_ENABLED", "0")).lower() in (
+            "1", "true")
+        try:
+            self.rate = max(0.0, min(1.0, float(
+                cfg.get("BAIZE_CHAOS_FAILURE_RATE", "0.0"))))
+        except (TypeError, ValueError):
+            self.rate = 0.0
+        seed = cfg.get("BAIZE_CHAOS_SEED", "")
+        self.rng = random.Random(seed) if seed else random.Random()
+        self.faults = faults or FAULTS
+        self.injected: list[str] = []
+
+    @property
+    def active(self) -> bool:
+        return self.enabled and self.rate > 0.0
+
+    def should_fail(self) -> bool:
+        return self.active and self.rng.random() < self.rate
+
+    def pick_fault(self) -> str:
+        return self.rng.choice(list(self.faults))
+
+    def maybe_fail(self, context: str = "") -> None:
+        """Raise ChaosError with probability `rate`. No-op when disabled."""
+        if not self.should_fail():
+            return
+        fault = self.pick_fault()
+        self.injected.append(fault)
+        obs.inc("chaos_faults_injected")
+        obs.inc(f"chaos_fault_{fault}")
+        raise ChaosError(f"injected fault '{fault}'"
+                         + (f" at {context}" if context else ""))
+
+    # --- wrappers -----------------------------------------------------------
+
+    def wrap_transport(self, transport):
+        """Wrap an LLM transport so it fails realistically under chaos."""
+        def wrapped(*args, **kwargs):
+            if self.should_fail():
+                fault = self.pick_fault()
+                self.injected.append(fault)
+                obs.inc("chaos_faults_injected")
+                obs.inc(f"chaos_fault_{fault}")
+                if fault == "malformed_json":
+                    return "{ this is not valid json"
+                if fault == "empty_response":
+                    return {}
+                raise ChaosError(f"injected transport fault '{fault}'")
+            return transport(*args, **kwargs)
+        return wrapped
+
+    def wrap_callable(self, fn, context: str = ""):
+        """Generic wrapper: inject before delegating."""
+        def wrapped(*args, **kwargs):
+            self.maybe_fail(context or getattr(fn, "__name__", "call"))
+            return fn(*args, **kwargs)
+        return wrapped
+
+    def report(self) -> dict:
+        counts: dict[str, int] = {}
+        for f in self.injected:
+            counts[f] = counts.get(f, 0) + 1
+        return {"enabled": self.enabled, "rate": self.rate,
+                "total_injected": len(self.injected), "by_fault": counts}
+
+# ===========================================================================
+# Section: mutation.py
+# ===========================================================================
 
 import ast
 import inspect
@@ -299,7 +360,7 @@ def _load_function(source: str, fn_name: str) -> tuple[Callable[..., Any] | None
     sandbox - see its module docstring - and the access-control gate in
     ``baize/serve.py`` is the real boundary.
     """
-    from ..execution.safe_exec import exec_restricted
+    from ..execution.sandbox import exec_restricted
 
     try:
         namespace = exec_restricted(source)
@@ -459,7 +520,7 @@ def _execute_module(module: str, test_name: str) -> tuple[bool, str | None]:
     *and* executable here, which is what lets the verification run the text
     instead of trusting it.
     """
-    from ..execution.safe_exec import exec_restricted
+    from ..execution.sandbox import exec_restricted
 
     try:
         namespace = exec_restricted(module, seed={"__name__": "__guardrail__"})

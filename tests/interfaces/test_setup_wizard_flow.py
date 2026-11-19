@@ -29,7 +29,7 @@ import urllib.error
 
 import pytest
 
-import baize.interfaces.setup_wizard as wizard
+import baize.interfaces.ui as wizard
 
 _MODEL_VARS = ("BAIZE_MODEL_BASE_URL", "BAIZE_MODEL_API_KEY", "BAIZE_MODEL_NAME")
 

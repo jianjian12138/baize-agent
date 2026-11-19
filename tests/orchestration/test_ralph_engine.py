@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from baize.orchestration.ralph import (
+from baize.orchestration.contract import (
     UserStory,
     PRDDocument,
     ProgressJournal,

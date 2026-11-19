@@ -34,7 +34,7 @@ from ..core.config import load_config, ROOT
 from .hooks import HookRegistry
 from ..core.llm import LLMClient
 from ..governance.observability import obs
-from ..knowledge.team_memory import TeamMemory
+from ..knowledge.memory import TeamMemory
 from ..execution.tools import ToolRegistry, default_registry
 from ..knowledge import memory as memory_mod
 # V26-A2: run ledger for append-only task event audit trail

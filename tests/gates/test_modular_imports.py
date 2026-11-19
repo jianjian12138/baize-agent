@@ -74,7 +74,7 @@ def test_security_subpackage_imports():
 def test_serve_and_cli_imports():
     from baize.interfaces.serve import serve
     from baize.interfaces.cli import main
-    from baize.interfaces.dashboard import render
+    from baize.interfaces.ui import render
     assert callable(main)
     assert callable(serve)
     assert callable(render)

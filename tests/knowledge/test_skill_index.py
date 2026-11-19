@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from baize.knowledge.skill_index import (_dedup, audit_index, build_index, create_skill,
+from baize.knowledge.skills import (_dedup, audit_index, build_index, create_skill,
                                safe_name)
 
 

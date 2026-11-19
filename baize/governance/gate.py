@@ -1,26 +1,110 @@
-"""NO FAKE DONE gate, productized (P3-3, V26-C5). Zero runtime dependencies.
+"""Manifest validator and NO FAKE DONE physical verification gates."""
 
-This is the single source of truth for "is this project honestly done":
-
-* Manifest gate - every phase marked ``done`` must list evidence files that
-  actually EXIST and are NON-EMPTY. Age is checked only where age means
-  something: an evidence file that git tracks has its mtime rewritten by every
-  checkout, so ``now - mtime`` measures the checkout, not the file. Tracked
-  evidence is therefore reported as "freshness not judged" instead of being
-  judged. (It used to be judged, which produced ``evidence STALE (28d old):
-  baize/subagent.py`` - the *implementation* of the phase - on a healthy tree,
-  while a fresh clone passed the same check vacuously. All 173 evidence entries
-  in this repo are tracked, so the rule could only ever fire where it was wrong.)
-  Existence and non-emptiness stay hard failures; those are sound.
-* Coverage gate - if the ``coverage`` dev package is installed we measure the
-  REAL TOTAL and compare to ``TEST_COVERAGE_THRESHOLD``; otherwise we report
-  ``unknown`` rather than pretending green.
-* Loop Integrity gate (V26-C5) - verifies that run ledgers exist and match
-  manifest claims; unverified tasks and unhandled failures block fake completion.
-
-All checks are fail-closed: any uncertainty is surfaced, never hidden.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: manifest.py
+# ===========================================================================
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+VALID_STATUS = {"pending", "in_progress", "done", "skipped"}
+PHASE_IDS = [f"P{i}" for i in range(1, 13)]
+
+
+@dataclass
+class ValidationResult:
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+def validate_manifest(manifest_path: Path) -> ValidationResult:
+    res = ValidationResult()
+    manifest_path = Path(manifest_path)
+
+    if not manifest_path.exists():
+        res.errors.append(f"manifest not found: {manifest_path}")
+        return res
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        res.errors.append(f"invalid JSON: {exc}")
+        return res
+
+    for key in ("project", "version", "phases"):
+        if key not in data:
+            res.errors.append(f"missing required field: {key}")
+    if res.errors:
+        return res
+
+    phases = data["phases"]
+    if not isinstance(phases, list) or not phases:
+        res.errors.append("phases must be a non-empty list")
+        return res
+
+    base = manifest_path.parent
+    seen_ids = set()
+    for i, phase in enumerate(phases):
+        pid = phase.get("id", f"<index {i}>")
+        if pid in seen_ids:
+            res.errors.append(f"duplicate phase id: {pid}")
+        seen_ids.add(pid)
+
+        if pid not in PHASE_IDS:
+            res.warnings.append(f"non-standard phase id: {pid}")
+
+        status = phase.get("status")
+        if status not in VALID_STATUS:
+            res.errors.append(f"{pid}: invalid status {status!r} "
+                              f"(allowed: {sorted(VALID_STATUS)})")
+            continue
+
+        # THE GATE: "done" requires evidence files that physically exist.
+        if status == "done":
+            evidence = phase.get("evidence", [])
+            if not evidence:
+                res.errors.append(f"{pid}: status=done but no evidence listed "
+                                  "(NO FAKE DONE)")
+            for ev in evidence:
+                ev_path = Path(ev)
+                if not ev_path.is_absolute():
+                    ev_path = base / ev
+                if not ev_path.exists():
+                    res.errors.append(f"{pid}: evidence missing on disk: {ev}")
+
+    # Ordering sanity: a done phase must not come after a pending one.
+    status_seq = [p.get("status") for p in phases]
+    seen_pending = False
+    for phase, status in zip(phases, status_seq):
+        if status in ("pending", "in_progress"):
+            seen_pending = True
+        elif status == "done" and seen_pending:
+            res.warnings.append(
+                f"{phase.get('id')}: done after a pending/in_progress phase "
+                "(pipeline order looks inconsistent)")
+
+    return res
+
+
+def format_result(res: ValidationResult) -> str:
+    lines = []
+    for e in res.errors:
+        lines.append(f"[ERROR] {e}")
+    for w in res.warnings:
+        lines.append(f"[WARN]  {w}")
+    lines.append("RESULT: " + ("VALID" if res.ok else "INVALID"))
+    return "\n".join(lines)
+
+# ===========================================================================
+# Section: gate.py
+# ===========================================================================
 
 import json
 import os
@@ -182,7 +266,6 @@ def check_manifest(manifest_path: str,
     that rule could only ever fire where it was wrong and never where CI runs.
     Tracked evidence is recorded in ``notes`` instead of being judged.
     """
-    from .manifest import validate_manifest
     now = now if now is not None else time.time()
     path = Path(manifest_path)
     if not path.exists():
@@ -290,7 +373,7 @@ def check_composition(cfg: dict | None = None) -> dict:
     from the V22 plan with REAL execution (fail-closed)."""
     from ..core.component import (
         CompositionKernel, Kind, _KIND_PROTOCOLS, LoopStrategyProto)
-    from ..core.modes import VALID_MODES, resolve_mode
+    from ..core.autonomy import VALID_MODES, resolve_mode
     try:
         rt = CompositionKernel(cfg).assemble()
         for k in Kind:
@@ -435,7 +518,7 @@ def check_quality(cfg: dict | None = None,
     loop_score = 1.0 if loop.get("status") == "pass" else 0.0
     # 5. locatability — skill index hygiene (missing-description rate).
     try:
-        from ..knowledge import skill_index
+        from ..knowledge import skills as skill_index
         au = skill_index.audit_index(cfg)
         total = au.get("count") or 1
         miss = len(au.get("missing_description", []))

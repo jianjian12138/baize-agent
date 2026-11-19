@@ -3,7 +3,7 @@
 Coverage for Campaign D (D1-D5).
 """
 import pytest
-from baize.knowledge.vector import get_backend, EmbeddingBackend, TfidfIndex
+from baize.knowledge.rag import get_backend, EmbeddingBackend, TfidfIndex
 from baize.ext.channels import ConversationAdapter, ChannelMessage
 from baize.orchestration.team import Role
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from baize.governance.manifest import validate_manifest  # noqa: E402
+from baize.governance.gate import validate_manifest  # noqa: E402
 
 
 def write_manifest(tmp_path: Path, data: dict) -> Path:

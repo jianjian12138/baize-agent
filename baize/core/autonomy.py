@@ -1,27 +1,10 @@
-"""V21 P2-1 Plan Mode + autonomy slider.
+"""Autonomy policy levels and execution mode resolution (plan / act / autonomous)."""
 
-Two independent, fail-closed guards layered on top of the existing
-``pre_tool_use`` hook gate:
-
-  * **Plan Mode** - when on, only read-only tools may run. The agent may
-    explore freely but cannot mutate anything until the plan is approved.
-    (Claude Code-style read-only exploration before a user sign-off.)
-
-  * **Autonomy slider** - a gradient of how freely the agent may act:
-      - ``supervised``  : read-only tools only (every mutating op needs review)
-      - ``balanced``    : mutating ops allowed, but the most dangerous ones
-                          (deny-listed bash, executing learned skills) stay
-                          blocked by default
-      - ``autonomous``  : everything allowed (hook + fail-closed still apply)
-
-  A **cost cap** (expert-review risk: token runaway) forces a downgrade to
-  ``supervised`` once estimated spend exceeds the budget - the agent cannot
-  silently burn unbounded resources.
-
-Honesty: a denied action is reported as an ``ERROR`` observation and the loop
-continues; it never silently succeeds (NO FAKE DONE).
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: autonomy.py
+# ===========================================================================
 
 from ..execution.tools import command_allowed
 
@@ -118,3 +101,35 @@ def build_policy(cfg: dict | None = None, level: str | None = None,
     cap = cost_cap if cost_cap is not None else \
         int(cfg.get("BAIZE_AUTONOMY_COST_CAP", str(DEFAULT_COST_CAP)))
     return AutonomyPolicy(level=lvl, cost_cap=cap)
+
+# ===========================================================================
+# Section: modes.py
+# ===========================================================================
+
+# mode name -> bundle. ``loop`` is "default" or "programmatic".
+MODES: dict[str, dict] = {
+    "coding":      {"autonomy": "balanced",   "plan_mode": False, "loop": "default"},
+    "eval":        {"autonomy": "supervised", "plan_mode": False, "loop": "programmatic"},
+    "autonomous":  {"autonomy": "autonomous", "plan_mode": False, "loop": "default"},
+    "safe-review": {"autonomy": "supervised", "plan_mode": True,  "loop": "default"},
+}
+
+VALID_MODES = tuple(MODES)
+
+
+def resolve_mode(cfg: dict | None = None) -> dict:
+    """Return the effective bundle, honoring BAIZE_MODE authority.
+
+    When ``BAIZE_MODE`` is set and known, its bundle wins. Otherwise we fall
+    back to the scalar sliders (BAIZE_AUTONOMY / BAIZE_PLAN_MODE). Always
+    returns ``{"autonomy": str, "plan_mode": bool, "loop": str}``.
+    """
+    cfg = cfg or {}
+    mode = (cfg.get("BAIZE_MODE", "") or "").strip()
+    if mode and mode in MODES:
+        return dict(MODES[mode])
+    level = resolve_autonomy_level(cfg)
+    if level not in VALID_LEVELS:  # defensive: unknown level -> balanced
+        level = "balanced"
+    plan_mode = str(cfg.get("BAIZE_PLAN_MODE", "0")) == "1"
+    return {"autonomy": level, "plan_mode": plan_mode, "loop": "default"}

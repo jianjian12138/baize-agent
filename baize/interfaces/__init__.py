@@ -6,7 +6,7 @@ import importlib
 _EXPORTS: dict[str, tuple[str, str]] = {
     "cli_main": (".cli", "main"),
     "run_server": (".serve", "serve"),
-    "render_dashboard": (".dashboard", "render"),
+    "render_dashboard": (".ui", "render"),
     "BaizeREPL": (".repl", "BaizeREPL"),
     "run_repl": (".repl", "run_repl"),
 }

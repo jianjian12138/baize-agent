@@ -13,7 +13,7 @@ from pathlib import Path
 from types import ModuleType
 
 from .config import load_config
-from .logging_setup import get_logger
+from .config import get_logger
 from ..governance.observability import obs
 
 log = get_logger("plugin")

@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import unittest
-from baize.interfaces.desktop_ui import render_desktop_studio
+from baize.interfaces.desktop import render_desktop_studio
 from baize.interfaces.desktop import _is_server_alive, _find_browser_app_binary
-from baize.interfaces import dashboard
+from baize.interfaces import ui as dashboard
 from baize.interfaces.cli import build_parser
 
 

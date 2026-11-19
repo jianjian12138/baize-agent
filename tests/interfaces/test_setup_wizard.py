@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from baize.interfaces.setup_wizard import PROVIDERS, update_env_file, run_setup_wizard, _test_connection
+from baize.interfaces.ui import PROVIDERS, update_env_file, run_setup_wizard, _test_connection
 from baize.interfaces.cli import main
 
 
@@ -36,7 +36,7 @@ def test_update_env_file(tmp_path):
 
 def test_run_setup_wizard_non_interactive(tmp_path):
     env_file = tmp_path / ".env"
-    with patch("baize.interfaces.setup_wizard.ENV_FILE", env_file):
+    with patch("baize.interfaces.ui.ENV_FILE", env_file):
         ok = run_setup_wizard(
             non_interactive=True,
             preset_idx=0,
@@ -50,6 +50,6 @@ def test_run_setup_wizard_non_interactive(tmp_path):
 
 
 def test_cli_setup_command(monkeypatch):
-    monkeypatch.setattr("baize.interfaces.setup_wizard.run_setup_wizard", lambda **kw: True)
+    monkeypatch.setattr("baize.interfaces.ui.run_setup_wizard", lambda **kw: True)
     rc = main(["setup"])
     assert rc == 0

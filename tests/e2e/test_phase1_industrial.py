@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from baize.codebase.symbol_graph import SymbolGraph, build_workspace_symbol_graph
 from baize.ext.mcp.dispatcher import list_all_mcp_tools, call_mcp_tool, load_mcp_config
-from baize.interfaces.desktop_ui import render_desktop_studio
+from baize.interfaces.desktop import render_desktop_studio
 
 
 class TestPhase1Industrial(unittest.TestCase):

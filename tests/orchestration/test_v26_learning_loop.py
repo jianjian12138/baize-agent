@@ -8,7 +8,7 @@ from pathlib import Path
 
 from baize.core.config import load_config
 from baize.knowledge.memory import log_event, recall
-from baize.knowledge.skill_index import verify_skill_draft, record_usage, skill_stats
+from baize.knowledge.skills import verify_skill_draft, record_usage, skill_stats
 from baize.governance.gate import check_loop_integrity
 
 

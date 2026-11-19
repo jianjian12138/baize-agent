@@ -13,8 +13,8 @@ from pathlib import Path
 
 from .. import __version__
 from ..governance import bench as bench_mod
-from ..governance import bench_public as bench_public_mod
-from . import dashboard
+from ..governance import bench as bench_public_mod
+from . import ui as dashboard
 from ..governance import gate as gate_mod
 from ..execution import proc as proc_mod
 from ..core import sessions as sessions_mod
@@ -22,7 +22,7 @@ from ..core.agent import Agent, Session
 from ..core.component import get_runtime
 from ..core.config import load_config
 from ..core.llm import LLMClient
-from ..core.logging_setup import get_logger, setup_logging
+from ..core.config import get_logger, setup_logging
 from ..governance.observability import obs
 from ..orchestration.orchestrator import Orchestrator
 from ..core.plugin import registry

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from baize.interfaces.desktop_ui import render_desktop_studio
+from baize.interfaces.desktop import render_desktop_studio
 from baize import __version__
 from baize.interfaces.serve import Handler
 
@@ -113,7 +113,7 @@ class TestStreamAndExport(unittest.TestCase):
         self.assertTrue(Path("Dockerfile").exists())
 
     def test_mattpocock_skills_catalog_integration(self):
-        from baize.knowledge.skills_catalog import get_full_skills_catalog, get_skill_content
+        from baize.knowledge.skills import get_full_skills_catalog, get_skill_content
         catalog = get_full_skills_catalog()
         matt_skills = [s for s in catalog if s.get("domain") == "mattpocock"]
         self.assertGreaterEqual(len(matt_skills), 8)

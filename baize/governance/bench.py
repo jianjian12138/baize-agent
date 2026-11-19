@@ -1,16 +1,45 @@
-"""V20 benchmark harness - deterministic self-checks over core subsystems.
+"""Real benchmark harness and public benchmark coverage ledger."""
 
-Runs real micro-benchmarks with zero network access:
-  - vector: index+search latency over a synthetic corpus
-  - rag: corpus build + retrieval round-trip
-  - memory: log/recall throughput
-  - graph: triple add/query round-trip
-
-Each case returns {name, ok, ms, detail}. `run_all()` aggregates a report.
-This is the reserved seat for future agent-task benchmarks (SWE-bench style
-harness can plug in via register()) - the runner interface is final.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: bench_public.py
+# ===========================================================================
+
+PUBLIC_BENCHMARKS = [
+    {"name": "SWE-bench", "measures": "repo-level code fix from issue+PR",
+     "capability": "tool use (bash/read/write) + self-verify", "status": "partial"},
+    {"name": "Terminal-Bench", "measures": "shell task completion",
+     "capability": "bash sandbox + verifier gate", "status": "partial"},
+    {"name": "AgentBench", "measures": "multi-environment agent",
+     "capability": "tool registry + orchestrator", "status": "partial"},
+    {"name": "WebArena", "measures": "web navigation",
+     "capability": "browser tool (external MCP)", "status": "not_run"},
+    {"name": "GPQA", "measures": "grad-level QA",
+     "capability": "LLM reasoning (model-dependent)", "status": "not_run"},
+    {"name": "NO-FAKE-DONE gate", "measures": "honest scoring discipline",
+     "capability": "Verifier + manifest + coverage gate", "status": "covered"},
+]
+
+VALID_STATUSES = ("covered", "partial", "not_run")
+
+
+def coverage_report() -> dict:
+    counts = {s: 0 for s in VALID_STATUSES}
+    for b in PUBLIC_BENCHMARKS:
+        if b["status"] in counts:
+            counts[b["status"]] += 1
+    return {
+        "benchmarks": PUBLIC_BENCHMARKS,
+        "counts": counts,
+        "honest_note": ("baize does not execute public harnesses; "
+                        "status reflects capability coverage only, never a "
+                        "claimed score on a benchmark it has not run."),
+    }
+
+# ===========================================================================
+# Section: bench.py
+# ===========================================================================
 
 import json
 import shutil
@@ -38,7 +67,7 @@ def register(name: str):
 
 @register("vector")
 def _bench_vector(cfg: dict) -> str:
-    from ..knowledge.vector import TfidfIndex
+    from ..knowledge.rag import TfidfIndex
     idx = TfidfIndex()
     for i in range(200):
         idx.add(f"d{i}", f"document {i} about topic{i % 20} and deploy plan")
@@ -82,7 +111,7 @@ def _bench_graph(cfg: dict) -> str:
 @register("subagent_isolation")
 def _bench_subagent(cfg: dict) -> str:
     """A sub-agent's scoped tool registry must not leak disallowed tools."""
-    from ..orchestration.subagent import load_subagent
+    from ..orchestration.team import load_subagent
     d = Path(tempfile.mkdtemp())
     (d / "research.agent").write_text(
         "---\nname: research\n"
@@ -176,7 +205,7 @@ def _bench_plan(cfg: dict) -> str:
 def _bench_manifest(cfg: dict) -> str:
     """NO FAKE DONE: a done phase WITH evidence validates; a done phase
     WITHOUT evidence is rejected (the gate must be real, not cosmetic)."""
-    from .manifest import validate_manifest
+    from .gate import validate_manifest
     d = Path(tempfile.mkdtemp())
     (d / "main.py").write_text("print('hello')\n", encoding="utf-8")
     good = d / "good.manifest.json"
@@ -218,11 +247,10 @@ def _bench_memcompress(cfg: dict) -> str:
 def _bench_public(cfg: dict) -> str:
     """Honest coverage map: every entry must carry a valid status and we must
     NOT falsely claim a score on benchmarks baize does not run."""
-    from . import bench_public as bp
-    rep = bp.coverage_report()
+    rep = coverage_report()
     assert rep["benchmarks"], "no benchmark entries"
     for b in rep["benchmarks"]:
-        assert b["status"] in bp.VALID_STATUSES, f"bad status: {b}"
+        assert b["status"] in VALID_STATUSES, f"bad status: {b}"
     c = rep["counts"]
     return (f"{c['covered']} covered / {c['partial']} partial / "
             f"{c['not_run']} not_run (honest)")
@@ -259,7 +287,7 @@ def _bench_composition(cfg: dict) -> str:
 @register("mode_switch")
 def _bench_mode(cfg: dict) -> str:
     """V22 #97: named modes resolve to distinct, authoritative bundles."""
-    from ..core.modes import VALID_MODES, resolve_mode
+    from ..core.autonomy import VALID_MODES, resolve_mode
     bundles = {m: resolve_mode({"BAIZE_MODE": m}) for m in VALID_MODES}
     assert bundles["eval"]["loop"] == "programmatic"
     assert bundles["safe-review"]["plan_mode"] is True

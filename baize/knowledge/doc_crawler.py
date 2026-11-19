@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..core.config import ROOT, load_config
-from .vector import TfidfIndex
+from .rag import TfidfIndex
 
 __all__ = [
     "DocHTMLToMarkdownParser",

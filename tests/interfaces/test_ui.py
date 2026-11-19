@@ -8,8 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from baize import __version__  # noqa: E402
-from baize.interfaces import dashboard
-from baize.knowledge.team_memory import TeamMemory  # noqa: E402
+from baize.interfaces import ui as dashboard
+from baize.knowledge.memory import TeamMemory  # noqa: E402
 from baize.interfaces.ui import Palette, ProgressUI, supports_color  # noqa: E402
 
 

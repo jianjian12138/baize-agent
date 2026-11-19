@@ -1,21 +1,129 @@
-"""Optional OS-level sandbox adapter for baize (V21 P0-1).
+"""Fail-closed shell guardrails, safe command execution, and sandbox runner."""
 
-Pure stdlib, default OFF. Provides best-effort OS isolation for command
-execution so that destructive commands cannot escape the workspace even
-if the logical deny-list (``tools.DENY_PATTERNS``) is bypassed.
-
-Platform mechanisms:
-  - Linux   : Landlock (Python 3.13+ stdlib ``landlock``)
-  - macOS   : Seatbelt via ``sandbox-exec`` with a minimal profile
-  - Windows : a restricted token is genuinely hard; we DEGRADE to the
-              logical layer (deny-list + workspace confinement) and emit a
-              clear warning. We never claim OS isolation we do not have.
-
-Honesty rule (NO FAKE DONE): if the OS sandbox cannot be applied on the
-current platform, ``run()`` falls back to the ordinary subprocess path and
-reports ``degraded=True`` instead of pretending anything was shielded.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: safe_exec.py
+# ===========================================================================
+
+from typing import Any
+
+#: Builtins exposed to executed code. Deliberately excludes every name that can
+#: reach the filesystem, the process, the interpreter's import machinery or the
+#: type graph: open, eval, exec, compile, globals, locals, vars, getattr/setattr/
+#: delattr, input, breakpoint, memoryview, object, type.
+#:
+#: ``__import__`` IS present, but only as :func:`_safe_import`, which resolves
+#: against :data:`ALLOWED_MODULES` and raises ImportError for everything else.
+SAFE_BUILTINS: dict[str, Any] = {
+    # --- numeric / sequence constructors and helpers ---
+    "abs": abs, "all": all, "any": any, "bool": bool, "divmod": divmod,
+    "enumerate": enumerate, "filter": filter, "float": float, "int": int,
+    "len": len, "list": list, "map": map, "max": max, "min": min, "pow": pow,
+    "range": range, "reversed": reversed, "round": round, "set": set,
+    "sorted": sorted, "str": str, "sum": sum, "tuple": tuple, "zip": zip,
+    "dict": dict, "frozenset": frozenset, "bytes": bytes, "bytearray": bytearray,
+    "complex": complex, "hash": hash, "id": id, "iter": iter, "next": next,
+    "repr": repr, "slice": slice, "format": format, "chr": chr, "ord": ord,
+    "hex": hex, "oct": oct, "bin": bin, "ascii": ascii, "isinstance": isinstance,
+    "issubclass": issubclass, "callable": callable, "divmod": divmod,
+    # --- constants ---
+    "True": True, "False": False, "None": None,
+    # --- exception types, so user code can raise/catch sanely ---
+    "Exception": Exception, "AssertionError": AssertionError,
+    "ArithmeticError": ArithmeticError, "AttributeError": AttributeError,
+    "IndexError": IndexError, "KeyError": KeyError, "LookupError": LookupError,
+    "NameError": NameError, "NotImplementedError": NotImplementedError,
+    "RuntimeError": RuntimeError, "StopIteration": StopIteration,
+    "TypeError": TypeError, "ValueError": ValueError, "ZeroDivisionError":
+        ZeroDivisionError, "OverflowError": OverflowError,
+    "FloatingPointError": FloatingPointError, "UnicodeError": UnicodeError,
+    # --- the common base, needed for `except Exception` style handling ---
+    "BaseException": BaseException,
+}
+
+#: Modules generated tool code may import. DEFAULT-DENY: anything not listed here
+#: raises ImportError, so a plain ``import os`` still fails.
+#:
+#: This is an allowlist of pure-computation stdlib modules. It exists because the
+#: synthesizer legitimately emits tool code that does ``import re`` / ``import
+#: json``; forbidding all imports outright broke that use case (see
+#: tests/test_v30_meta_tool_synthesizer.py).
+#:
+#: WHAT IT DOES NOT DO: it does not make the namespace a containment boundary.
+#: Module objects carry ``__loader__``/``__spec__`` and attribute access is
+#: language syntax, so a determined payload can still read files or walk
+#: ``object.__subclasses__``. See the module docstring. The access-control gate in
+#: baize/serve.py is the real boundary; this list only raises the cost of the
+#: naive payload.
+#:
+#: Notable omissions, on purpose: os, sys, io (io.open is open), pathlib, shutil,
+#: subprocess, socket, importlib, builtins, ctypes, pickle, marshal, tempfile,
+#: glob, sqlite3, asyncio (asyncio.subprocess), http, urllib.request, platform,
+#: resource, signal, threading, multiprocessing, gc, inspect, traceback, logging.
+ALLOWED_MODULES = frozenset({
+    "abc", "array", "base64", "binascii", "bisect", "calendar", "collections",
+    "copy", "csv", "dataclasses", "datetime", "decimal", "difflib", "enum",
+    "fractions", "functools", "hashlib", "heapq", "html", "itertools", "json",
+    "math", "numbers", "operator", "pprint", "random", "re", "reprlib",
+    "statistics", "string", "struct", "textwrap", "time", "typing",
+    "unicodedata", "urllib.parse", "uuid",
+})
+
+#: Names that must never appear in the namespace. Asserted by
+#: tests/test_safe_exec.py so a future edit cannot quietly widen the surface.
+FORBIDDEN_BUILTINS = frozenset({
+    "open", "eval", "exec", "compile", "globals", "locals",
+    "vars", "getattr", "setattr", "delattr", "hasattr", "input", "breakpoint",
+    "memoryview", "object", "type", "super", "classmethod", "staticmethod",
+    "property", "dir", "help", "exit", "quit", "license", "credits",
+    "copyright", "reload", "__build_class__", "__loader__", "__spec__",
+})
+
+
+def _safe_import(name: str, globals=None, locals=None, fromlist=(), level: int = 0):
+    """``__import__`` restricted to :data:`ALLOWED_MODULES`.
+
+    ``level != 0`` (relative import) is always refused: it resolves through the
+    caller's package and would sidestep the name check entirely.
+    """
+    if level != 0:
+        raise ImportError("relative imports are not allowed in generated code")
+    if name in ALLOWED_MODULES:
+        return __import__(name, globals, locals, fromlist, level)
+    raise ImportError(
+        f"module '{name}' is not on the allowlist for generated code "
+        f"(baize/safe_exec.py::ALLOWED_MODULES)"
+    )
+
+
+SAFE_BUILTINS["__import__"] = _safe_import
+
+
+def restricted_globals() -> dict[str, Any]:
+    """Globals mapping for executing untrusted code. Fresh dict every call."""
+    return {"__builtins__": dict(SAFE_BUILTINS)}
+
+
+def exec_restricted(source: str, seed: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Execute ``source`` with only :data:`SAFE_BUILTINS` available.
+
+    Returns the resulting namespace so the caller can pull definitions back out.
+
+    ``source`` is passed as *both* globals and locals on purpose. With separate
+    dicts, a function defined at top level lands in locals while a call to it
+    from another top-level function resolves through globals and raises
+    NameError - which silently breaks any legitimate multi-function snippet.
+    """
+    ns = restricted_globals()
+    if seed:
+        ns.update(seed)
+    exec(source, ns, ns)  # noqa: S102 - the point of this module
+    return ns
+
+# ===========================================================================
+# Section: sandbox.py
+# ===========================================================================
 
 import logging
 import platform
@@ -24,7 +132,7 @@ from dataclasses import dataclass
 from shutil import which
 
 from ..core.config import ROOT, load_config
-from ..core.logging_setup import redact
+from ..core.config import redact
 from . import proc as proc_mod
 
 logger = logging.getLogger("baize.execution.sandbox")

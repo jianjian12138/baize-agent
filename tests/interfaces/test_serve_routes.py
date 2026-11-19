@@ -246,67 +246,12 @@ def test_memory_search_without_a_query_returns_no_results(server):
 # --------------------------------------------------- code-exec endpoints ---
 
 
-def test_synthesis_endpoint_is_501_without_the_explicit_opt_in(server):
-    base, _sessions = server
-    status, body = _call(f"{base}/v30/synthesize", method="POST",
-                         payload={"name": "t", "code": "def t(): return 1"})
-    assert status == 501
-    assert "BAIZE_ENABLE_SYNTHESIS_API" in _json(body)["error"]
 
 
-def test_synthesis_endpoint_rejects_missing_fields_when_enabled(monkeypatch,
-                                                                tmp_path):
-    httpd, base, _sessions = _start(
-        monkeypatch, tmp_path, BAIZE_ENABLE_SYNTHESIS_API="1")
-    try:
-        status, body = _call(f"{base}/v30/synthesize", method="POST",
-                             payload={"name": "", "code": ""})
-        assert status == 400
-        assert "missing" in _json(body)["error"]
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
-def test_code_exec_endpoint_403s_when_the_only_auth_is_allow_no_auth(
-        monkeypatch, tmp_path):
-    """BAIZE_ALLOW_NO_AUTH=1 unlocks ordinary writes. It must not unlock the
-    endpoints that exec caller-supplied code."""
-    monkeypatch.setenv("BAIZE_ALLOW_NO_AUTH", "1")
-    monkeypatch.setenv("BAIZE_AUTH_TOKEN", "")
-    sessions = tmp_path / "sessions"
-    sessions.mkdir(exist_ok=True)
-    monkeypatch.setenv("BAIZE_SESSIONS_DIR", str(sessions))
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{httpd.server_address[1]}"
-    try:
-        # An ordinary write is allowed under this flag...
-        ok, _ = _call(f"{base}/api/config", method="POST",
-                      payload={"autonomy_level": 2}, token=None)
-        assert ok == 200
-        # ...but the code-executing endpoint is not.
-        status, body = _call(f"{base}/v30/synthesize", method="POST",
-                             payload={"name": "t", "code": "x"},
-                             token=None)
-        assert status == 403
-        assert "BAIZE_ALLOW_NO_AUTH" in _json(body)["error"]
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
-def test_adversarial_endpoint_rejects_missing_blue_code(monkeypatch, tmp_path):
-    httpd, base, _sessions = _start(
-        monkeypatch, tmp_path, BAIZE_ENABLE_SYNTHESIS_API="1")
-    try:
-        status, body = _call(f"{base}/v30/adversarial", method="POST",
-                             payload={"blue_code": ""})
-        assert status == 400
-        assert "blue_code" in _json(body)["error"]
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
 
 
 # ----------------------------------------------------------- /run paths ----
@@ -361,44 +306,8 @@ def test_post_without_a_token_is_401(server):
 # ------------------------------------------------------------ /v30/causal --
 
 
-def test_causal_slice_works_and_reports_that_nothing_was_executed(server):
-    """This route used to import a name that does not exist (CausalDebugger), so
-    every request raised ImportError. Now that it runs, it must also not imply
-    the generated mutation cases were applied - they are descriptors."""
-    base, _sessions = server
-    status, body = _call(
-        f"{base}/v30/causal", method="POST",
-        payload={"code": "def divide(a, b):\n    return a / b",
-                 "target_function": "divide"},
-    )
-    assert status == 200, body
-    data = _json(body)
-    assert data["target_function"] == "divide"
-    assert data["ast_node_type"] == "FunctionDef"
-    assert set(data["culprit_variables"]) == {"a", "b"}
-    assert data["mutations_executed"] is False
-    assert data["mutations_note"]
-    assert data["mutations"], "the fuzzer should produce case descriptors"
-    for case in data["mutations"]:
-        assert set(case) == {"name", "type", "desc", "payload"}
-    # The payload is rendered, not shipped as an opaque object().
-    assert all(isinstance(v, str) for case in data["mutations"]
-               for v in case["payload"].values())
 
 
-def test_causal_slice_reports_an_unknown_function_honestly(server):
-    base, _sessions = server
-    status, body = _call(
-        f"{base}/v30/causal", method="POST",
-        payload={"code": "def other(x):\n    return x", "target_function": "missing"},
-    )
-    assert status == 200
-    data = _json(body)
-    assert data["target_function"] == "missing"
-    # ASTCausalTracker falls back to a whole-file slice and says so via the node
-    # type, rather than inventing a function it did not find.
-    assert data["ast_node_type"] == "Unknown"
-    assert data["culprit_variables"] == []
 
 
 # ------------------------------------------------ /v30/causal/persist_test --

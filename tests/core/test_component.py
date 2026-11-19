@@ -24,7 +24,7 @@ from baize.core.component import (
 )
 from baize.core.config import load_config
 from baize.interfaces.ui import ProgressUI
-from baize.core.config_schema import ConfigError, validate
+from baize.core.config import ConfigError, validate
 
 
 def _write_stub(tmp_path, filename: str, body: str) -> None:

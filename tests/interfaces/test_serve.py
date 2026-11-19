@@ -265,7 +265,7 @@ class TestAuthPosture:
         monkeypatch.setenv("BAIZE_ALLOW_NO_AUTH", "1")
         handler = Handler.__new__(Handler)
         handler.headers = {}
-        handler.path = "/v30/synthesize"
+        handler.path = "/api/causal/mutation_test"
         assert handler._is_authorized(require_token=True) is False
 
 

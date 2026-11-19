@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from baize.orchestration.intent_router import IntentRouter, route_goal
+from baize.orchestration.system1 import IntentRouter, route_goal
 from baize.orchestration.system1 import IntentDecision
 
 

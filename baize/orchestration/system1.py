@@ -1,18 +1,10 @@
-"""System 1 Fast Decision & Calibrated Probability Kernel (V38.0.0 Dual-System).
+"""Zero-latency System-1 intent classifier, risk guard, and fast router."""
 
-Why this exists:
------------------
-Traditional LLMs operate on "System 2" (slow, deliberative, token-by-token text generation).
-While essential for code writing and causal self-healing, using large LLMs for routine
-classification, intent routing, and tool safety checks introduces latency (1~3s) and token cost.
-
-Inspired by TypeSafe Jev, this module implements a "System 1" (fast reflex) decision engine:
-- Zero-token generation: returns structured, typed decisions (routes, probabilities, risk scores).
-- Millisecond latency: local calibrated heuristic kernel executes in <1ms.
-- Zero external runtime dependencies: stdlib-only implementation with optional remote Jev client.
-- Provable fail-closed security for high-risk tool execution.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: system1.py
+# ===========================================================================
 
 import json
 import re
@@ -296,3 +288,46 @@ def fast_check_safety(tool_name: str, args: dict | None = None, cfg: dict | None
 def fast_rank_branches(branches: list[dict], goal: str = "", cfg: dict | None = None) -> BranchRankingDecision:
     """Convenience entry point for speculative timeline ranking."""
     return _LOCAL_ENGINE.rank_branches(branches, goal)
+
+# ===========================================================================
+# Section: intent_router.py
+# ===========================================================================
+
+from dataclasses import dataclass
+from typing import Any
+
+from ..core.config import load_config
+
+
+class IntentRouter:
+    """High-performance intent classifier and dispatcher for Baize tasks."""
+
+    def __init__(self, cfg: dict | None = None):
+        self.cfg = cfg or load_config()
+
+    def route(self, goal: str, context: dict | None = None) -> IntentDecision:
+        """Classify the given goal into the optimal execution path."""
+        engine = get_system1_engine(self.cfg)
+        return engine.decide_intent(goal, context)
+
+    def explain_route(self, decision: IntentDecision) -> str:
+        """Format an explanation for the user or logs."""
+        mode_names = {
+            "direct_repl": "交互式对话 / 直接响应 (REPL Direct)",
+            "autonomous_run": "单任务自主执行闭环 (Autonomous Run)",
+            "multi_agent_team": "多代理 DAG 协同团队 (Multi-Agent Team)",
+            "ralph_state_machine": "Ralph 需求全生命周期状态机 (Ralph PRD Engine)",
+        }
+        name = mode_names.get(decision.route, decision.route)
+        return (
+            f"[System 1 Router] 目标分类: {name}\n"
+            f"  - 置信度 (Confidence): {decision.confidence * 100:.1f}%\n"
+            f"  - 预估复杂度 (Complexity): {decision.complexity_score * 100:.1f}%\n"
+            f"  - 决策引擎 (Engine): {decision.provenance} ({decision.latency_ms:.2f}ms)"
+        )
+
+
+def route_goal(goal: str, cfg: dict | None = None) -> IntentDecision:
+    """Global convenience function for goal routing."""
+    router = IntentRouter(cfg)
+    return router.route(goal)

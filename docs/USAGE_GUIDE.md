@@ -145,7 +145,7 @@ baize [SUBCOMMAND] [OPTIONS]
 
 ## 6. VS Code & Cursor 伴侣插件使用指南
 
-白泽提供了开箱即用的 IDE 伴侣插件（`extensions/vscode`）：
+白泽提供了开箱即用的 IDE 伴侣插件（`examples/vscode`）：
 
 ### 6.1 快捷键定义
 - **`Ctrl+Shift+B`**：一键在 VS Code 侧边栏唤醒白泽 Studio 控制台；
@@ -153,7 +153,7 @@ baize [SUBCOMMAND] [OPTIONS]
 
 ### 6.2 安装方式
 1. 在 VS Code 中打开本仓库根目录；
-2. 打开 `extensions/vscode` 目录并在终端执行 `npm install && npm run compile`；
+2. 打开 `examples/vscode` 目录并在终端执行 `npm install && npm run compile`；
 3. 按 `F5` 即可在新的扩展开发宿主窗口中实时使用伴侣插件！
 
 ---

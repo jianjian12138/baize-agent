@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from baize.core import prompt_cache
+from baize.core import llm as prompt_cache
 from baize.core.llm import LLMClient, _anthropic_request, ModelSpec
 
 
@@ -113,7 +113,7 @@ def test_opt_in_attaches_cache_control():
 
 
 def test_module_zero_third_party_imports():
-    src = open(__import__("baize.core.prompt_cache", fromlist=["x"]).__file__,
+    src = open(__import__("baize.core.llm", fromlist=["x"]).__file__,
                encoding="utf-8").read()
     forbidden = r"^\s*(import|from)\s+(requests|httpx|yaml|tiktoken|litellm|"
     forbidden += r"anthropic|openai)\b"

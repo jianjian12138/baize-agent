@@ -27,7 +27,7 @@ from ..core.agent import Agent, Session, AgentResult
 from ..core.config import ROOT, load_config
 from ..core.llm import LLMClient
 from .ui import ProgressUI
-from ..core.logging_setup import get_logger
+from ..core.config import get_logger
 
 log = get_logger("repl")
 
@@ -301,7 +301,7 @@ class BaizeREPL:
             return
 
         if cmd == "/trace":
-            from .session_viewer import render_session, find_session_file
+            from .ui import render_session, find_session_file
             sid = arg.strip() or (self.session.id if self.session else "")
             if not sid:
                 print(p.paint("dim", "No active session to trace."))
@@ -352,7 +352,7 @@ class BaizeREPL:
             return
 
         if cmd == "/skills":
-            from ..knowledge import skill_index
+            from ..knowledge import skills as skill_index
             kw = arg.strip()
             hits = skill_index.search(kw, limit=10)
             if not hits:
@@ -396,7 +396,7 @@ class BaizeREPL:
             return
 
         if cmd in ("/setup", "/config"):
-            from .setup_wizard import run_setup_wizard
+            from .ui import run_setup_wizard
             success = run_setup_wizard()
             if success:
                 self.cfg = load_config()
@@ -468,7 +468,7 @@ class BaizeREPL:
             try:
                 ask = input(p.paint("bold", "  💡 未检测到大模型配置。是否现在启动快速配置向导？[Y/n]: ")).strip().lower()
                 if ask in ("", "y", "yes"):
-                    from .setup_wizard import run_setup_wizard
+                    from .ui import run_setup_wizard
                     if run_setup_wizard():
                         self.cfg = load_config()
                         self.client = LLMClient(self.cfg)

@@ -13,7 +13,7 @@ import pytest
 
 from baize.core.agent import Agent, DefaultLoop, ProgrammaticLoop
 from baize.core.config import load_config
-from baize.core.modes import MODES, VALID_MODES, resolve_mode
+from baize.core.autonomy import MODES, VALID_MODES, resolve_mode
 from baize.execution.tools import default_registry
 
 

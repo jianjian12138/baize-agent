@@ -107,7 +107,7 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         return handler._send_text(200, dashboard.render(), "text/html; charset=utf-8")
 
     if req_path in ("/studio/styles.css", "/studio/app.js"):
-        from ..desktop_ui import read_studio_asset
+        from ..desktop import read_studio_asset
         asset_name = req_path.rsplit("/", 1)[-1]
         content = read_studio_asset(asset_name)
         if content is None:
@@ -268,7 +268,7 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
     if req_path == "/api/perf/profile":
         params = parse_qs(urlparse(handler.path).query)
         include_cp = params.get("cprofile", ["0"])[0] == "1"
-        from ...governance.perf import profile_workspace
+        from ...governance.observability import profile_workspace
         return handler._send(200, profile_workspace(include_cprofile=include_cp))
 
     if req_path == "/api/commands":
@@ -320,9 +320,6 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         graph = get_cached_symbol_graph(cfg.get("BAIZE_WORKSPACE_DIR", "."), cfg=cfg)
         return handler._send(200, {"query": q, "results": graph.search_symbols(q)})
 
-    if req_path == "/api/market/tools":
-        from ...labs.tool_market import list_market_tools
-        return handler._send(200, {"status": "ready", "tools": list_market_tools()})
 
     if req_path == "/api/repomap":
         from ...codebase.repo_map import generate_workspace_repo_map
@@ -349,8 +346,8 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         })
 
     if req_path == "/api/skills":
-        from ...knowledge import skill_index
-        from ...knowledge.skills_catalog import get_full_skills_catalog
+        from ...knowledge import skills as skill_index
+        from ...knowledge.skills import get_full_skills_catalog
         idx = skill_index.build_index()
         skills = list(idx.get("skills", []))
         existing_names = {s.get("name") for s in skills}
@@ -361,7 +358,7 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
 
     if req_path.startswith("/api/skills/"):
         sname = req_path[len("/api/skills/"):].strip()
-        from ...knowledge.skills_catalog import get_skill_content
+        from ...knowledge.skills import get_skill_content
         return handler._send(200, {"name": sname, "content": get_skill_content(sname)})
 
     if req_path in ("/api/git/status", "/api/git/diff"):

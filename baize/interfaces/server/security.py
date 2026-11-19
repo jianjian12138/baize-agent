@@ -16,7 +16,7 @@ SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 INERT_SETTINGS_NOTE = (
     "autonomy_level (1=supervised, 2=balanced, 3=autonomous) and yolo_mode "
     "are stored in the server process environment under a lock and honored by "
-    "baize/autonomy.py and baize/modes.py when BAIZE_MODE is unset."
+    "baize/core/autonomy.py when BAIZE_MODE is unset."
 )
 
 

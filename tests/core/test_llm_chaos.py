@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from baize.governance.chaos import ChaosError
+from baize.governance.mutation import ChaosError
 from baize.core.llm import LLMClient, LLMError
 
 

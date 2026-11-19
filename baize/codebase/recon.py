@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from ..knowledge import skill_index
+from ..knowledge import skills as skill_index
 from ..core.config import load_config
 
 # Chinese-ecosystem search sources (template -> formatted URL). Consulted only

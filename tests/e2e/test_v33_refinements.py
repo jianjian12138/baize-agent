@@ -15,7 +15,7 @@ from pathlib import Path
 
 from baize.execution.tools import _tool_read_file, _tool_patch_file, _ast_check_python, default_registry
 from baize.orchestration.run_ledger import RunLedger
-from baize.knowledge.team_memory import TeamMemory
+from baize.knowledge.memory import TeamMemory
 from baize.core.agent import _evidence_note, compress_context
 
 

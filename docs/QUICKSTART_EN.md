@@ -55,7 +55,7 @@ BAIZE_WINDOWS_POWERSHELL_FIRST=true
 ## 🔌 Advanced IDE & Ecosystem Integrations
 
 ### 1. VS Code & Cursor Sidecar Extension
-- Load `extensions/vscode` into VS Code / Cursor;
+- Load `examples/vscode` into VS Code / Cursor;
 - Press **`Ctrl+Shift+B`** to open Baize Studio sidecar;
 - Select any code snippet and press **`Ctrl+K`** for inline AST-guided refactoring!
 

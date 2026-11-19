@@ -43,7 +43,7 @@ def test_no_top_level_ext_import_in_core():
     violations: list[str] = []
     for py in sorted(BAIZE.rglob("*.py")):
         rel_parts = py.relative_to(BAIZE).parts
-        if rel_parts[0] in ("ext", "labs"):
+        if rel_parts[0] == "ext":
             continue
         violations.extend(_top_level_ext_imports(py))
     assert not violations, (

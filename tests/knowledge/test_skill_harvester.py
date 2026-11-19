@@ -2,7 +2,7 @@
 import pytest
 from pathlib import Path
 from baize.core.agent import AgentResult
-from baize.knowledge.skill_harvester import SkillHarvester, _slugify
+from baize.knowledge.skills import SkillHarvester, _slugify
 
 
 def test_slugify():

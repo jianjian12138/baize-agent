@@ -247,7 +247,7 @@ from dataclasses import dataclass  # noqa: E402
 
 from baize.interfaces.cli import (cmd_index, cmd_memory, cmd_rag,  # noqa: E402
                        cmd_team_memory)
-from baize.knowledge.team_memory import TeamMemory  # noqa: E402
+from baize.knowledge.memory import TeamMemory  # noqa: E402
 
 
 def test_cli_index_search_no_keyword(tmp_path, capsys, monkeypatch):

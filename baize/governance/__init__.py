@@ -5,14 +5,14 @@ import importlib
 
 _EXPORTS: dict[str, tuple[str, str]] = {
     "run_gate": (".gate", "run_gate"),
-    "validate_manifest": (".manifest", "validate_manifest"),
+    "validate_manifest": (".gate", "validate_manifest"),
     "obs": (".observability", "obs"),
     "DoctorReport": (".doctor", "DoctorReport"),
     "run_doctor": (".doctor", "run_checks"),
     "run_all": (".bench", "run_all"),
     "run_ast_mutation_arena": (".mutation", "run_ast_mutation_arena"),
-    "Chaos": (".chaos", "Chaos"),
-    "ChaosError": (".chaos", "ChaosError"),
+    "Chaos": (".mutation", "Chaos"),
+    "ChaosError": (".mutation", "ChaosError"),
 }
 
 __all__ = list(_EXPORTS)

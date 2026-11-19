@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..core.config import ENV_FILE, load_config, skill_library_paths
 from ..execution import sandbox
-from ..core.config_schema import ConfigError, validate
+from ..core.config import ConfigError, validate
 
 
 @dataclass

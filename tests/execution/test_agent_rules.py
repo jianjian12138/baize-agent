@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from baize.execution import agent_rules
+from baize.execution import tools as agent_rules
 from baize.core.agent import build_system_prompt
 
 

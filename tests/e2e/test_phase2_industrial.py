@@ -4,19 +4,11 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
-from baize.labs.swarm import run_parallel_swarm_speculation
 from baize.codebase.repo_map import slice_code_context
-from baize.interfaces.desktop_ui import render_desktop_studio
+from baize.interfaces.desktop import render_desktop_studio
 
 
 class TestPhase2Industrial(unittest.TestCase):
-    def test_swarm_parallel_speculation(self):
-        res = run_parallel_swarm_speculation("重构数据库事务层")
-        self.assertIn("branches", res)
-        self.assertEqual(len(res["branches"]), 3)
-        self.assertIn("winner", res)
-        self.assertTrue(res["winner"]["churn_lines"] > 0)
-        self.assertTrue(res["total_elapsed_ms"] >= 0)
 
     def test_ast_context_slicing(self):
         code = """
@@ -42,7 +34,7 @@ def unused_helper_two():
         self.assertGreater(res["original_chars"], res["sliced_chars"])
 
     def test_vscode_extension_manifest(self):
-        manifest_path = Path("extensions/vscode/package.json")
+        manifest_path = Path("examples/vscode/package.json")
         self.assertTrue(manifest_path.exists())
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(data["name"], "baize-assistant-sidecar")

@@ -17,11 +17,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from baize.core.agent import Agent  # noqa: E402
-from baize.governance.chaos import Chaos, ChaosError  # noqa: E402
+from baize.governance.mutation import Chaos, ChaosError  # noqa: E402
 from baize.core.config import load_config  # noqa: E402
-from baize.core.config_schema import ConfigError, validate  # noqa: E402
+from baize.core.config import ConfigError, validate  # noqa: E402
 from baize.core.llm import LLMClient  # noqa: E402
-from baize.core.logging_setup import (JsonFormatter, get_logger,  # noqa: E402
+from baize.core.config import (JsonFormatter, get_logger,  # noqa: E402
                                  redact, setup_logging)
 from baize.execution.tools import ToolRegistry  # noqa: E402
 

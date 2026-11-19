@@ -1,14 +1,57 @@
-"""Baize Agent Native Desktop Launcher (V37.0.0 Prometheus).
+"""Desktop Studio launcher and single-file local studio UI."""
 
-Launches the Baize Desktop Studio in a dedicated standalone application window.
-Zero third-party dependencies required.
-
-Execution Hierarchy:
-1. If `pywebview` is installed -> launches native PyWebView window.
-2. If Edge/Chrome is available -> launches Edge/Chrome in standalone App Mode (`--app=http://127.0.0.1:8787`).
-3. Fallback -> launches in default browser.
-"""
 from __future__ import annotations
+
+# ===========================================================================
+# Section: desktop_ui.py
+# ===========================================================================
+
+import threading
+from pathlib import Path
+
+from .. import __version__
+
+__all__ = ["render_desktop_studio", "read_studio_asset"]
+
+_STUDIO_DIR = Path(__file__).resolve().parent / "studio"
+_ASSET_LOCK = threading.Lock()
+_ASSET_CACHE: dict[str, tuple[int, str]] = {}
+
+
+def read_studio_asset(name: str) -> str | None:
+    """Read an asset under ``baize/studio/`` with mtime caching."""
+    if name not in ("index.html", "styles.css", "app.js"):
+        return None
+    p = _STUDIO_DIR / name
+    try:
+        mtime = p.stat().st_mtime_ns
+    except OSError:
+        return None
+    with _ASSET_LOCK:
+        cached = _ASSET_CACHE.get(name)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+    text = p.read_text(encoding="utf-8")
+    with _ASSET_LOCK:
+        _ASSET_CACHE[name] = (mtime, text)
+    return text
+
+
+def render_desktop_studio(version: str = __version__) -> str:
+    v = version or __version__
+    v_tag = v if v.startswith("V") else f"V{v}"
+    html = read_studio_asset("index.html") or ""
+    css = (read_studio_asset("styles.css") or "").rstrip("\n")
+    js = (read_studio_asset("app.js") or "").rstrip("\n")
+    return (
+        html.replace("__VER__", v_tag)
+        .replace("__STYLE_BLOCK__", css)
+        .replace("__SCRIPT_BLOCK__", js)
+    )
+
+# ===========================================================================
+# Section: desktop.py
+# ===========================================================================
 
 import os
 import subprocess

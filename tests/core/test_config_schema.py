@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from baize.core.config import load_config
-from baize.core.config_schema import ConfigError, validate
+from baize.core.config import ConfigError, validate
 
 
 def _base():

@@ -18,7 +18,7 @@ from baize.core.agent import Agent, Session
 from baize.codebase.arch_cache import ArchCacheManager
 from baize.core.autonomy import build_policy, resolve_autonomy_level
 from baize.core.config import load_config
-from baize.interfaces.desktop_ui import read_studio_asset, render_desktop_studio
+from baize.interfaces.desktop import read_studio_asset, render_desktop_studio
 from baize.knowledge.doc_crawler import DocHTMLToMarkdownParser, validate_public_http_url
 from baize.core.llm import LLMClient, LLMError, ModelSpec, _anthropic_request
 from baize.ext.mcp.dispatcher import call_mcp_tool

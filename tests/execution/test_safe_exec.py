@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from baize.execution.safe_exec import (  # noqa: E402
+from baize.execution.sandbox import (  # noqa: E402
     ALLOWED_MODULES,
     FORBIDDEN_BUILTINS,
     SAFE_BUILTINS,
