@@ -100,8 +100,8 @@ def run_checks(cfg: dict | None = None) -> DoctorReport:
     report.add(
         "os sandbox", mech != "logical-only" or posture.get("docker_available", False), required=False,
         detail=(
-            f"mode={posture.get('mode')} effective={posture.get('effective_isolation')} "
-            f"mechanism={mech} rlimits={posture.get('rlimits_supported')}"
+            f"mode={posture.get('configured_mode')} effective={posture.get('effective_isolation')} "
+            f"mechanism={mech} rlimits={posture.get('rlimit_supported')}"
         ),
     )
 
