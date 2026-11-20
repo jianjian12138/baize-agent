@@ -896,13 +896,18 @@ class Agent:
                     })
                     continue
 
-                # V41: interactive tiered approval callback (Diff / command preview)
-                if self.approval_callback is not None and name not in READ_ONLY_TOOLS:
+                # V41/V43: tiered approval callback OR persistent SQLite ApprovalQueue bridge
+                _active_apr_cb = self.approval_callback
+                if _active_apr_cb is None and str(self.cfg.get("BAIZE_APPROVAL_BRIDGE", "")).strip().lower() == "queue":
+                    from ..interfaces.approval import get_approval_queue as _get_apr_q
+                    _apr_timeout = float(self.cfg.get("BAIZE_APPROVAL_TIMEOUT", "300") or "300")
+                    _active_apr_cb = lambda req, _q=_get_apr_q(), _t=_apr_timeout: _q.submit(req, timeout=_t)
+                if _active_apr_cb is not None and name not in READ_ONLY_TOOLS:
                     from ..interfaces.approval import ApprovalRequest, build_tool_preview
                     ws_dir = str(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
                     preview = build_tool_preview(name, args, workspace=ws_dir, color=False)
                     self._emit("diff_preview", f"{name}: {preview[:300]}")
-                    apr_dec = self.approval_callback(ApprovalRequest(
+                    apr_dec = _active_apr_cb(ApprovalRequest(
                         tool_name=name,
                         arguments=args,
                         preview=preview,
@@ -941,14 +946,16 @@ class Agent:
                     groups.append((item["read_only"], [item]))
 
             def _exec_one(item: dict[str, Any]) -> tuple[str, int]:
+                from ..governance.telemetry import get_tracer
                 t0 = time.time()
-                if item["name"] == "tool_search":
-                    q = str(item["args"].get("query") or "")
-                    auto_act = bool(item["args"].get("activate", True))
-                    res_obj = profile_mgr.search_and_activate(q, auto_activate=auto_act)
-                    out = json.dumps(res_obj, ensure_ascii=False)
-                else:
-                    out = self.registry.execute(item["name"], item["args"])
+                with get_tracer(self.cfg).start_span(f"tool.{item['name']}", attributes={"tool.name": item["name"]}):
+                    if item["name"] == "tool_search":
+                        q = str(item["args"].get("query") or "")
+                        auto_act = bool(item["args"].get("activate", True))
+                        res_obj = profile_mgr.search_and_activate(q, auto_activate=auto_act)
+                        out = json.dumps(res_obj, ensure_ascii=False)
+                    else:
+                        out = self.registry.execute(item["name"], item["args"])
                 elapsed_ms = int((time.time() - t0) * 1000)
                 return str(out), elapsed_ms
 
@@ -970,6 +977,23 @@ class Agent:
                     name = item["name"]
                     args = item["args"]
                     observation = self._post_edit_diagnostics(name, args, observation)
+                    try:
+                        from ..governance.dlp import get_audit_ledger, guard_untrusted_output
+                        observation, _inj_hits, _sec_hits = guard_untrusted_output(str(observation), source=name, cfg=self.cfg)
+                        get_audit_ledger(self.cfg).append(
+                            "tool_call",
+                            actor=self.role,
+                            target=name,
+                            outcome="error" if str(observation).startswith("ERROR") else "ok",
+                            details={
+                                "session_id": self.session.id,
+                                "elapsed_ms": span_elapsed_ms,
+                                "injection_hits": len(_inj_hits),
+                                "secret_redactions": len(_sec_hits),
+                            },
+                        )
+                    except Exception:
+                        pass
                     span_id = uuid.uuid4().hex[:6]
                     self.session.append_record({
                         "kind": "span",

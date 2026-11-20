@@ -291,6 +291,27 @@ class GitWorktreePool:
             _run_git(self.workspace, ["worktree", "prune"])
             return {"ok": True, "cleaned": cleaned, "count": len(cleaned)}
 
+    def recover_orphans(self, *, max_age_s: float = 3600.0) -> dict[str, Any]:
+        """Detect & prune orphaned worktrees left behind by crashed/killed runs."""
+        now = time.time()
+        recovered: list[str] = []
+        with self._lock:
+            self._load_registry()
+            for wid, entry in list(self._entries.items()):
+                path_missing = not Path(entry.worktree_path).exists()
+                stale_running = (entry.status == "running" and (now - entry.updated_at) >= max_age_s)
+                if path_missing or stale_running:
+                    _run_git(self.workspace, ["worktree", "remove", "--force", entry.worktree_path])
+                    if entry.branch_name:
+                        _run_git(self.workspace, ["branch", "-D", entry.branch_name])
+                    entry.status = "recovered"
+                    entry.error = "orphaned worktree pruned during startup crash recovery"
+                    entry.updated_at = now
+                    recovered.append(wid)
+            _run_git(self.workspace, ["worktree", "prune"])
+            self._save_registry()
+        return {"ok": True, "recovered": recovered, "count": len(recovered)}
+
     def list_worktrees(self) -> list[dict[str, Any]]:
         with self._lock:
             self._load_registry()

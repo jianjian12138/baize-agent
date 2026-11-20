@@ -1049,8 +1049,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # V40/V41: coding eval harness + external dataset + profile A/B comparison
     ev = sub.add_parser("eval", help="run multi-file coding evaluation harness and compare runs")
-    ev.add_argument("--mode", choices=("oracle", "live"), default="oracle",
-                    help="oracle (deterministic verification) or live (configured LLM)")
+    ev.add_argument("--mode", choices=("oracle", "offline", "live"), default="oracle",
+                    help="oracle/offline (deterministic verification) or live (configured LLM)")
+    ev.add_argument("--suite", choices=("default", "coding"), default="default",
+                    help="default harness or V44 self-contained CodingBench suite")
     ev.add_argument("--task", action="append", default=None, help="filter specific task_id")
     ev.add_argument("--dataset", default="", help="path to external SWE-bench style JSONL eval dataset")
     ev.add_argument("--compare-profiles", action="store_true",
@@ -1107,13 +1109,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     # V42: Git Worktree pool management & Cost/Budget Ledger CLI
     wt_p = sub.add_parser("worktree", help="inspect or clean up parallel Git worktrees (V42.0.0 Helios)")
-    wt_p.add_argument("action", nargs="?", choices=("list", "cleanup"), default="list")
+    wt_p.add_argument("action", nargs="?", choices=("list", "cleanup", "recover"), default="list")
     wt_p.add_argument("--json", action="store_true", help="output JSON")
 
     bg_p = sub.add_parser("budget", help="inspect or reset session cost/token budget ledger (V42.0.0 Helios)")
     bg_p.add_argument("action", nargs="?", choices=("show", "reset"), default="show")
     bg_p.add_argument("--session", default="", help="optional session_id to inspect or reset")
     bg_p.add_argument("--json", action="store_true", help="output JSON")
+
+    au_p = sub.add_parser("audit", help="inspect and verify SHA-256 hash-chained audit ledger (V43 Aegis)")
+    au_p.add_argument("--limit", type=int, default=20, help="number of recent audit entries")
+    au_p.add_argument("--type", dest="event_type", default="", help="filter by event_type")
+    au_p.add_argument("--verify", action="store_true", help="verify SHA-256 hash chain integrity")
+    au_p.add_argument("--json", action="store_true", help="output JSON")
+
+    tr_p = sub.add_parser("traces", help="inspect recent OpenTelemetry spans or flush OTLP export (V44 Atlas)")
+    tr_p.add_argument("--limit", type=int, default=20, help="number of recent spans")
+    tr_p.add_argument("--flush", action="store_true", help="flush pending spans to BAIZE_OTLP_ENDPOINT")
+    tr_p.add_argument("--json", action="store_true", help="output JSON")
 
     return p
 
@@ -1165,6 +1178,18 @@ def cmd_ralph(args) -> int:
 
 
 def cmd_eval(args) -> int:
+    if getattr(args, "suite", "default") == "coding":
+        from ..governance.eval_harness import run_coding_benchmark
+        rep = run_coding_benchmark(mode="offline" if args.mode in ("oracle", "offline") else "live")
+        if args.json:
+            print(json.dumps(rep, indent=2, ensure_ascii=False))
+        else:
+            delta_pct = rep.get("regression_delta", 0.0) * 100.0
+            print(
+                f"[{rep['suite']}] {rep['passed_tasks']}/{rep['total_tasks']} passed "
+                f"({rep['pass_rate']*100:.1f}%) delta={delta_pct:+.2f}% avg={rep['avg_duration_ms']:.1f}ms"
+            )
+        return 0 if rep["passed_tasks"] == rep["total_tasks"] else 1
     from ..governance.eval_harness import (
         compare_runs,
         load_eval_runs,
@@ -1235,6 +1260,10 @@ def cmd_worktree(args) -> int:
     if args.action == "cleanup":
         res = pool.cleanup_all()
         print(json.dumps(res, indent=2, ensure_ascii=False) if args.json else f"Cleaned {res['count']} worktree(s).")
+        return 0
+    if args.action == "recover":
+        res = pool.recover_orphans()
+        print(json.dumps(res, indent=2, ensure_ascii=False) if args.json else f"Recovered {res['count']} orphan worktree(s).")
         return 0
     wts = pool.list_worktrees()
     if args.json:
@@ -1345,6 +1374,38 @@ def cmd_blast(args) -> int:
     return 0
 
 
+def cmd_audit(args) -> int:
+    from ..governance.dlp import get_audit_ledger
+    ledger = get_audit_ledger()
+    ver = ledger.verify_chain()
+    entries = ledger.list_entries(limit=args.limit, event_type=args.event_type)
+    if args.json:
+        print(json.dumps({"integrity": ver, "entries": entries}, indent=2, ensure_ascii=False))
+    else:
+        status = "INTACT" if ver["ok"] else f"BROKEN at #{ver['broken_at']} ({ver['reason']})"
+        print(f"Audit Chain: {status} (checked={ver['checked']} head={ver['head_hash'][:12]})")
+        for e in entries:
+            print(f"  #{e['seq']} [{e['event_type']}] {e['actor']} -> {e['target']} ({e['outcome']})")
+    return 0 if ver["ok"] else 1
+
+
+def cmd_traces(args) -> int:
+    from ..governance.telemetry import get_tracer
+    tracer = get_tracer()
+    flushed = tracer.flush_otlp() if getattr(args, "flush", False) else None
+    spans = tracer.recent_traces(limit=args.limit)
+    if args.json:
+        print(json.dumps({"traces": spans, "flushed": flushed}, indent=2, ensure_ascii=False))
+    else:
+        if flushed is not None:
+            print(f"OTLP Flush: ok={flushed['ok']} exported={flushed['exported']} ({flushed.get('reason', flushed.get('status', ''))})")
+        if not spans:
+            print("No traces recorded.")
+        for s in spans:
+            print(f"  {str(s.get('trace_id', ''))[:12]}/{str(s.get('span_id', ''))[:8]} [{s.get('status')}] {s.get('name')} {s.get('duration_ms')}ms")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     if not actual_argv:
@@ -1352,7 +1413,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces"):
         try:
             validate()
         except ConfigError as e:
@@ -1394,6 +1455,8 @@ def main(argv: list[str] | None = None) -> int:
         "rpc": cmd_rpc,
         "worktree": cmd_worktree,
         "budget": cmd_budget,
+        "audit": cmd_audit,
+        "traces": cmd_traces,
     }
     return handlers[args.command](args)
 

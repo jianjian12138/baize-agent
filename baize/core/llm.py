@@ -569,6 +569,55 @@ def _anthropic_stream_transport(url: str, headers: dict, payload: dict) -> Itera
         conn.close()
 
 
+
+class ProviderCircuitBreaker:
+    """Per-provider/model circuit breaker (closed -> open -> half_open)."""
+
+    def __init__(self, failure_threshold: int = 3, cooldown_s: float = 30.0) -> None:
+        self.failure_threshold = max(1, int(failure_threshold))
+        self.cooldown_s = max(0.01, float(cooldown_s))
+        self._lock = threading.Lock()
+        self._state: dict[str, dict[str, Any]] = {}
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            st = self._state.get(key)
+            if not st or st["state"] == "closed":
+                return True
+            if st["state"] == "open":
+                if now - st["opened_at"] >= self.cooldown_s:
+                    st["state"] = "half_open"
+                    return True
+                return False
+            return True
+
+    def record_success(self, key: str) -> None:
+        with self._lock:
+            self._state[key] = {"state": "closed", "failures": 0, "opened_at": 0.0}
+
+    def record_failure(self, key: str) -> str:
+        now = time.monotonic()
+        with self._lock:
+            st = self._state.setdefault(key, {"state": "closed", "failures": 0, "opened_at": 0.0})
+            st["failures"] += 1
+            if st["state"] == "half_open" or st["failures"] >= self.failure_threshold:
+                st["state"] = "open"
+                st["opened_at"] = now
+            return str(st["state"])
+
+    def status(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {k: dict(v) for k, v in self._state.items()}
+
+
+_GLOBAL_CB = ProviderCircuitBreaker()
+
+
+def get_circuit_breaker() -> ProviderCircuitBreaker:
+    return _GLOBAL_CB
+
+
 class LLMClient:
     """Chat-completions client with routing, streaming and rate limiting."""
 
@@ -593,6 +642,10 @@ class LLMClient:
             self._chaos.wrap_transport(_http_stream_transport)
             if stream_transport is None else stream_transport)
         self._route_from_config()
+        self.circuit_breaker = ProviderCircuitBreaker(
+            failure_threshold=int(cfg.get("BAIZE_CB_FAILURE_THRESHOLD", "3") or "3"),
+            cooldown_s=float(cfg.get("BAIZE_CB_COOLDOWN_S", "30") or "30"),
+        )
         self._telemetry_lock = threading.Lock()
         self._telemetry: dict[str, float | int] = {
             "requests": 0,
@@ -774,7 +827,15 @@ class LLMClient:
             return self._stream(messages, tools, temperature)
         last_err: Exception | None = None
         cache_on = self.cfg.get("BAIZE_PROMPT_CACHE") == "1"
-        for spec in self._select(tools):  # cross-model fallback loop
+        from ..governance.dlp import check_egress_url
+        from ..governance.telemetry import get_tracer
+        tracer = get_tracer(self.cfg)
+        specs = self._select(tools)
+        for spec in specs:  # cross-model fallback loop
+            cb_key = f"{spec.provider}:{spec.name}"
+            if len(specs) > 1 and not self.circuit_breaker.allow(cb_key):
+                obs.inc("llm_circuit_open_skip")
+                continue
             for attempt in range(self.max_retries + 1):
                 try:
                     self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
@@ -782,32 +843,39 @@ class LLMClient:
                     if cache_on and spec.provider == "anthropic" and tools:
                         req_msgs = mark_cacheable(messages, "anthropic")
                     t0 = time.perf_counter()
-                    if spec.provider == "gemini":
-                        from ..ext.providers.gemini import GeminiProviderAdapter
-                        gem = GeminiProviderAdapter(
-                            api_key=spec.api_key,
-                            model=spec.name,
-                            base_url=spec.base_url or "https://generativelanguage.googleapis.com/v1beta",
-                            timeout=int(getattr(self, "timeout", 0) or self.cfg.get("BAIZE_MODEL_TIMEOUT", 120) or 120),
+                    with tracer.start_span("llm.chat", kind="CLIENT", attributes={"llm.provider": spec.provider, "llm.model": spec.name}):
+                        if spec.provider == "gemini":
+                            from ..ext.providers.gemini import GeminiProviderAdapter
+                            gem = GeminiProviderAdapter(
+                                api_key=spec.api_key,
+                                model=spec.name,
+                                base_url=spec.base_url or "https://generativelanguage.googleapis.com/v1beta",
+                                timeout=int(getattr(self, "timeout", 0) or self.cfg.get("BAIZE_MODEL_TIMEOUT", 120) or 120),
+                            )
+                            parsed_msg = gem.chat(
+                                req_msgs,
+                                tools=tools,
+                                temperature=0.2 if temperature is None else temperature,
+                            )
+                            self.circuit_breaker.record_success(cb_key)
+                            self._record_usage(
+                                parsed_msg,
+                                (time.perf_counter() - t0) * 1000.0,
+                                provider="gemini",
+                                model=spec.name,
+                            )
+                            obs.inc("llm_calls")
+                            return parsed_msg
+                        ep = _endpoint(spec)
+                        ok_egress, egress_reason = check_egress_url(ep, cfg=self.cfg)
+                        if not ok_egress:
+                            raise LLMError(egress_reason)
+                        raw = self.transport(
+                            ep,
+                            self._headers(spec),
+                            _build_request(spec, req_msgs, tools, temperature),
                         )
-                        parsed_msg = gem.chat(
-                            req_msgs,
-                            tools=tools,
-                            temperature=0.2 if temperature is None else temperature,
-                        )
-                        self._record_usage(
-                            parsed_msg,
-                            (time.perf_counter() - t0) * 1000.0,
-                            provider="gemini",
-                            model=spec.name,
-                        )
-                        obs.inc("llm_calls")
-                        return parsed_msg
-                    raw = self.transport(
-                        _endpoint(spec),
-                        self._headers(spec),
-                        _build_request(spec, req_msgs, tools, temperature),
-                    )
+                    self.circuit_breaker.record_success(cb_key)
                     self._record_usage(
                         raw,
                         (time.perf_counter() - t0) * 1000.0,
@@ -817,14 +885,8 @@ class LLMClient:
                     obs.inc("llm_calls")
                     return _parse_response(raw, spec.provider)
                 except Exception as exc:
-                    # Deliberately broad. A transport is pluggable and the real
-                    # HTTP stack raises a long tail (ssl.SSLError,
-                    # http.client.IncompleteRead, socket errors...), while a
-                    # malformed body makes _parse_response raise KeyError /
-                    # IndexError / TypeError. Any of those leaking out would
-                    # kill the whole agent run instead of triggering the retry
-                    # and cross-model fallback that exist precisely for this.
                     last_err = exc
+                    self.circuit_breaker.record_failure(cb_key)
                     obs.record_error("llm_errors")
                     obs.inc(f"llm_error_{type(exc).__name__}")
                     with self._telemetry_lock:
@@ -836,34 +898,57 @@ class LLMClient:
         err_msg = re.sub(r"https?://[^\s\'\",]+", "<api-endpoint>", err_msg)
         raise LLMError(err_msg)
 
+    def _iter_spec_stream(
+        self,
+        spec: ModelSpec,
+        messages: list[dict],
+        tools: list[dict] | None,
+        temperature: float | None,
+    ):
+        from ..governance.dlp import check_egress_url
+        if spec.provider == "gemini":
+            from ..ext.providers.gemini import GeminiProviderAdapter
+            gem = GeminiProviderAdapter(
+                api_key=spec.api_key,
+                model=spec.name,
+                base_url=spec.base_url or "https://generativelanguage.googleapis.com/v1beta",
+                timeout=int(getattr(self, "timeout", 0) or self.cfg.get("BAIZE_MODEL_TIMEOUT", 120) or 120),
+            )
+            yield from gem.stream_chat(messages, tools=tools, temperature=0.2 if temperature is None else temperature)
+            return
+        url = _endpoint(spec)
+        ok_egress, egress_reason = check_egress_url(url, cfg=self.cfg)
+        if not ok_egress:
+            raise LLMError(egress_reason)
+        transport = _anthropic_stream_transport if spec.provider == "anthropic" else self.stream_transport
+        yield from transport(url, self._headers(spec), _build_request(spec, messages, tools, temperature))
+
     def _stream(self, messages: list[dict], tools: list[dict] | None,
                 temperature: float | None) -> Iterator[dict]:
-        spec = self._select(tools)[0]
-        # Anthropic uses a different SSE dialect; route it through the real
-        # Anthropic SSE transport (which yields OpenAI-shaped chunks). This is a
-        # genuine stream, not the previous single non-streamed fallback.
-        transport = (_anthropic_stream_transport
-                     if spec.provider == "anthropic" else self.stream_transport)
-        self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
-        url = _endpoint(spec)
+        specs = self._select(tools)
         yielded_any = False
-        try:
-            for chunk in transport(
-                url, self._headers(spec),
-                _build_request(spec, messages, tools, temperature),
-            ):
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                if delta.get("content") is not None:
-                    yielded_any = True
-                    yield {"delta": delta["content"]}
-            obs.inc("llm_streams")
-        except Exception as exc:  # defensive: fall back only if nothing streamed yet
-            obs.record_error("llm_stream_errors")
-            if not yielded_any:
-                full = self.chat(messages, tools, temperature, stream=False)
-                yield {"delta": full.get("content") or ""}
-            else:
-                raise LLMError(f"stream interrupted after partial output: {exc}") from exc
+        for spec in specs:
+            cb_key = f"{spec.provider}:{spec.name}"
+            if len(specs) > 1 and not self.circuit_breaker.allow(cb_key):
+                continue
+            self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
+            try:
+                for chunk in self._iter_spec_stream(spec, messages, tools, temperature):
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    if delta.get("content") is not None:
+                        yielded_any = True
+                        yield {"delta": delta["content"]}
+                self.circuit_breaker.record_success(cb_key)
+                obs.inc("llm_streams")
+                return
+            except Exception as exc:
+                self.circuit_breaker.record_failure(cb_key)
+                obs.record_error("llm_stream_errors")
+                if yielded_any:
+                    raise LLMError(f"stream interrupted after partial output: {exc}") from exc
+        if not yielded_any:
+            full = self.chat(messages, tools, temperature, stream=False)
+            yield {"delta": full.get("content") or ""}
 
 
     def chat_with_stream(
@@ -888,24 +973,15 @@ class LLMClient:
                     pass
             return msg
 
-        spec = self._select(tools)[0]
-        transport = (
-            _anthropic_stream_transport
-            if spec.provider == "anthropic"
-            else self.stream_transport
-        )
-        self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
-        url = _endpoint(spec)
+        specs = self._select(tools)
         content_parts: list[str] = []
         tc_acc: dict[int, dict[str, Any]] = {}
         yielded_any = False
+        spec = specs[0]
+        self.rate.acquire(self.rate.estimate_tokens(json.dumps(messages)))
 
         try:
-            for chunk in transport(
-                url,
-                self._headers(spec),
-                _build_request(spec, messages, tools, temperature),
-            ):
+            for chunk in self._iter_spec_stream(spec, messages, tools, temperature):
                 delta = chunk.get("choices", [{}])[0].get("delta", {})
                 text = delta.get("content")
                 if text:

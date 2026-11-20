@@ -49,8 +49,8 @@
 | 基准测试 | **15/15 通过** | `python -m baize bench` |
 | 内置工具 | **22 个**（开启 `BAIZE_ALLOW_FETCH_URL=1` 后 23 个） | `python -c "from baize.execution.tools import default_registry as d; print(len(d().names()))"` |
 | 内置技能 | **23 个** `SKILL.md` | `python -c "import glob; print(len(glob.glob('assets/**/SKILL.md', recursive=True)))"` |
-| 配置项 | **98 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 100 项） | `python -c "from baize.core.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
-| CLI 子命令 | **35 个** | `python -m baize --help` |
+| 配置项 | **110 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 112 项） | `python -c "from baize.core.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
+| CLI 子命令 | **37 个** | `python -m baize --help` |
 | 模型要求 | 任意 OpenAI 兼容端点（需自备） | —— |
 
 > **维护提示**：测试数、覆盖率、配置项数、子命令数都是会随提交漂移的数字。本仓库的 `scripts/gates/sync_truth.py` 会校验其中一部分；改动 `baize/config.py` 或 `baize/cli.py` 后请重新跑一遍上面的命令并更新本表。

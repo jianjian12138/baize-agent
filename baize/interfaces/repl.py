@@ -471,6 +471,40 @@ class BaizeREPL:
             print(f"  • Hard USD budget cap:      {cap_str}\n")
             return
 
+        if cmd == "/audit":
+            from ..governance.dlp import get_audit_ledger
+            ledger = get_audit_ledger(self.cfg)
+            ver = ledger.verify_chain()
+            print(p.paint("green" if ver["ok"] else "red", f"Audit chain: {ver['reason']} (checked={ver['checked']} head={ver['head_hash'][:12]})"))
+            for e in ledger.list_entries(limit=10):
+                print(f"  #{e['seq']} [{e['event_type']}] {e['actor']} -> {e['target']} ({e['outcome']})")
+            return
+
+        if cmd == "/traces":
+            from ..governance.telemetry import get_tracer
+            spans = get_tracer(self.cfg).recent_traces(limit=10)
+            if not spans:
+                print(p.paint("dim", "No OTel spans recorded yet."))
+            for s in spans:
+                print(f"  {str(s.get('trace_id', ''))[:12]}/{str(s.get('span_id', ''))[:8]} [{s.get('status')}] {s.get('name')} {s.get('duration_ms')}ms")
+            return
+
+        if cmd == "/reindex":
+            from ..knowledge.hybrid_index import HybridSearchIndex
+            idx = HybridSearchIndex(cfg=self.cfg)
+            rep = idx.index_git_delta(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
+            print(p.paint("green", f"✓ Hybrid index ({rep.get('strategy')}): scanned={rep.get('scanned')} updated={rep.get('updated')} pruned={rep.get('pruned', 0)}"))
+            return
+
+        if cmd == "/queue":
+            from .approval import get_approval_queue
+            pend = get_approval_queue().list_pending()
+            if not pend:
+                print(p.paint("dim", "No pending approvals in SQLite queue."))
+            for item in pend:
+                print(f"  {item['request_id']} [{item['risk']}] {item['tool_name']}")
+            return
+
         if cmd == "/worktree":
             from ..execution.worktree import GitWorktreePool
             pool = GitWorktreePool(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))

@@ -176,6 +176,10 @@ class GeminiProviderAdapter:
             raise RuntimeError("Gemini API key is not configured")
         body = self.build_request_body(messages, tools=tools, temperature=temperature)
         endpoint = f"{self.base_url}/models/{urllib.parse.quote(self.model, safe='')}:generateContent"
+        from ...governance.dlp import check_egress_url
+        ok_egress, egress_reason = check_egress_url(endpoint)
+        if not ok_egress:
+            raise RuntimeError(egress_reason)
         req = urllib.request.Request(
             endpoint,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -188,3 +192,71 @@ class GeminiProviderAdapter:
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             parsed = json.loads(resp.read().decode("utf-8"))
         return self.parse_response(parsed)
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.2,
+    ):
+        """Native Gemini SSE streaming yielding OpenAI-compatible delta chunks."""
+        if not self.api_key:
+            raise RuntimeError("Gemini API key is not configured")
+        body = self.build_request_body(messages, tools=tools, temperature=temperature)
+        endpoint = f"{self.base_url}/models/{urllib.parse.quote(self.model, safe='')}:streamGenerateContent?alt=sse"
+        from ...governance.dlp import check_egress_url
+        ok_egress, egress_reason = check_egress_url(endpoint)
+        if not ok_egress:
+            raise RuntimeError(egress_reason)
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "x-goog-api-key": self.api_key,
+            },
+            method="POST",
+        )
+        tool_idx = 0
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                payload_str = line[5:].strip()
+                if not payload_str or payload_str == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(payload_str)
+                except json.JSONDecodeError:
+                    continue
+                cands = chunk.get("candidates") or []
+                if not cands:
+                    continue
+                parts = ((cands[0].get("content") or {}).get("parts")) or []
+                text_buf: list[str] = []
+                tc_deltas: list[dict[str, Any]] = []
+                for part in parts:
+                    if isinstance(part, dict):
+                        if "text" in part and part["text"]:
+                            text_buf.append(str(part["text"]))
+                        elif "functionCall" in part:
+                            fc = part["functionCall"] or {}
+                            tc_deltas.append({
+                                "index": tool_idx,
+                                "id": f"call_gemini_{tool_idx}",
+                                "type": "function",
+                                "function": {
+                                    "name": str(fc.get("name") or ""),
+                                    "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False),
+                                },
+                            })
+                            tool_idx += 1
+                delta: dict[str, Any] = {}
+                if text_buf:
+                    delta["content"] = "".join(text_buf)
+                if tc_deltas:
+                    delta["tool_calls"] = tc_deltas
+                if delta:
+                    yield {"choices": [{"index": 0, "delta": delta}]}

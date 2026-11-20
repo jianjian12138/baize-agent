@@ -137,6 +137,18 @@ def check_http_rate_limit(handler) -> tuple[bool, float]:
     return _RATE_LIMITER.allow(f"{client_ip}:{auth_hdr}")
 
 
+_SHUTTING_DOWN = False
+
+
+def is_shutting_down() -> bool:
+    return _SHUTTING_DOWN
+
+
+def set_shutting_down(flag: bool) -> None:
+    global _SHUTTING_DOWN
+    _SHUTTING_DOWN = bool(flag)
+
+
 def _live_deps() -> dict:
     """Resolve dependencies via baize.interfaces.serve globals so test monkeypatches apply."""
     return {
@@ -160,6 +172,7 @@ def _live_deps() -> dict:
         "stub_body": _stub_body,
         "get_job_store": get_job_store,
         "version": __version__,
+        "is_shutting_down": is_shutting_down,
     }
 
 
@@ -178,6 +191,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self._emit_cors()
+        tp = getattr(self, "_traceparent", "")
+        if tp:
+            self.send_header("traceparent", tp)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -199,8 +215,22 @@ class Handler(BaseHTTPRequestHandler):
     def _code_exec_gate(self):
         return _code_exec_gate_fn(self)
 
+    def _init_trace_ctx(self, method: str):
+        from ..governance.telemetry import format_traceparent, get_tracer
+        tracer = get_tracer(load_config())
+        cm = tracer.start_span(
+            f"http.{method}",
+            kind="SERVER",
+            traceparent=self.headers.get("traceparent", ""),
+            attributes={"http.method": method, "http.target": self._req_path()},
+        )
+        return cm, format_traceparent
+
     def do_GET(self):
-        dispatch_get(self, self._req_path(), _live_deps())
+        cm, fmt_tp = self._init_trace_ctx("GET")
+        with cm as span:
+            self._traceparent = fmt_tp(span.trace_id, span.span_id)
+            dispatch_get(self, self._req_path(), _live_deps())
 
     def do_HEAD(self):
         if self._req_path() == "/metrics":
@@ -214,25 +244,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        req_path = self._req_path()
-        is_channel_webhook = (
-            req_path.startswith("/api/channels/") and req_path.endswith("/webhook")
-        )
-        if not is_channel_webhook and not self._is_authorized():
-            return self._send(401, {"error": "unauthorized: invalid or missing bearer token"})
-        allowed, retry_after = check_http_rate_limit(self)
-        if not allowed:
-            return self._send(429, {
-                "error": "rate_limit_exceeded",
-                "retry_after_seconds": retry_after,
-            })
-        try:
-            data = self._body()
-        except (ValueError, json.JSONDecodeError):
-            return self._send(400, {"error": "invalid JSON"})
-        if data is None:
-            return self._send(413, {"error": "payload too large"})
-        dispatch_post(self, self._req_path(), data, _live_deps())
+        cm, fmt_tp = self._init_trace_ctx("POST")
+        with cm as span:
+            self._traceparent = fmt_tp(span.trace_id, span.span_id)
+            req_path = self._req_path()
+            is_channel_webhook = (
+                req_path.startswith("/api/channels/") and req_path.endswith("/webhook")
+            )
+            if not is_channel_webhook and not self._is_authorized():
+                return self._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+            allowed, retry_after = check_http_rate_limit(self)
+            if not allowed:
+                return self._send(429, {
+                    "error": "rate_limit_exceeded",
+                    "retry_after_seconds": retry_after,
+                })
+            try:
+                data = self._body()
+            except (ValueError, json.JSONDecodeError):
+                return self._send(400, {"error": "invalid JSON"})
+            if data is None:
+                return self._send(413, {"error": "payload too large"})
+            dispatch_post(self, self._req_path(), data, _live_deps())
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -273,8 +306,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host: str | None = None, port: int | None = None) -> None:
-    """Start the service. Explicit host/port win over config defaults."""
+    """Start the service with persisted config hydration, crash recovery, and graceful shutdown."""
+    import signal
+    import threading
+    set_shutting_down(False)
+    try:
+        from ..governance.dlp import RuntimeConfigStore
+        RuntimeConfigStore().apply_to_env(overwrite=False)
+    except Exception:
+        pass
     cfg = load_config()
+    try:
+        from ..execution.worktree import GitWorktreePool
+        GitWorktreePool(workspace=cfg.get("BAIZE_WORKSPACE_DIR", ".")).recover_orphans()
+    except Exception:
+        pass
     host = host or cfg.get("BAIZE_SERVE_HOST", "127.0.0.1")
     port = int(port or cfg.get("BAIZE_SERVE_PORT", 8787))
     try:
@@ -285,10 +331,36 @@ def serve(host: str | None = None, port: int | None = None) -> None:
     httpd = ThreadingHTTPServer((host, port), Handler)
     setup_logging(cfg)
     _warn_about_auth_posture(cfg)
+
+    def _graceful_stop(signum, _frame):
+        set_shutting_down(True)
+        log.info("received signal %s; draining connections...", signum)
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+        if sig is not None:
+            try:
+                signal.signal(sig, _graceful_stop)
+            except (ValueError, OSError):
+                pass
+
     log.info("baize serve listening on http://%s:%s  (Ctrl+C to stop)", host, port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        pass
+        set_shutting_down(True)
     finally:
+        set_shutting_down(True)
+        try:
+            from ..execution.bg_proc import get_bg_manager
+            for p in get_bg_manager().list_procs():
+                if p.get("running"):
+                    get_bg_manager().stop(p["proc_id"])
+        except Exception:
+            pass
+        try:
+            from ..governance.telemetry import get_tracer
+            get_tracer(cfg).flush_otlp(timeout=2.0)
+        except Exception:
+            pass
         httpd.server_close()

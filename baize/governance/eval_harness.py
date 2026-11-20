@@ -339,11 +339,13 @@ def _write_files(root: Path, files: dict[str, str]) -> None:
         p.write_text(content, encoding="utf-8")
 
 
-def _run_verify(root: Path, cmd: list[str], timeout: int = 30) -> tuple[bool, str]:
+def _run_verify(root: Path, cmd: list[str] | str, timeout: int = 30) -> tuple[bool, str]:
+    import shlex as _shlex
+    argv = _shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.run(
-        cmd, cwd=str(root), env=env, capture_output=True, text=True,
+        argv, cwd=str(root), env=env, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout,
     )
     out = (proc.stdout + "\n" + proc.stderr).strip()
@@ -578,3 +580,209 @@ def run_profile_comparison(
         "profiles": by_profile,
         "tiered_savings_pct": savings_pct,
     }
+
+
+# ---------------------------------------------------------------------------
+# V44 Atlas: SQLite WAL Eval History Store + Self-Contained CodingBench Suite
+# ---------------------------------------------------------------------------
+
+class EvalHistoryStore:
+    """Persistent SQLite WAL store tracking benchmark runs & pass-rate regressions."""
+
+    def __init__(self, db_path: str | Path | None = None, *, cfg: dict[str, Any] | None = None) -> None:
+        import sqlite3
+        c = cfg if cfg is not None else load_config()
+        if db_path is not None:
+            self.db_path = Path(db_path)
+        else:
+            self.db_path = Path(c.get("BAIZE_PERSISTENCE_DIR", "persistence")) / "eval_history.sqlite3"
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(self.db_path), timeout=10.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS eval_runs (
+                    run_id TEXT PRIMARY KEY,
+                    ts REAL NOT NULL,
+                    suite TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    total_tasks INTEGER NOT NULL,
+                    passed_tasks INTEGER NOT NULL,
+                    pass_rate REAL NOT NULL,
+                    avg_duration_ms REAL NOT NULL,
+                    estimated_usd REAL NOT NULL,
+                    report_json TEXT NOT NULL
+                )
+                """
+            )
+
+    def record(self, report: dict[str, Any]) -> None:
+        import sqlite3
+        with sqlite3.connect(str(self.db_path), timeout=10.0) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_runs
+                (run_id, ts, suite, mode, model, total_tasks, passed_tasks,
+                 pass_rate, avg_duration_ms, estimated_usd, report_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(report["run_id"]),
+                    float(report["ts"]),
+                    str(report["suite"]),
+                    str(report["mode"]),
+                    str(report["model"]),
+                    int(report["total_tasks"]),
+                    int(report["passed_tasks"]),
+                    float(report["pass_rate"]),
+                    float(report.get("avg_duration_ms", 0.0)),
+                    float(report.get("estimated_usd", 0.0)),
+                    json.dumps(report, ensure_ascii=False),
+                ),
+            )
+
+    def recent(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        import sqlite3
+        with sqlite3.connect(str(self.db_path), timeout=10.0) as conn:
+            rows = conn.execute(
+                """
+                SELECT run_id, ts, suite, mode, model, total_tasks, passed_tasks,
+                       pass_rate, avg_duration_ms, estimated_usd
+                FROM eval_runs ORDER BY ts DESC LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+        return [
+            {
+                "run_id": r[0],
+                "ts": float(r[1]),
+                "suite": r[2],
+                "mode": r[3],
+                "model": r[4],
+                "total_tasks": int(r[5]),
+                "passed_tasks": int(r[6]),
+                "pass_rate": float(r[7]),
+                "avg_duration_ms": float(r[8]),
+                "estimated_usd": float(r[9]),
+            }
+            for r in rows
+        ]
+
+
+CODING_BENCH_TASKS: list[EvalTask] = [
+    EvalTask(
+        task_id="cb-01-off-by-one",
+        title="Fix inclusive range off-by-one bug",
+        category="bugfix",
+        goal="Fix sum_inclusive(n) in calc.py so sum_inclusive(5) returns 15.",
+        initial_files={
+            "calc.py": "def sum_inclusive(n: int) -> int:\n    return sum(range(1, n))\n",
+            "test_calc.py": "from calc import sum_inclusive\nassert sum_inclusive(5) == 15\nassert sum_inclusive(1) == 1\n",
+        },
+        test_command=[sys.executable, "test_calc.py"],
+        oracle_files={
+            "calc.py": "def sum_inclusive(n: int) -> int:\n    return sum(range(1, n + 1))\n",
+        },
+    ),
+    EvalTask(
+        task_id="cb-02-security-traversal",
+        title="Block path traversal in file loader",
+        category="security",
+        goal="Harden safe_join(root, rel) in loader.py to raise ValueError on .. escapes.",
+        initial_files={
+            "loader.py": "from pathlib import Path\ndef safe_join(root: str, rel: str) -> Path:\n    return Path(root) / rel\n",
+            "test_loader.py": (
+                "from loader import safe_join\n"
+                "assert safe_join('/tmp/base', 'a/b.txt').name == 'b.txt'\n"
+                "try:\n    safe_join('/tmp/base', '../../etc/passwd')\n    raise AssertionError('must reject')\n"
+                "except ValueError:\n    pass\n"
+            ),
+        },
+        test_command=[sys.executable, "test_loader.py"],
+        oracle_files={
+            "loader.py": (
+                "from pathlib import Path\n"
+                "def safe_join(root: str, rel: str) -> Path:\n"
+                "    base = Path(root).resolve()\n"
+                "    cand = (base / rel).resolve()\n"
+                "    if base != cand and base not in cand.parents:\n"
+                "        raise ValueError('path traversal rejected')\n"
+                "    return cand\n"
+            ),
+        },
+    ),
+    EvalTask(
+        task_id="cb-03-refactor-cache",
+        title="Deduplicate normalize_key helper across modules",
+        category="refactor",
+        goal="Ensure normalize_key strips whitespace and lowercases consistently.",
+        initial_files={
+            "keys.py": "def normalize_key(k: str) -> str:\n    return k.strip()\n",
+            "test_keys.py": "from keys import normalize_key\nassert normalize_key('  AbC \\n') == 'abc'\n",
+        },
+        test_command=[sys.executable, "test_keys.py"],
+        oracle_files={
+            "keys.py": "def normalize_key(k: str) -> str:\n    return k.strip().lower()\n",
+        },
+    ),
+    EvalTask(
+        task_id="cb-04-syntax-heal",
+        title="Repair broken Python syntax in router.py",
+        category="diagnostics",
+        goal="Fix the syntax error in router.py so route_path works.",
+        initial_files={
+            "router.py": "def route_path(p: str) -> str\n    return p.strip('/') or 'root'\n",
+            "test_router.py": "from router import route_path\nassert route_path('/api/v1/') == 'api/v1'\nassert route_path('/') == 'root'\n",
+        },
+        test_command=[sys.executable, "test_router.py"],
+        oracle_files={
+            "router.py": "def route_path(p: str) -> str:\n    return p.strip('/') or 'root'\n",
+        },
+    ),
+]
+
+
+def run_coding_benchmark(
+    *,
+    mode: str = "offline",
+    cfg: dict[str, Any] | None = None,
+    persist_history: bool = True,
+) -> dict[str, Any]:
+    """Run V44 Coding Benchmark (offline oracle/harness verification OR live LLM)."""
+    import uuid
+    c = cfg if cfg is not None else load_config()
+    eff_mode = "oracle" if mode in ("offline", "oracle") else "live"
+    summary = run_eval_suite(mode=eff_mode, tasks=CODING_BENCH_TASKS, cfg=c, persist=False)
+    model_label = "offline-oracle" if eff_mode == "oracle" else str(c.get("BAIZE_MODEL_NAME") or "live")
+    store = EvalHistoryStore(cfg=c)
+    prev = store.recent(limit=1)
+    prev_rate = prev[0]["pass_rate"] if prev else None
+    report = {
+        "run_id": f"eval-{uuid.uuid4().hex[:8]}",
+        "ts": round(time.time(), 3),
+        "suite": "coding_v44",
+        "mode": mode,
+        "model": model_label,
+        "total_tasks": summary.total_tasks,
+        "passed_tasks": summary.passed_tasks,
+        "pass_rate": summary.pass_rate,
+        "regression_delta": round(summary.pass_rate - prev_rate, 4) if prev_rate is not None else 0.0,
+        "regressed": bool(prev_rate is not None and summary.pass_rate < prev_rate),
+        "avg_duration_ms": summary.avg_duration_ms,
+        "estimated_usd": 0.0,
+        "tasks": [
+            {
+                "task_id": r.task_id,
+                "title": r.title,
+                "category": r.category,
+                "passed": r.passed,
+                "duration_ms": r.duration_ms,
+                "error": r.stopped_reason,
+            }
+            for r in summary.results
+        ],
+    }
+    if persist_history:
+        store.record(report)
+    return report

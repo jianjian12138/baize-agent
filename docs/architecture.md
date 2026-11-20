@@ -12,7 +12,7 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (68 modules)
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (70 modules)
 ├── core/                           # 10 modules: agent loop, context engine, cost ledger, plugin lifecycle, LLM client, config, sessions, autonomy
 │   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  cost_ledger.py  llm.py  plugin.py  plugin_lifecycle.py  sessions.py
 ├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
@@ -29,8 +29,8 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │   └── workspace_search.py         # zero-dependency workspace grep & glob search
 ├── knowledge/                      # 7 modules: layered + SQLite WAL + bounded memory, FTS5+Embedding hybrid index, graph, RAG/TF-IDF, skills & runner
 │   ├── doc_crawler.py  graph.py  hybrid_index.py  memory.py  rag.py  skill_runner.py  skills.py
-├── governance/                     # 6 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs
-│   ├── bench.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py
+├── governance/                     # 8 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs, dlp, telemetry
+│   ├── bench.py  dlp.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py  telemetry.py
 ├── interfaces/                     # 13 modules: CLI, REPL, Diff approval, JSONL RPC, HTTP/SSE server, jobs, ops, desktop, UI
 │   ├── approval.py  cli.py  desktop.py  repl.py  rpc.py  serve.py  ui.py
 │   └── server/                     # decomposed HTTP server subpackage

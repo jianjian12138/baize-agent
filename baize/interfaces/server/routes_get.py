@@ -135,6 +135,27 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         handler.wfile.write(body)
         return
 
+    if req_path == "/livez":
+        return handler._send(200, {"status": "alive", "version": deps["version"]})
+
+    if req_path == "/readyz":
+        shutting = bool(deps.get("is_shutting_down", lambda: False)())
+        cfg = load_config()
+        pdir = Path(cfg.get("BAIZE_PERSISTENCE_DIR", "persistence"))
+        writable = False
+        try:
+            pdir.mkdir(parents=True, exist_ok=True)
+            writable = os.access(str(pdir), os.W_OK)
+        except OSError:
+            writable = False
+        ready = (not shutting) and writable
+        return handler._send(200 if ready else 503, {
+            "status": "ready" if ready else ("draining" if shutting else "not_ready"),
+            "shutting_down": shutting,
+            "persistence_writable": writable,
+            "version": deps["version"],
+        })
+
     if req_path == "/health":
         from ...execution.tools import EXECUTION_BOUNDARY
         return handler._send(200, {
@@ -565,5 +586,42 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
             "memory": store.read("memory"),
             "user": store.read("user"),
         })
+
+    if req_path == "/api/audit":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...governance.dlp import get_audit_ledger
+        cfg = load_config()
+        params = parse_qs(urlparse(handler.path).query)
+        limit = max(1, min(int((params.get("limit") or ["40"])[0] or 40), 200))
+        et = (params.get("event_type") or [""])[0].strip()
+        ledger = get_audit_ledger(cfg)
+        return handler._send(200, {
+            "integrity": ledger.verify_chain(),
+            "entries": ledger.list_entries(limit=limit, event_type=et),
+        })
+
+    if req_path == "/api/traces":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...governance.telemetry import get_tracer
+        cfg = load_config()
+        params = parse_qs(urlparse(handler.path).query)
+        limit = max(1, min(int((params.get("limit") or ["40"])[0] or 40), 200))
+        tracer = get_tracer(cfg)
+        traces = tracer.recent_traces(limit=limit)
+        return handler._send(200, {
+            "traces": traces,
+            "total": len(traces),
+            "otlp_configured": bool(tracer._otlp_endpoint()),
+        })
+
+    if req_path == "/api/eval/history":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...governance.eval_harness import EvalHistoryStore
+        cfg = load_config()
+        runs = EvalHistoryStore(cfg=cfg).recent(limit=20)
+        return handler._send(200, {"runs": runs, "total": len(runs)})
 
     return handler._send(404, {"error": "not found"})

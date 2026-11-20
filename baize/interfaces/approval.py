@@ -268,13 +268,156 @@ def format_status_bar(
 
 
 class ApprovalQueue:
-    """Thread-safe shared approval queue bridging CLI, RPC, and Baize Studio Web UI."""
+    """Thread-safe SQLite WAL persistent approval queue bridging CLI, RPC, IM, and Baize Studio."""
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
         import threading
         self._lock = threading.Lock()
+        self._explicit_db = Path(db_path) if db_path is not None else None
         self._pending: dict[str, dict[str, Any]] = {}
         self._history: list[dict[str, Any]] = []
+        self._loaded_db = ""
+        self._sync_from_db()
+
+    def _db_path(self) -> Path:
+        if self._explicit_db is not None:
+            return self._explicit_db
+        from ..core.config import load_config
+        cfg = load_config()
+        return Path(cfg.get("BAIZE_PERSISTENCE_DIR", "persistence")) / "approvals.sqlite3"
+
+    def _connect(self):
+        import sqlite3
+        p = self._db_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(p), timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                request_id TEXT PRIMARY KEY,
+                tool_name TEXT NOT NULL,
+                arguments_json TEXT NOT NULL,
+                preview TEXT NOT NULL,
+                risk TEXT NOT NULL,
+                status TEXT NOT NULL,
+                approved INTEGER,
+                scope TEXT,
+                reason TEXT,
+                created_at REAL NOT NULL,
+                resolved_at REAL
+            )
+            """
+        )
+        return conn
+
+    def _sync_from_db(self) -> None:
+        import json as _json
+        import threading
+        db_str = str(self._db_path())
+        if self._loaded_db == db_str:
+            return
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT request_id, tool_name, arguments_json, preview, risk, status,
+                           approved, scope, reason, created_at, resolved_at
+                    FROM approval_requests ORDER BY created_at ASC
+                    """
+                ).fetchall()
+            self._pending = {}
+            self._history = []
+            for r in rows:
+                rid, tname, ajson, prev, risk, status, appr, scope, reason, cat, rat = r
+                try:
+                    args = _json.loads(ajson)
+                except Exception:
+                    args = {}
+                if status == "pending":
+                    self._pending[rid] = {
+                        "request_id": rid,
+                        "tool_name": tname,
+                        "arguments": args,
+                        "preview": prev,
+                        "risk": risk,
+                        "created_at": float(cat),
+                        "status": "pending",
+                        "_event": threading.Event(),
+                        "_decision": None,
+                    }
+                else:
+                    self._history.append({
+                        "request_id": rid,
+                        "tool_name": tname,
+                        "risk": risk,
+                        "approved": bool(appr),
+                        "scope": scope or ("once" if appr else "denied"),
+                        "reason": reason or "",
+                        "resolved_at": float(rat or cat),
+                    })
+            self._history = self._history[-200:]
+            self._loaded_db = db_str
+        except Exception:
+            pass
+
+    def _persist_insert(self, entry: dict[str, Any]) -> None:
+        import json as _json
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO approval_requests
+                    (request_id, tool_name, arguments_json, preview, risk, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                    """,
+                    (
+                        entry["request_id"],
+                        entry["tool_name"],
+                        _json.dumps(entry.get("arguments", {}), ensure_ascii=False),
+                        entry.get("preview", ""),
+                        entry.get("risk", "medium"),
+                        float(entry.get("created_at", 0.0)),
+                    ),
+                )
+        except Exception:
+            pass
+
+    def _persist_resolution(self, req_id: str, dec: ApprovalDecision, resolved_at: float) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE approval_requests
+                    SET status = ?, approved = ?, scope = ?, reason = ?, resolved_at = ?
+                    WHERE request_id = ?
+                    """,
+                    (
+                        "approved" if dec.approved else "denied",
+                        1 if dec.approved else 0,
+                        dec.scope,
+                        dec.reason,
+                        resolved_at,
+                        req_id,
+                    ),
+                )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _audit_resolution(req_id: str, tool_name: str, dec: ApprovalDecision) -> None:
+        try:
+            from ..governance.dlp import get_audit_ledger
+            get_audit_ledger().append(
+                "approval_resolved",
+                actor="approval_queue",
+                target=tool_name,
+                outcome="approved" if dec.approved else "denied",
+                details={"request_id": req_id, "scope": dec.scope, "reason": dec.reason},
+            )
+        except Exception:
+            pass
 
     def submit(self, req: ApprovalRequest, *, timeout: float = 300.0) -> ApprovalDecision:
         import threading
@@ -295,28 +438,33 @@ class ApprovalQueue:
             "_decision": None,
         }
         with self._lock:
+            self._sync_from_db()
             self._pending[req_id] = entry
+            self._persist_insert(entry)
 
         waited = ev.wait(timeout=timeout)
         with self._lock:
             popped = self._pending.pop(req_id, entry)
             dec = popped.get("_decision")
+            now_ts = round(time.time(), 3)
             if not waited or dec is None:
                 dec = ApprovalDecision(approved=False, scope="denied", reason="Approval timed out")
-            self._history.append({
-                "request_id": req_id,
-                "tool_name": req.tool_name,
-                "risk": req.risk,
-                "approved": dec.approved,
-                "scope": dec.scope,
-                "reason": dec.reason,
-                "resolved_at": round(time.time(), 3),
-            })
-            self._history = self._history[-100:]
+                self._persist_resolution(req_id, dec, now_ts)
+                self._audit_resolution(req_id, req.tool_name, dec)
+                self._history.append({
+                    "request_id": req_id,
+                    "tool_name": req.tool_name,
+                    "risk": req.risk,
+                    "approved": dec.approved,
+                    "scope": dec.scope,
+                    "reason": dec.reason,
+                    "resolved_at": now_ts,
+                })
+                self._history = self._history[-200:]
             return dec
 
     def enqueue_nonblocking(self, req: ApprovalRequest) -> dict[str, Any]:
-        """Register a pending approval item for asynchronous Web UI resolution."""
+        """Register a pending approval item for asynchronous Web UI / IM resolution."""
         import threading
         import time
         import uuid
@@ -334,7 +482,9 @@ class ApprovalQueue:
             "_decision": None,
         }
         with self._lock:
+            self._sync_from_db()
             self._pending[req_id] = entry
+            self._persist_insert(entry)
         return {k: v for k, v in entry.items() if not k.startswith("_")}
 
     def resolve(
@@ -347,6 +497,7 @@ class ApprovalQueue:
     ) -> dict[str, Any]:
         import time
         with self._lock:
+            self._sync_from_db()
             entry = self._pending.get(request_id)
             if entry is None:
                 return {"ok": False, "error": f"pending approval not found: {request_id}"}
@@ -355,25 +506,28 @@ class ApprovalQueue:
                 scope=scope if approved else "denied",
                 reason=reason or ("" if approved else "Denied via Studio"),
             )
+            now_ts = round(time.time(), 3)
             entry["_decision"] = dec
             entry["status"] = "approved" if approved else "denied"
+            self._persist_resolution(request_id, dec, now_ts)
+            self._audit_resolution(request_id, entry["tool_name"], dec)
+            self._pending.pop(request_id, None)
+            self._history.append({
+                "request_id": request_id,
+                "tool_name": entry["tool_name"],
+                "risk": entry["risk"],
+                "approved": dec.approved,
+                "scope": dec.scope,
+                "reason": dec.reason,
+                "resolved_at": now_ts,
+            })
+            self._history = self._history[-200:]
             entry["_event"].set()
-            if request_id in self._pending:
-                self._pending.pop(request_id, None)
-                self._history.append({
-                    "request_id": request_id,
-                    "tool_name": entry["tool_name"],
-                    "risk": entry["risk"],
-                    "approved": dec.approved,
-                    "scope": dec.scope,
-                    "reason": dec.reason,
-                    "resolved_at": round(time.time(), 3),
-                })
-                self._history = self._history[-100:]
             return {"ok": True, "request_id": request_id, "approved": dec.approved, "scope": dec.scope, "reason": dec.reason}
 
     def list_pending(self) -> list[dict[str, Any]]:
         with self._lock:
+            self._sync_from_db()
             return [
                 {k: v for k, v in e.items() if not k.startswith("_")}
                 for e in self._pending.values()
@@ -381,6 +535,7 @@ class ApprovalQueue:
 
     def history(self, limit: int = 30) -> list[dict[str, Any]]:
         with self._lock:
+            self._sync_from_db()
             return list(self._history[-limit:])
 
 

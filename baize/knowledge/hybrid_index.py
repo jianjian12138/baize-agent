@@ -128,6 +128,10 @@ class HybridSearchIndex:
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        from ..governance.dlp import check_egress_url
+        ok_egress, egress_reason = check_egress_url(url, cfg=self.cfg)
+        if not ok_egress:
+            raise RuntimeError(egress_reason)
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=15) as resp:
             body = json.loads(resp.read().decode("utf-8"))
@@ -184,15 +188,24 @@ class HybridSearchIndex:
             )
             return True
 
+    def remove(self, doc_id: str) -> bool:
+        """Remove a document from both docs and FTS5 index."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM docs WHERE doc_id = ?", (doc_id,))
+            conn.execute("DELETE FROM docs_fts WHERE doc_id = ?", (doc_id,))
+            return cur.rowcount > 0
+
     def index_workspace(
         self,
         workspace: str | Path,
         *,
-        extensions: tuple[str, ...] = (".py", ".md", ".ts", ".js", ".json", ".toml"),
-        max_files: int = 300,
+        extensions: tuple[str, ...] = (".py", ".md", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".go", ".rs"),
+        max_files: int | None = None,
     ) -> dict[str, int]:
         """Incrementally index workspace source files."""
         ws = Path(workspace).resolve()
+        if max_files is None:
+            max_files = int(self.cfg.get("BAIZE_HYBRID_MAX_FILES", "5000") or "5000")
         skip_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", ".baize_worktrees", "dist", "build"}
         scanned = 0
         updated = 0
@@ -344,4 +357,75 @@ class HybridSearchIndex:
             "embedded_docs": int(with_vec),
             "embedding_configured": self.embedding_configured,
             "by_source": by_src,
+        }
+
+    def index_git_delta(
+        self,
+        workspace: str | Path,
+        *,
+        extensions: tuple[str, ...] = (".py", ".md", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".go", ".rs"),
+        max_files: int | None = None,
+    ) -> dict[str, Any]:
+        """Large-repo incremental indexer driven by ``git ls-files`` + deletion pruning.
+
+        Falls back transparently to :meth:`index_workspace` for non-git directories.
+        """
+        import subprocess
+        ws = Path(workspace).resolve()
+        cap = int(max_files if max_files is not None else (self.cfg.get("BAIZE_HYBRID_MAX_FILES", "5000") or "5000"))
+        try:
+            proc = subprocess.run(
+                ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+                cwd=str(ws),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if proc.returncode != 0:
+                rep = self.index_workspace(ws, extensions=extensions, max_files=cap)
+                rep["strategy"] = "walk"
+                return rep
+            rel_paths = [ln.strip().replace("\\", "/") for ln in proc.stdout.splitlines() if ln.strip()]
+        except Exception:
+            rep = self.index_workspace(ws, extensions=extensions, max_files=cap)
+            rep["strategy"] = "walk"
+            return rep
+
+        scanned = 0
+        updated = 0
+        live_ids: set[str] = set()
+        for rel in rel_paths:
+            if scanned >= cap:
+                break
+            p = ws / rel
+            if not p.is_file() or p.suffix.lower() not in extensions:
+                continue
+            try:
+                st = p.stat()
+                if st.st_size > 256_000:
+                    continue
+                content = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            scanned += 1
+            live_ids.add(rel)
+            if self.upsert(rel, source="code", title=rel, content=content, mtime=st.st_mtime):
+                updated += 1
+
+        pruned = 0
+        with self._connect() as conn:
+            existing = [
+                r[0] for r in conn.execute("SELECT doc_id FROM docs WHERE source = 'code'").fetchall()
+            ]
+        for did in existing:
+            if did not in live_ids:
+                if self.remove(did):
+                    pruned += 1
+        return {
+            "strategy": "git_delta",
+            "scanned": scanned,
+            "updated": updated,
+            "pruned": pruned,
+            "total_docs": self.stats()["total_docs"],
         }

@@ -746,6 +746,7 @@ __STYLE_BLOCK__
           <button class="helios-tab-btn" data-helios-pane="helios-worktrees" onclick="switchHeliosPane('helios-worktrees')">并行 Worktree</button>
           <button class="helios-tab-btn" data-helios-pane="helios-rag" onclick="switchHeliosPane('helios-rag')">混合检索与记忆</button>
           <button class="helios-tab-btn" data-helios-pane="helios-tree" onclick="switchHeliosPane('helios-tree')">会话树与回溯</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-gov" onclick="switchHeliosPane('helios-gov')">审计、追踪与评测</button>
         </nav>
 
         <!-- Sub-view 1: Cost Ledger & IM Channels -->
@@ -965,6 +966,43 @@ __STYLE_BLOCK__
             </div>
             <div id="helios-rewind-feedback" class="helios-feedback"></div>
             <pre id="helios-tree-ascii" class="helios-code-box helios-tree-box">点击「刷新会话树」查看当前所有会话与分支节点...</pre>
+          </div>
+        </div>
+
+        <!-- Sub-view 6: V43/V44 Audit Hash-Chain, OTel Traces & CodingBench Eval -->
+        <div id="helios-gov" class="helios-pane">
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>SHA-256 哈希链防篡改审计账本</h3>
+                <span class="helios-hint" id="helios-audit-status">等待校验...</span>
+              </div>
+              <button class="chip-btn" onclick="loadHeliosAudit()">校验并刷新审计链</button>
+            </div>
+            <pre id="helios-audit-list" class="helios-code-box">点击「校验并刷新审计链」查看最新审计事件...</pre>
+          </div>
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>OpenTelemetry W3C 分布式追踪</h3>
+                <span class="helios-hint" id="helios-traces-meta">支持 W3C traceparent 与 OTLP/HTTP JSON 导出</span>
+              </div>
+              <button class="chip-btn" onclick="loadHeliosTraces()">刷新追踪 Span</button>
+            </div>
+            <pre id="helios-traces-list" class="helios-code-box">点击「刷新追踪 Span」查看近期调用链...</pre>
+          </div>
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>CodingBench 回归基线评测</h3>
+                <span class="helios-hint" id="helios-eval-meta">4 题自包含工程基准与 SQLite 历史回归对比</span>
+              </div>
+              <div>
+                <button class="chip-btn" onclick="loadHeliosEvalHistory()">刷新历史</button>
+                <button class="primary-btn" onclick="runHeliosOfflineEval()">运行离线基准</button>
+              </div>
+            </div>
+            <pre id="helios-eval-list" class="helios-code-box">点击「运行离线基准」执行 CodingBench 并记录基线...</pre>
           </div>
         </div>
       </div>

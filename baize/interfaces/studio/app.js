@@ -1733,6 +1733,7 @@ function switchHeliosPane(paneId) {
   if (paneId === 'helios-worktrees') loadHeliosWorktrees();
   if (paneId === 'helios-rag') loadHeliosBoundedMemory();
   if (paneId === 'helios-tree') loadHeliosSessionTree();
+  if (paneId === 'helios-gov') { loadHeliosAudit(); loadHeliosTraces(); loadHeliosEvalHistory(); }
 }
 
 function refreshHeliosAll() {
@@ -1743,6 +1744,9 @@ function refreshHeliosAll() {
   loadHeliosWorktrees();
   loadHeliosBoundedMemory();
   loadHeliosSessionTree();
+  loadHeliosAudit();
+  loadHeliosTraces();
+  loadHeliosEvalHistory();
 }
 
 async function loadHeliosBudget() {
@@ -2088,4 +2092,71 @@ async function submitHeliosRewind() {
     ? `<span class="helios-status-ok">已回溯并生成新分支：${escapeHtml(d.new_session_id || d.session_id || '')}</span>`
     : `<span class="helios-status-err">回溯失败：${escapeHtml(d.error || res.statusText)}</span>`;
   if (res.ok) loadHeliosSessionTree();
+}
+
+
+async function loadHeliosAudit() {
+  try {
+    const res = await fetch('/api/audit?limit=25', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    if (!res.ok) return;
+    const integ = d.integrity || {};
+    const stEl = document.getElementById('helios-audit-status');
+    if (stEl) stEl.textContent = integ.ok
+      ? `哈希链完整 (已校验 ${integ.checked || 0} 条 · head=${(integ.head_hash || '').slice(0, 12)})`
+      : `警告：检测到篡改 (broken_at=${integ.broken_at} · ${integ.reason || ''})`;
+    const listEl = document.getElementById('helios-audit-list');
+    if (listEl) {
+      const rows = (d.entries || []).map(e => `#${e.seq} [${e.event_type}] ${e.actor} -> ${e.target} (${e.outcome}) ${e.entry_hash.slice(0, 10)}`);
+      listEl.textContent = rows.length ? rows.join('\n') : '暂无审计记录';
+    }
+  } catch (e) {}
+}
+
+async function loadHeliosTraces() {
+  try {
+    const res = await fetch('/api/traces?limit=25', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    if (!res.ok) return;
+    const meta = document.getElementById('helios-traces-meta');
+    if (meta) meta.textContent = `近期 ${d.total || 0} 条 Span · OTLP 导出: ${d.otlp_configured ? '已配置' : '本地 JSONL'}`;
+    const el = document.getElementById('helios-traces-list');
+    if (el) {
+      const rows = (d.traces || []).map(s => `${(s.trace_id || '').slice(0, 12)}/${(s.span_id || '').slice(0, 8)} [${s.status}] ${s.name} ${s.duration_ms}ms`);
+      el.textContent = rows.length ? rows.join('\n') : '暂无追踪 Span';
+    }
+  } catch (e) {}
+}
+
+async function loadHeliosEvalHistory() {
+  try {
+    const res = await fetch('/api/eval/history', { headers: heliosAuthHeaders() });
+    const d = await res.json();
+    if (!res.ok) return;
+    const el = document.getElementById('helios-eval-list');
+    if (el) {
+      const rows = (d.runs || []).map(r => `${r.run_id} [${r.suite}/${r.mode}] ${r.passed_tasks}/${r.total_tasks} (${(r.pass_rate * 100).toFixed(1)}%) avg=${r.avg_duration_ms}ms`);
+      el.textContent = rows.length ? rows.join('\n') : '暂无历史评测记录，点击「运行离线基准」开始';
+    }
+  } catch (e) {}
+}
+
+async function runHeliosOfflineEval() {
+  const el = document.getElementById('helios-eval-list');
+  if (el) el.textContent = '正在运行 CodingBench 离线基准...';
+  try {
+    const res = await fetch('/api/eval/run', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, heliosAuthHeaders()),
+      body: JSON.stringify({ mode: 'offline' }),
+    });
+    const d = await res.json();
+    if (!res.ok) {
+      if (el) el.textContent = '运行失败: ' + (d.error || res.status);
+      return;
+    }
+    await loadHeliosEvalHistory();
+  } catch (e) {
+    if (el) el.textContent = '请求异常: ' + e;
+  }
 }

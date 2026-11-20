@@ -45,6 +45,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "BudgetExceededError": (".cost_ledger", "BudgetExceededError"),
     "get_cost_ledger": (".cost_ledger", "get_cost_ledger"),
     "encode_image_part": (".llm", "encode_image_part"),
+    "ProviderCircuitBreaker": (".llm", "ProviderCircuitBreaker"),
+    "get_circuit_breaker": (".llm", "get_circuit_breaker"),
 }
 
 __all__ = list(_EXPORTS)

@@ -329,6 +329,47 @@ def _check_blast_radius(file_path: Path, old_code: str, new_code: str) -> str:
     return ""
 
 
+def _auto_diagnose_after_edit(file_path: Path) -> str:
+    """V44: Fast post-edit syntax/diagnostic feedback loop for self-healing."""
+    if file_path.suffix.lower() not in (".py", ".ts", ".tsx", ".js", ".jsx", ".json"):
+        return ""
+    try:
+        cfg = load_config()
+        if str(cfg.get("BAIZE_AUTO_DIAGNOSE_ON_EDIT", "1")).strip() == "0":
+            return ""
+        from ..codebase.diagnostics import diagnose_file
+        rep = diagnose_file(str(file_path), workspace=str(_workspace_root(cfg)), use_lsp=False)
+        if not rep.ok and rep.diagnostics:
+            summary = "; ".join(
+                f"L{iss.line}:{iss.message}" for iss in rep.diagnostics[:4]
+            )
+            return f"\n[auto-diagnose] {len(rep.diagnostics)} error(s): {summary}"
+    except Exception:
+        pass
+    return ""
+
+
+def _fuzzy_whitespace_replace(current: str, old_content: str, new_content: str) -> tuple[str, bool]:
+    """Fallback matcher ignoring leading/trailing whitespace drift per line when unique."""
+    old_lines = [ln.strip() for ln in old_content.splitlines()]
+    if not old_lines or not any(old_lines):
+        return current, False
+    cur_lines = current.splitlines(keepends=True)
+    n = len(old_lines)
+    matches: list[int] = []
+    for i in range(0, len(cur_lines) - n + 1):
+        window = [cur_lines[i + j].strip() for j in range(n)]
+        if window == old_lines:
+            matches.append(i)
+    if len(matches) != 1:
+        return current, False
+    start = matches[0]
+    nl = "\r\n" if "\r\n" in current else "\n"
+    rep_lines = [ln + nl for ln in new_content.splitlines()]
+    updated_lines = cur_lines[:start] + rep_lines + cur_lines[start + n:]
+    return "".join(updated_lines), True
+
+
 def _tool_write_file(path: str, content: str) -> str:
     p = _resolve_in_workspace(path)
     old_content = ""
@@ -337,7 +378,8 @@ def _tool_write_file(path: str, content: str) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     advisory = _check_blast_radius(p, old_content, content) if old_content else ""
-    return f"wrote {len(content)} chars -> {p}{advisory}"
+    diag = _auto_diagnose_after_edit(p)
+    return f"wrote {len(content)} chars -> {p}{advisory}{diag}"
 
 
 def _tool_list_dir(path: str = ".") -> str:
@@ -510,6 +552,15 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
                     return (f"patched {path} (applied with newline normalization): "
                             f"{lines_before}→{lines_after} lines "
                             f"({len(new_content) - len(old_content):+d} chars)")
+            fuzzy_updated, fuzzy_ok = _fuzzy_whitespace_replace(current, old_content, new_content)
+            if fuzzy_ok:
+                p.write_text(fuzzy_updated, encoding="utf-8")
+                lines_before = current.count("\n") + 1
+                lines_after = fuzzy_updated.count("\n") + 1
+                diag = _auto_diagnose_after_edit(p)
+                return (f"patched {path} (applied with fuzzy whitespace match): "
+                        f"{lines_before}→{lines_after} lines "
+                        f"({len(new_content) - len(old_content):+d} chars){diag}")
             # Provide helpful context: show first 3 lines of old_content
             preview = old_content[:120].replace("\n", "↵")
             return (f"ERROR: patch_file replace failed — old_content not found "
@@ -525,9 +576,10 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
         lines_before = current.count("\n") + 1
         lines_after = updated.count("\n") + 1
         advisory = _check_blast_radius(p, current, updated)
+        diag = _auto_diagnose_after_edit(p)
         return (f"patched {path}: {lines_before}→{lines_after} lines "
                 f"({len(new_content) - len(old_content):+d} chars)"
-                f"{advisory}")
+                f"{advisory}{diag}")
 
     elif mode == "diff":
         # Apply unified diff hunks cleanly onto current_lines without dropping

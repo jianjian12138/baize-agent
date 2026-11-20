@@ -172,6 +172,20 @@ _DEFAULTS = {
     "BAIZE_CDP_BINARY": "",                  # cdp_browser.py: optional Chrome/Chromium/Edge binary path
     "BAIZE_CDP_TIMEOUT": "15",               # cdp_browser.py: CDP command timeout seconds
     "BAIZE_MULTIMODAL_MAX_BYTES": "4194304", # llm.py: max inline image attachment size (4 MB)
+    # --- V43.0.0 Aegis (Production Security, Approval Bridge, Multi-Tenant & Resilience) ---
+    "BAIZE_APPROVAL_BRIDGE": "",             # agent.py: "queue" bridges Agent approvals to ApprovalQueue
+    "BAIZE_APPROVAL_TIMEOUT": "300",         # approval.py: seconds before pending approval fails closed
+    "BAIZE_PROMPT_INJECTION_GUARD": "1",     # dlp.py: tag untrusted tool outputs matching injection rules
+    "BAIZE_EGRESS_ALLOWLIST": "",            # dlp.py: comma-separated outbound host allowlist (empty=unrestricted)
+    "BAIZE_TENANT_TOKENS": "",               # security.py: multi-tenant tokens (JSON or tenant:token:role list)
+    "BAIZE_CB_FAILURE_THRESHOLD": "3",       # llm.py: provider circuit breaker consecutive failures to open
+    "BAIZE_CB_COOLDOWN_S": "30",             # llm.py: provider circuit breaker open cooldown seconds
+    "BAIZE_SHUTDOWN_GRACE_S": "10",          # serve.py: graceful shutdown drain timeout seconds
+    # --- V44.0.0 Atlas (Git-Delta RAG, Auto-Diagnose Edit & OpenTelemetry OTLP) ---
+    "BAIZE_HYBRID_MAX_FILES": "5000",        # hybrid_index.py: max workspace files indexed per scan
+    "BAIZE_AUTO_DIAGNOSE_ON_EDIT": "1",      # tools.py: run fast AST diagnostics after write_file/patch_file
+    "BAIZE_OTLP_ENDPOINT": "",               # telemetry.py: optional OTLP/HTTP JSON trace endpoint
+    "BAIZE_OTLP_HEADERS": "",                # telemetry.py: optional comma-separated OTLP headers (k=v)
 }
 
 
@@ -331,6 +345,19 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_ORCHESTRATOR_WORKERS": ("int_range", (1, 64)),
     "BAIZE_TOOL_RETRY_MAX": ("int_range", (0, 10)),
     "BAIZE_YOLO_MODE": ("bool", None),
+    # --- V43.0.0 Aegis & V44.0.0 Atlas ---
+    "BAIZE_APPROVAL_BRIDGE": ("enum", ("", "queue", "terminal")),
+    "BAIZE_APPROVAL_TIMEOUT": ("int_range", (1, 86400)),
+    "BAIZE_PROMPT_INJECTION_GUARD": ("bool", None),
+    "BAIZE_EGRESS_ALLOWLIST": ("any", None),
+    "BAIZE_TENANT_TOKENS": ("any", None),
+    "BAIZE_CB_FAILURE_THRESHOLD": ("int_range", (1, 50)),
+    "BAIZE_CB_COOLDOWN_S": ("float_range", (0.01, 3600.0)),
+    "BAIZE_SHUTDOWN_GRACE_S": ("int_range", (0, 300)),
+    "BAIZE_HYBRID_MAX_FILES": ("int_range", (10, 200000)),
+    "BAIZE_AUTO_DIAGNOSE_ON_EDIT": ("bool", None),
+    "BAIZE_OTLP_ENDPOINT": ("any", None),
+    "BAIZE_OTLP_HEADERS": ("any", None),
 }
 
 

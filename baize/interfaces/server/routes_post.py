@@ -638,9 +638,24 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         with ENV_WRITE_LOCK:
             for k, v in updated.items():
                 os.environ[k] = v
+        persisted = False
+        try:
+            from ...governance.dlp import RuntimeConfigStore, get_audit_ledger
+            RuntimeConfigStore().save_overrides(updated)
+            persisted = True
+            get_audit_ledger().append(
+                "config_updated",
+                actor=getattr(getattr(handler, "tenant_context", None), "tenant_id", "api"),
+                target="budget_config",
+                outcome="ok",
+                details=updated,
+            )
+        except Exception:
+            pass
         cfg_now = load_config()
         return handler._send(200, {
             "ok": True,
+            "persisted": persisted,
             "updated": updated,
             "config": {
                 "max_session_usd": float(cfg_now.get("BAIZE_MAX_SESSION_USD", "0") or 0),
@@ -681,7 +696,7 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         index_report = None
         if reindex or st.get("total_docs", 0) == 0:
             ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
-            index_report = idx.index_workspace(ws)
+            index_report = idx.index_git_delta(ws)
         hits = idx.search(query, mode=mode, limit=limit) if query else []
         return handler._send(200, {
             "query": query,
@@ -691,5 +706,14 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
             "stats": idx.stats(),
             "hits": [h.to_dict() for h in hits],
         })
+
+    if req_path == "/api/eval/run":
+        from ...governance.eval_harness import run_coding_benchmark
+        mode = str(data.get("mode") or "offline").strip().lower()
+        if mode not in ("offline", "oracle", "live"):
+            return handler._send(400, {"error": f"invalid eval mode: {mode}"})
+        cfg = load_config()
+        rep = run_coding_benchmark(mode=mode, cfg=cfg, persist_history=True)
+        return handler._send(200, rep)
 
     return handler._send(404, {"error": "not found"})

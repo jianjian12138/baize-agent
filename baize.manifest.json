@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "42.0.0",
+  "version": "44.0.0",
   "phases": [
     {
       "id": "V68",
@@ -570,6 +570,42 @@
         "tests/knowledge/test_v42_hybrid_and_shared_memory.py",
         "tests/core/test_v42_cost_gemini_multimodal.py",
         "tests/interfaces/test_v42_studio_routes.py"
+      ]
+    },
+    {
+      "id": "V139",
+      "name": "V43.0.0 Aegis 工业级生产加固（SQLite WAL 持久化审批队列与 Agent 阻塞审批桥、全链路 Secret DLP 脱敏与 Prompt Injection 防护、出站 Egress Allowlist、SHA-256 哈希链防篡改审计账本、多租户隔离令牌、K8s /livez /readyz 探针与 SIGTERM 优雅停机、Provider 熔断器与原生 Gemini SSE 流式故障转移、Worktree 崩溃孤儿恢复与安全配置持久化）",
+      "status": "done",
+      "evidence": [
+        "baize/governance/dlp.py",
+        "baize/interfaces/approval.py",
+        "baize/interfaces/server/security.py",
+        "baize/interfaces/serve.py",
+        "baize/core/llm.py",
+        "baize/ext/providers/gemini.py",
+        "baize/execution/worktree.py",
+        "baize/core/agent.py",
+        "tests/governance/test_v43_aegis_security.py",
+        "tests/interfaces/test_v43_v44_routes_and_bridge.py"
+      ]
+    },
+    {
+      "id": "V140",
+      "name": "V44.0.0 Atlas 规模化演进、真实代码评测与 OpenTelemetry 可观测（W3C TraceContext 分布式追踪与零依赖 OTLP/HTTP JSON 导出器、大仓库 git ls-files 增量 RAG 与删文件清理、编辑后自动 AST 诊断自愈与缩进容错模糊补丁、4 题自包含 CodingBench 离线/在线基准与 SQLite 回归基线追踪、Studio 审计/追踪/评测面板及 CLI/REPL 治理指令）",
+      "status": "done",
+      "evidence": [
+        "baize/governance/telemetry.py",
+        "baize/governance/eval_harness.py",
+        "baize/knowledge/hybrid_index.py",
+        "baize/execution/tools.py",
+        "baize/interfaces/server/routes_get.py",
+        "baize/interfaces/server/routes_post.py",
+        "baize/interfaces/studio/index.html",
+        "baize/interfaces/studio/app.js",
+        "baize/interfaces/cli.py",
+        "baize/interfaces/repl.py",
+        "tests/governance/test_v44_atlas_telemetry_eval.py",
+        "tests/interfaces/test_v43_v44_routes_and_bridge.py"
       ]
     }
   ]

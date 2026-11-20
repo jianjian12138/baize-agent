@@ -51,20 +51,91 @@ def emit_cors(handler) -> bool:
     return True
 
 
+from dataclasses import dataclass
+import json as _json
+
+
+@dataclass(frozen=True)
+class TenantContext:
+    tenant_id: str
+    role: str = "admin"
+    workspace: str = "."
+    max_usd: float = 0.0
+
+
+def _parse_tenant_registry(raw: str) -> list[tuple[str, TenantContext]]:
+    """Parse BAIZE_TENANT_TOKENS from JSON or comma/semicolon-delimited ``tenant:token:role:workspace``."""
+    txt = (raw or "").strip()
+    if not txt:
+        return []
+    entries: list[tuple[str, TenantContext]] = []
+    if txt.startswith(("{", "[")):
+        try:
+            obj = _json.loads(txt)
+            items = obj if isinstance(obj, list) else [
+                {"tenant_id": k, **(v if isinstance(v, dict) else {"token": str(v)})}
+                for k, v in obj.items()
+            ]
+            for it in items:
+                tok = str(it.get("token") or "").strip()
+                tid = str(it.get("tenant_id") or it.get("id") or "").strip()
+                if tok and tid:
+                    entries.append((tok, TenantContext(
+                        tenant_id=tid,
+                        role=str(it.get("role") or "member"),
+                        workspace=str(it.get("workspace") or "."),
+                        max_usd=float(it.get("max_usd") or 0.0),
+                    )))
+            return entries
+        except Exception:
+            return []
+    for chunk in re.split(r"[;,]", txt):
+        parts = [p.strip() for p in chunk.split(":")]
+        if len(parts) >= 2 and parts[0] and parts[1]:
+            entries.append((parts[1], TenantContext(
+                tenant_id=parts[0],
+                role=parts[2] if len(parts) >= 3 and parts[2] else "member",
+                workspace=parts[3] if len(parts) >= 4 and parts[3] else ".",
+            )))
+    return entries
+
+
+def resolve_tenant(handler, cfg: dict | None = None) -> TenantContext | None:
+    """Match Bearer / query token against BAIZE_TENANT_TOKENS or BAIZE_AUTH_TOKEN."""
+    cfg = cfg if cfg is not None else load_config()
+    auth = handler.headers.get("Authorization", "")
+    supplied = auth[7:].strip() if auth.startswith("Bearer ") else ""
+    if not supplied:
+        supplied = (parse_qs(urlparse(handler.path).query).get("token") or [""])[0]
+    if supplied:
+        for tok, ctx in _parse_tenant_registry(cfg.get("BAIZE_TENANT_TOKENS", "")):
+            if hmac.compare_digest(supplied, tok):
+                return ctx
+        global_tok = (cfg.get("BAIZE_AUTH_TOKEN") or "").strip()
+        if global_tok and hmac.compare_digest(supplied, global_tok):
+            return TenantContext(tenant_id="default", role="admin", workspace=cfg.get("BAIZE_WORKSPACE_DIR", "."))
+    return None
+
+
 def is_authorized(handler, *, require_token: bool = False) -> bool:
-    """Decide whether this request may proceed (FAIL-CLOSED)."""
+    """Decide whether this request may proceed (FAIL-CLOSED, multi-tenant aware)."""
     cfg = load_config()
+    tenant = resolve_tenant(handler, cfg)
+    if tenant is not None:
+        handler.tenant_context = tenant
+        return True
     token = (cfg.get("BAIZE_AUTH_TOKEN") or "").strip()
-    if not token:
+    tenants = _parse_tenant_registry(cfg.get("BAIZE_TENANT_TOKENS", ""))
+    if not token and not tenants:
         if require_token:
             return False
-        return cfg.get("BAIZE_ALLOW_NO_AUTH", "0") == "1"
-    auth = handler.headers.get("Authorization", "")
-    if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), token):
-        return True
-    supplied = (parse_qs(urlparse(handler.path).query).get("token") or [""])[0]
-    if supplied and hmac.compare_digest(supplied, token):
-        return True
+        if cfg.get("BAIZE_ALLOW_NO_AUTH", "0") == "1":
+            handler.tenant_context = TenantContext(
+                tenant_id="local",
+                role="admin",
+                workspace=cfg.get("BAIZE_WORKSPACE_DIR", "."),
+            )
+            return True
     return False
 
 
