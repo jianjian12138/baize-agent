@@ -748,6 +748,7 @@ __STYLE_BLOCK__
           <button class="helios-tab-btn" data-helios-pane="helios-tree" onclick="switchHeliosPane('helios-tree')">会话树与回溯</button>
           <button class="helios-tab-btn" data-helios-pane="helios-gov" onclick="switchHeliosPane('helios-gov')">审计、追踪与评测</button>
           <button class="helios-tab-btn" data-helios-pane="helios-v46" onclick="switchHeliosPane('helios-v46')">底座、规格与视觉自检</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-v48" onclick="switchHeliosPane('helios-v48')">全端验证与容器栈</button>
         </nav>
 
         <!-- Sub-view 1: Cost Ledger & IM Channels -->
@@ -1099,6 +1100,95 @@ __STYLE_BLOCK__
               </div>
             </div>
             <pre id="helios-mcp-out" class="helios-code-box">点击「加载模板库」或「运行健康自检」查看 8 类预置 MCP 服务状态...</pre>
+          </div>
+        </div>
+
+        <!-- Sub-view 8 (V47/V48): Interactive Browser E2E, Mobile Simulators, Compose Stack & Cross-Platform Sandbox -->
+        <div id="helios-v48" class="helios-pane">
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>交互式 CDP 浏览器 E2E 会话控制 (V47 Horizon)</h3>
+                <span class="helios-hint">有状态无头浏览器池：支持 navigate / fill / click / wait / eval_assert / snapshot / screenshot / close</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosBrowserSessions()">刷新会话池</button>
+                <button class="chip-btn" onclick="runHeliosBrowserAction('snapshot')">抓取快照</button>
+                <button class="chip-btn" onclick="runHeliosBrowserAction('close')">关闭会话</button>
+              </div>
+            </div>
+            <div class="helios-form-row">
+              <input id="helios-browser-sid" type="text" value="default" placeholder="session_id (默认 default)" style="max-width:140px;" />
+              <select id="helios-browser-act" style="max-width:150px;">
+                <option value="navigate">navigate</option>
+                <option value="click">click</option>
+                <option value="fill">fill</option>
+                <option value="wait">wait</option>
+                <option value="eval_assert">eval_assert</option>
+                <option value="snapshot">snapshot</option>
+                <option value="screenshot">screenshot</option>
+                <option value="close">close</option>
+              </select>
+              <input id="helios-browser-url" type="text" placeholder="URL / CSS Selector / JS 表达式" />
+              <input id="helios-browser-val" type="text" placeholder="填充值 (fill 时可选)" style="max-width:180px;" />
+              <button class="chip-btn" onclick="runHeliosBrowserAction()">执行 E2E 动作</button>
+            </div>
+            <pre id="helios-browser-out" class="helios-code-box">点击「刷新会话池」或执行交互式浏览器动作...</pre>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>移动端真机 / 模拟器桥接 (ADB &amp; iOS Simctl)</h3>
+                <span class="helios-hint">自动探测 Android ADB 与 iOS Simulator；无模拟器时诚实降级为项目单测 + Web/PWA 预览校验</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosMobileDevices()">探测设备</button>
+                <button class="chip-btn" onclick="runHeliosMobileVerify()">运行移动端校验</button>
+              </div>
+            </div>
+            <div class="helios-form-row">
+              <input id="helios-mobile-device" type="text" placeholder="设备 ID (留空自动选择)" style="max-width:200px;" />
+              <input id="helios-mobile-fallback" type="text" placeholder="降级 Web/PWA 预览 URL (可选)" />
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input id="helios-mobile-vision" type="checkbox" /> 视觉评审
+              </label>
+            </div>
+            <pre id="helios-mobile-out" class="helios-code-box">点击「探测设备」或「运行移动端校验」查看 ADB / iOS Simctl 状态...</pre>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>多服务 Docker Compose 测试环境编排器 (V48 Apex)</h3>
+                <span class="helios-hint">按工作区隔离 project-name，支持一键拉起、TCP 端口就绪探测、日志采样与彻底清理</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosComposeStatus()">查询状态</button>
+                <button class="chip-btn" onclick="runHeliosCompose('up')">启动容器栈</button>
+                <button class="chip-btn" onclick="runHeliosCompose('logs')">查看日志</button>
+                <button class="chip-btn" onclick="runHeliosCompose('down')">停止清理</button>
+              </div>
+            </div>
+            <div class="helios-form-row">
+              <input id="helios-compose-file" type="text" placeholder="Compose 文件路径 (留空自动发现)" />
+              <input id="helios-compose-ports" type="text" placeholder="等待就绪 TCP 端口 (如 5432,6379)" style="max-width:220px;" />
+              <input id="helios-compose-service" type="text" placeholder="日志服务名 (可选)" style="max-width:160px;" />
+            </div>
+            <pre id="helios-compose-out" class="helios-code-box">点击「查询状态」检查本机 Docker Compose 与当前工作区编排文件...</pre>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>跨平台轻沙盒与零依赖多语言词法作用域态势</h3>
+                <span class="helios-hint">诚实披露 Linux Landlock / macOS Seatbelt / Windows Job Object 进程与文件系统隔离边界</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosV48Posture()">刷新跨平台态势</button>
+              </div>
+            </div>
+            <pre id="helios-v48-posture-out" class="helios-code-box">点击「刷新跨平台态势」查看当前宿主机沙盒机制与项目语言指纹...</pre>
           </div>
         </div>
       </div>

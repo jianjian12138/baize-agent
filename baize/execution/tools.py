@@ -1205,6 +1205,117 @@ def _tool_verify_ui(url: str, viewports: str = "", check_visual: bool = False) -
     return rep.format_for_agent() + "\n" + json.dumps(rep.to_dict(), ensure_ascii=False, indent=2)[:2500]
 
 
+
+def _tool_browser_action(
+    action: str,
+    session_id: str = "default",
+    url: str = "",
+    selector: str = "",
+    value: str = "",
+    expression: str = "",
+    timeout: int = 15,
+) -> str:
+    """Execute stateful interactive CDP browser E2E actions (navigate/click/fill/wait/eval_assert/screenshot/snapshot/close)."""
+    cfg = load_config()
+    from .cdp_browser import get_browser_pool
+    pool = get_browser_pool()
+    res = pool.run_action(
+        action=str(action).strip().lower(),
+        session_id=str(session_id or "default").strip() or "default",
+        url=str(url or ""),
+        selector=str(selector or ""),
+        value=str(value or ""),
+        expression=str(expression or ""),
+        timeout=max(1, min(int(timeout or 15), 120)),
+        cfg=cfg,
+    )
+    return json.dumps(res, ensure_ascii=False, indent=2)[:4000]
+
+
+def _tool_mobile_verify(
+    action: str = "verify",
+    device_id: str = "",
+    platform: str = "",
+    app_id: str = "",
+    x: int = 0,
+    y: int = 0,
+    x2: int = 0,
+    y2: int = 0,
+    text: str = "",
+    fallback_web_url: str = "",
+    check_visual: bool = False,
+) -> str:
+    """Probe/drive native Android (ADB) or iOS (xcrun simctl) simulators, or run honest degraded mobile verify."""
+    cfg = load_config()
+    ws = _workspace_root(cfg)
+    act = str(action or "verify").strip().lower()
+    from .mobile_bridge import list_mobile_devices, mobile_action, verify_mobile_app
+    if act == "list_devices":
+        return json.dumps(list_mobile_devices(), ensure_ascii=False, indent=2)
+    if act in ("screenshot", "tap", "swipe", "input_text", "launch", "logs"):
+        res = mobile_action(
+            act,
+            device_id=str(device_id or ""),
+            platform_hint=str(platform or ""),
+            x=int(x or 0),
+            y=int(y or 0),
+            x2=int(x2 or 0),
+            y2=int(y2 or 0),
+            text=str(text or ""),
+            app_id=str(app_id or ""),
+            cfg=cfg,
+        )
+        return json.dumps(res, ensure_ascii=False, indent=2)[:4000]
+    fb_url = str(fallback_web_url or "").strip() or str(cfg.get("BAIZE_MOBILE_FALLBACK_WEB_URL", "") or "").strip()
+    rep = verify_mobile_app(
+        workspace=ws,
+        device_id=str(device_id or ""),
+        platform_hint=str(platform or ""),
+        app_id=str(app_id or ""),
+        fallback_web_url=fb_url,
+        check_visual=bool(check_visual),
+        cfg=cfg,
+    )
+    return rep.format_for_agent() + "\n" + json.dumps(rep.to_dict(), ensure_ascii=False, indent=2)[:2500]
+
+
+def _tool_compose_stack(
+    action: str = "status",
+    compose_file: str = "",
+    services: str = "",
+    wait_ports: str = "",
+    service: str = "",
+    tail: int = 100,
+    volumes: bool = False,
+    timeout: int = 60,
+) -> str:
+    """Orchestrate isolated multi-service Docker Compose integration test environments (up/status/logs/down)."""
+    cfg = load_config()
+    ws = _workspace_root(cfg)
+    act = str(action or "status").strip().lower()
+    cf = str(compose_file or "").strip() or str(cfg.get("BAIZE_COMPOSE_FILE", "") or "").strip()
+    eff_timeout = max(5, min(int(timeout or cfg.get("BAIZE_COMPOSE_TIMEOUT", "60") or 60), 600))
+    from .compose_stack import get_compose_manager
+    mgr = get_compose_manager()
+    if act == "up":
+        svc_list = [s.strip() for s in str(services or "").split(",") if s.strip()] or None
+        port_list: list[int] = []
+        for tok in str(wait_ports or "").split(","):
+            tok = tok.strip()
+            if tok.isdigit():
+                port_list.append(int(tok))
+        res = mgr.up(ws, compose_file=cf, services=svc_list, wait_ports=port_list or None, timeout=eff_timeout, cfg=cfg)
+    elif act == "down":
+        res = mgr.down(ws, compose_file=cf, volumes=bool(volumes), cfg=cfg)
+    elif act == "logs":
+        res = mgr.logs(ws, service=str(service or ""), tail=max(1, min(int(tail or 100), 1000)), compose_file=cf, cfg=cfg)
+    elif act == "status":
+        res = mgr.status(ws, compose_file=cf, cfg=cfg)
+    else:
+        return json.dumps({"ok": False, "error": f"invalid compose action: {act}. Expected up|status|logs|down."})
+    return json.dumps(res, ensure_ascii=False, indent=2)[:4000]
+
+
 def default_registry() -> ToolRegistry:
     global _DEFAULT_REGISTRY
     if _DEFAULT_REGISTRY is None:
@@ -1372,6 +1483,45 @@ def default_registry() -> ToolRegistry:
                         viewports={"type": "string", "_opt": True},
                         check_visual={"type": "boolean", "_opt": True}),
                      _tool_verify_ui)
+        reg.register("browser_action",
+                     "Drive a persistent stateful CDP headless browser session for interactive E2E flows: "
+                     "navigate, click, fill, wait, eval_assert, screenshot, snapshot, close.",
+                     _s(action={"type": "string"},
+                        session_id={"type": "string", "_opt": True},
+                        url={"type": "string", "_opt": True},
+                        selector={"type": "string", "_opt": True},
+                        value={"type": "string", "_opt": True},
+                        expression={"type": "string", "_opt": True},
+                        timeout={"type": "integer", "_opt": True}),
+                     _tool_browser_action)
+        reg.register("mobile_verify",
+                     "Probe or drive native Android (ADB) and iOS (xcrun simctl) simulators "
+                     "(verify/list_devices/screenshot/tap/swipe/input_text/launch/logs), "
+                     "with honest degradation to unit tests + Web/PWA preview when simulators are absent.",
+                     _s(action={"type": "string", "_opt": True},
+                        device_id={"type": "string", "_opt": True},
+                        platform={"type": "string", "_opt": True},
+                        app_id={"type": "string", "_opt": True},
+                        x={"type": "integer", "_opt": True},
+                        y={"type": "integer", "_opt": True},
+                        x2={"type": "integer", "_opt": True},
+                        y2={"type": "integer", "_opt": True},
+                        text={"type": "string", "_opt": True},
+                        fallback_web_url={"type": "string", "_opt": True},
+                        check_visual={"type": "boolean", "_opt": True}),
+                     _tool_mobile_verify)
+        reg.register("compose_stack",
+                     "Orchestrate isolated multi-service Docker Compose test stacks (up/status/logs/down) "
+                     "with project-name isolation and TCP port readiness polling.",
+                     _s(action={"type": "string", "_opt": True},
+                        compose_file={"type": "string", "_opt": True},
+                        services={"type": "string", "_opt": True},
+                        wait_ports={"type": "string", "_opt": True},
+                        service={"type": "string", "_opt": True},
+                        tail={"type": "integer", "_opt": True},
+                        volumes={"type": "boolean", "_opt": True},
+                        timeout={"type": "integer", "_opt": True}),
+                     _tool_compose_stack)
         # V33-A2: fetch_url - opt-in HTTP retrieval (BAIZE_ALLOW_FETCH_URL=1)
         cfg = load_config()
         if cfg.get("BAIZE_ALLOW_FETCH_URL", "0") == "1":

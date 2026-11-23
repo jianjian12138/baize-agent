@@ -193,6 +193,12 @@ _DEFAULTS = {
     "BAIZE_SPEC_MODE": "0",                  # spec_workflow.py: default enable spec-first read-only hard-gate
     "BAIZE_DOCKER_SESSION_POOL": "1",        # docker_sandbox.py: reuse warm per-session Docker container via exec
     "BAIZE_VISUAL_VERIFY_VIEWPORTS": "desktop,mobile",  # visual_verify.py: default viewports for verify_ui
+    # --- V47.0.0 Horizon & V48.0.0 Apex (Interactive CDP E2E, Mobile Bridge, Compose Stack & Win Job Sandbox) ---
+    "BAIZE_BROWSER_IDLE_TIMEOUT": "300",     # cdp_browser.py: idle eviction seconds for stateful browser sessions
+    "BAIZE_MOBILE_FALLBACK_WEB_URL": "",     # mobile_bridge.py: optional fallback Web/PWA URL when simulator absent
+    "BAIZE_COMPOSE_FILE": "",                # compose_stack.py: optional explicit docker-compose file path
+    "BAIZE_COMPOSE_TIMEOUT": "60",           # compose_stack.py: default compose up/port-wait timeout seconds
+    "BAIZE_WIN_SANDBOX_RESTRICTED_TOKEN": "0",  # sandbox.py: 1 = also drop Win32 privileges via CreateRestrictedToken
 }
 
 
@@ -372,6 +378,12 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_SPEC_MODE": ("bool", None),
     "BAIZE_DOCKER_SESSION_POOL": ("bool", None),
     "BAIZE_VISUAL_VERIFY_VIEWPORTS": ("any", None),
+    # --- V47.0.0 Horizon & V48.0.0 Apex ---
+    "BAIZE_BROWSER_IDLE_TIMEOUT": ("int_range", (10, 3600)),
+    "BAIZE_MOBILE_FALLBACK_WEB_URL": ("any", None),
+    "BAIZE_COMPOSE_FILE": ("any", None),
+    "BAIZE_COMPOSE_TIMEOUT": ("int_range", (5, 600)),
+    "BAIZE_WIN_SANDBOX_RESTRICTED_TOKEN": ("bool", None),
 }
 
 

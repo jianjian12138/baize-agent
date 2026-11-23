@@ -369,6 +369,16 @@ def serve(host: str | None = None, port: int | None = None) -> None:
         except Exception:
             pass
         try:
+            from ..execution.cdp_browser import get_browser_pool
+            get_browser_pool().close_all()
+        except Exception:
+            pass
+        try:
+            from ..execution.compose_stack import get_compose_manager
+            get_compose_manager().down_all()
+        except Exception:
+            pass
+        try:
             from ..governance.telemetry import get_tracer
             get_tracer(cfg).flush_otlp(timeout=2.0)
         except Exception:

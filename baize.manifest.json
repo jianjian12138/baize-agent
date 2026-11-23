@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "46.0.0",
+  "version": "48.0.0",
   "phases": [
     {
       "id": "V68",
@@ -642,6 +642,38 @@
         "baize/interfaces/cli.py",
         "baize/interfaces/repl.py",
         "tests/orchestration/test_v46_spec_visual_mcp_and_skills.py"
+      ]
+    },
+    {
+      "id": "V143",
+      "name": "V47.0.0 Horizon 交互式 CDP 浏览器 E2E、移动端模拟器桥接与零依赖多语言词法作用域解析器（Stateful BrowserSessionPool 支持 navigate/click/fill/wait/eval_assert/screenshot/snapshot/close 与出口白名单、Android ADB 与 iOS xcrun simctl 桥接及缺失时诚实降级单测+Web预览、纯标准库注释与字符串剥离状态机+花括号作用域栈+无幽灵调用链+跨语言文件导入图）",
+      "status": "done",
+      "evidence": [
+        "baize/execution/cdp_browser.py",
+        "baize/execution/mobile_bridge.py",
+        "baize/codebase/symbol_graph.py",
+        "baize/execution/tools.py",
+        "tests/execution/test_v47_browser_e2e_and_mobile_bridge.py",
+        "tests/codebase/test_v47_polyglot_lexical_scope.py"
+      ]
+    },
+    {
+      "id": "V144",
+      "name": "V48.0.0 Apex Windows 原生 Job Object 轻沙盒、多服务 Docker Compose 测试环境编排器与全端控制台（ctypes Win32 Job Object 进程树/内存/并发数上限与可选 CreateRestrictedToken 及进程/文件系统隔离诚实披露、按工作区隔离 project-name 的 Docker Compose 编排与 TCP 端口就绪轮询、Studio 第 8 Helios 标签页与 6 条 REST API、CLI browser/mobile/compose 子命令与 REPL 斜杠指令及优雅停机回收）",
+      "status": "done",
+      "evidence": [
+        "baize/execution/sandbox.py",
+        "baize/execution/compose_stack.py",
+        "baize/core/config.py",
+        "baize/execution/__init__.py",
+        "baize/interfaces/serve.py",
+        "baize/interfaces/server/routes_get.py",
+        "baize/interfaces/server/routes_post.py",
+        "baize/interfaces/studio/index.html",
+        "baize/interfaces/studio/app.js",
+        "baize/interfaces/cli.py",
+        "baize/interfaces/repl.py",
+        "tests/execution/test_v48_windows_sandbox_and_compose_stack.py"
       ]
     }
   ]

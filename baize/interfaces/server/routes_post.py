@@ -770,4 +770,93 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         rep = verify_ui(url, viewports=vps, check_visual=check_visual, cfg=cfg)
         return handler._send(200, rep.to_dict())
 
+    if req_path == "/api/browser/action":
+        action = str(data.get("action") or "").strip().lower()
+        if not action:
+            return handler._send(400, {"error": "missing required field: action"})
+        from ...execution.cdp_browser import get_browser_pool
+        cfg = load_config()
+        res = get_browser_pool().run_action(
+            action=action,
+            session_id=str(data.get("session_id") or "default").strip() or "default",
+            url=str(data.get("url") or ""),
+            selector=str(data.get("selector") or ""),
+            value=str(data.get("value") or ""),
+            expression=str(data.get("expression") or ""),
+            timeout=max(1, min(int(data.get("timeout") or 15), 120)),
+            cfg=cfg,
+        )
+        return handler._send(200, res)
+
+    if req_path == "/api/mobile/verify":
+        from ...execution.mobile_bridge import list_mobile_devices, mobile_action, verify_mobile_app
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        action = str(data.get("action") or "verify").strip().lower()
+        if action == "list_devices":
+            return handler._send(200, list_mobile_devices())
+        if action in ("screenshot", "tap", "swipe", "input_text", "launch", "logs"):
+            res = mobile_action(
+                action,
+                device_id=str(data.get("device_id") or ""),
+                platform_hint=str(data.get("platform") or ""),
+                x=int(data.get("x") or 0),
+                y=int(data.get("y") or 0),
+                x2=int(data.get("x2") or 0),
+                y2=int(data.get("y2") or 0),
+                text=str(data.get("text") or ""),
+                app_id=str(data.get("app_id") or ""),
+                cfg=cfg,
+            )
+            return handler._send(200, res)
+        fb_url = str(data.get("fallback_web_url") or "").strip() or str(cfg.get("BAIZE_MOBILE_FALLBACK_WEB_URL", "") or "").strip()
+        rep = verify_mobile_app(
+            workspace=ws,
+            device_id=str(data.get("device_id") or ""),
+            platform_hint=str(data.get("platform") or ""),
+            app_id=str(data.get("app_id") or ""),
+            fallback_web_url=fb_url,
+            check_visual=bool(data.get("check_visual", False)),
+            cfg=cfg,
+        )
+        return handler._send(200, rep.to_dict())
+
+    if req_path == "/api/compose":
+        from ...execution.compose_stack import get_compose_manager
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        action = str(data.get("action") or "status").strip().lower()
+        cf = str(data.get("compose_file") or "").strip() or str(cfg.get("BAIZE_COMPOSE_FILE", "") or "").strip()
+        timeout = max(5, min(int(data.get("timeout") or cfg.get("BAIZE_COMPOSE_TIMEOUT", "60") or 60), 600))
+        mgr = get_compose_manager()
+        if action == "up":
+            raw_svcs = data.get("services")
+            if isinstance(raw_svcs, str):
+                svcs = [s.strip() for s in raw_svcs.split(",") if s.strip()] or None
+            elif isinstance(raw_svcs, list):
+                svcs = [str(s).strip() for s in raw_svcs if str(s).strip()] or None
+            else:
+                svcs = None
+            raw_ports = data.get("wait_ports")
+            ports: list[int] = []
+            if isinstance(raw_ports, str):
+                ports = [int(p.strip()) for p in raw_ports.split(",") if p.strip().isdigit()]
+            elif isinstance(raw_ports, list):
+                ports = [int(p) for p in raw_ports if str(p).isdigit()]
+            res = mgr.up(ws, compose_file=cf, services=svcs, wait_ports=ports or None, timeout=timeout, cfg=cfg)
+        elif action == "down":
+            res = mgr.down(ws, compose_file=cf, volumes=bool(data.get("volumes", False)), cfg=cfg)
+        elif action == "logs":
+            res = mgr.logs(
+                ws,
+                service=str(data.get("service") or ""),
+                tail=max(1, min(int(data.get("tail") or 100), 1000)),
+                compose_file=cf,
+            )
+        elif action == "status":
+            res = mgr.status(ws, compose_file=cf)
+        else:
+            return handler._send(400, {"error": f"invalid compose action: {action}"})
+        return handler._send(200, res)
+
     return handler._send(404, {"error": "not found"})

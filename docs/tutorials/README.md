@@ -47,10 +47,10 @@
 | 测试 | **见下方"测试与覆盖率"** | `python -m pytest -q` |
 | 覆盖率 | **见下方"测试与覆盖率"** | `python scripts/gates/coverage_gate.py` |
 | 基准测试 | **15/15 通过** | `python -m baize bench` |
-| 内置工具 | **27 个**（开启 `BAIZE_ALLOW_FETCH_URL=1` 后 28 个） | `python -c "from baize.execution.tools import default_registry as d; print(len(d().names()))"` |
+| 内置工具 | **30 个**（开启 `BAIZE_ALLOW_FETCH_URL=1` 后 31 个） | `python -c "from baize.execution.tools import default_registry as d; print(len(d().names()))"` |
 | 内置技能 | **24 个** `SKILL.md` | `python -c "import glob; print(len(glob.glob('assets/**/SKILL.md', recursive=True)))"` |
-| 配置项 | **116 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 118 项） | `python -c "from baize.core.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
-| CLI 子命令 | **40 个** | `python -m baize --help` |
+| 配置项 | **121 个** `BAIZE_*` 键（另有 2 个非前缀键 `SKILL_LIBRARY_PATHS`、`TEST_COVERAGE_THRESHOLD`，共 123 项） | `python -c "from baize.core.config import _DEFAULTS as d; print(len([k for k in d if k.startswith('BAIZE_')]), len(d))"` |
+| CLI 子命令 | **43 个** | `python -m baize --help` |
 | 模型要求 | 任意 OpenAI 兼容端点（需自备） | —— |
 
 > **维护提示**：测试数、覆盖率、配置项数、子命令数都是会随提交漂移的数字。本仓库的 `scripts/gates/sync_truth.py` 会校验其中一部分；改动 `baize/config.py` 或 `baize/cli.py` 后请重新跑一遍上面的命令并更新本表。

@@ -660,4 +660,26 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         tpls = list_mcp_templates()
         return handler._send(200, {"templates": tpls, "total": len(tpls)})
 
+    if req_path == "/api/browser/sessions":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...execution.cdp_browser import get_browser_pool
+        return handler._send(200, get_browser_pool().status())
+
+    if req_path == "/api/mobile/devices":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...execution.mobile_bridge import list_mobile_devices
+        return handler._send(200, list_mobile_devices())
+
+    if req_path == "/api/compose/status":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...execution.compose_stack import get_compose_manager
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        params = parse_qs(urlparse(handler.path).query)
+        cf = (params.get("compose_file") or [""])[0].strip() or str(cfg.get("BAIZE_COMPOSE_FILE", "") or "").strip()
+        return handler._send(200, get_compose_manager().status(ws, compose_file=cf))
+
     return handler._send(404, {"error": "not found"})

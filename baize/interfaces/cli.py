@@ -1184,6 +1184,43 @@ def build_parser() -> argparse.ArgumentParser:
     vu_p.add_argument("--vision", action="store_true", help="enable Stage 2 multimodal vision LLM review")
     vu_p.add_argument("--json", action="store_true", help="output JSON")
 
+    br_p = sub.add_parser("browser", help="interactive stateful CDP browser E2E actions (V47 Horizon)")
+    br_p.add_argument("action", nargs="?", default="status",
+                      choices=["status", "navigate", "click", "fill", "wait", "eval_assert", "snapshot", "screenshot", "close"])
+    br_p.add_argument("--session", default="default", help="browser session id")
+    br_p.add_argument("--url", default="", help="target URL for navigate")
+    br_p.add_argument("--selector", default="", help="CSS selector for click/fill/wait")
+    br_p.add_argument("--value", default="", help="input value for fill")
+    br_p.add_argument("--expr", default="", help="JS expression for eval_assert")
+    br_p.add_argument("--timeout", type=int, default=15, help="action timeout seconds")
+    br_p.add_argument("--json", action="store_true", help="output JSON")
+
+    mob_p = sub.add_parser("mobile", help="probe/drive Android ADB & iOS Simctl simulators or degraded verify (V47 Horizon)")
+    mob_p.add_argument("action", nargs="?", default="devices",
+                       choices=["devices", "verify", "screenshot", "tap", "swipe", "input_text", "launch", "logs"])
+    mob_p.add_argument("--device", default="", help="device serial or simulator UDID")
+    mob_p.add_argument("--platform", default="", choices=["", "android", "ios"], help="target platform hint")
+    mob_p.add_argument("--app-id", default="", help="package name or bundle identifier")
+    mob_p.add_argument("--fallback-url", default="", help="optional fallback Web/PWA URL when simulator is absent")
+    mob_p.add_argument("--vision", action="store_true", help="enable multimodal vision review")
+    mob_p.add_argument("--x", type=int, default=0)
+    mob_p.add_argument("--y", type=int, default=0)
+    mob_p.add_argument("--x2", type=int, default=0)
+    mob_p.add_argument("--y2", type=int, default=0)
+    mob_p.add_argument("--text", default="")
+    mob_p.add_argument("--json", action="store_true", help="output JSON")
+
+    comp_p = sub.add_parser("compose", help="orchestrate isolated multi-service Docker Compose test stacks (V48 Apex)")
+    comp_p.add_argument("action", nargs="?", default="status", choices=["status", "up", "logs", "down"])
+    comp_p.add_argument("--file", default="", help="explicit docker-compose YAML path")
+    comp_p.add_argument("--services", default="", help="comma-separated service names for up")
+    comp_p.add_argument("--wait-ports", default="", help="comma-separated TCP ports to wait for readiness")
+    comp_p.add_argument("--service", default="", help="service name for logs")
+    comp_p.add_argument("--tail", type=int, default=100, help="log tail line count")
+    comp_p.add_argument("--volumes", action="store_true", help="remove volumes on down")
+    comp_p.add_argument("--timeout", type=int, default=60, help="operation timeout seconds")
+    comp_p.add_argument("--json", action="store_true", help="output JSON")
+
     return p
 
 
@@ -1505,7 +1542,7 @@ def cmd_lsp(args) -> int:
     if args.json:
         print(json.dumps(st, indent=2, ensure_ascii=False))
     else:
-        print(f"LSP Session Pool: active={st['active_count']} idle_timeout={st['idle_timeout_s']}s")
+        print(f"LSP Session Pool: active={st.get('active_count', len(st.get('sessions', [])))} idle_timeout={st.get('idle_timeout_s', 300)}s")
         for s in st["sessions"]:
             print(f"  - [{s['language']}] {s['workspace']} alive={s['alive']} docs={s['open_documents']} idle={s['idle_seconds']}s")
     return 0
@@ -1523,6 +1560,112 @@ def cmd_verify_ui(args) -> int:
     return 0 if rep.passed else 1
 
 
+def cmd_browser(args) -> int:
+    from ..core.config import load_config
+    from ..execution.cdp_browser import get_browser_pool
+    pool = get_browser_pool()
+    if args.action == "status":
+        st = pool.status()
+        if args.json:
+            print(json.dumps(st, indent=2, ensure_ascii=False))
+        else:
+            print(f"Browser Session Pool: active={st['active_count']} idle_timeout={st['idle_timeout_s']}s")
+            for s in st["sessions"]:
+                print(f"  - [{s['session_id']}] url={s['current_url'] or '(blank)'} alive={s['alive']} idle={s['idle_seconds']}s")
+        return 0
+    res = pool.run_action(
+        action=args.action,
+        session_id=args.session,
+        url=args.url,
+        selector=args.selector,
+        value=args.value,
+        expression=args.expr,
+        timeout=args.timeout,
+        cfg=load_config(),
+    )
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(f"browser {args.action}: ok={res.get('ok')} url={res.get('url', '')} {res.get('error', '')}".strip())
+    return 0 if res.get("ok") else 1
+
+
+def cmd_mobile(args) -> int:
+    from ..core.config import load_config
+    from ..execution.mobile_bridge import list_mobile_devices, mobile_action, verify_mobile_app
+    cfg = load_config()
+    if args.action == "devices":
+        payload = list_mobile_devices()
+        devs = payload.get("devices", [])
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(f"Mobile Devices Detected: {len(devs)} (adb={payload.get('adb_available')} simctl={payload.get('simctl_available')})")
+            for d in devs:
+                print(f"  - [{d['platform']}] {d['device_id']} ({d['name']}) state={d['state']} emulator={d['is_emulator']}")
+        return 0
+    if args.action == "verify":
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        fb = args.fallback_url or str(cfg.get("BAIZE_MOBILE_FALLBACK_WEB_URL", "") or "")
+        rep = verify_mobile_app(
+            workspace=ws,
+            device_id=args.device,
+            platform_hint=args.platform,
+            app_id=args.app_id,
+            fallback_web_url=fb,
+            check_visual=bool(args.vision),
+            cfg=cfg,
+        )
+        if args.json:
+            print(json.dumps(rep.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(rep.format_for_agent())
+        return 0 if rep.passed else 1
+    res = mobile_action(
+        args.action,
+        device_id=args.device,
+        platform_hint=args.platform,
+        x=args.x,
+        y=args.y,
+        x2=args.x2,
+        y2=args.y2,
+        text=args.text,
+        app_id=args.app_id,
+        cfg=cfg,
+    )
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(json.dumps(res, ensure_ascii=False))
+    return 0 if res.get("ok") else 1
+
+
+def cmd_compose(args) -> int:
+    from ..core.config import load_config
+    from ..execution.compose_stack import get_compose_manager
+    cfg = load_config()
+    ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+    cf = args.file or str(cfg.get("BAIZE_COMPOSE_FILE", "") or "")
+    mgr = get_compose_manager()
+    if args.action == "up":
+        svcs = [s.strip() for s in args.services.split(",") if s.strip()] or None
+        ports = [int(p.strip()) for p in args.wait_ports.split(",") if p.strip().isdigit()] or None
+        res = mgr.up(ws, compose_file=cf, services=svcs, wait_ports=ports, timeout=args.timeout, cfg=cfg)
+    elif args.action == "down":
+        res = mgr.down(ws, compose_file=cf, volumes=bool(args.volumes), cfg=cfg)
+    elif args.action == "logs":
+        res = mgr.logs(ws, service=args.service, tail=args.tail, compose_file=cf)
+    else:
+        res = mgr.status(ws, compose_file=cf)
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(f"Compose Stack [{res.get('project_name', '')}]: ok={res.get('ok')} file={res.get('compose_file') or '(none)'} cli={res.get('compose_cmd') or '(missing)'}")
+        if res.get("error"):
+            print(f"  note: {res['error']}")
+    return 0 if res.get("ok") else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     if not actual_argv:
@@ -1530,7 +1673,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces", "spec", "lsp", "verify-ui"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces", "spec", "lsp", "verify-ui", "browser", "mobile", "compose"):
         try:
             validate()
         except ConfigError as e:
@@ -1577,6 +1720,9 @@ def main(argv: list[str] | None = None) -> int:
         "spec": cmd_spec,
         "lsp": cmd_lsp,
         "verify-ui": cmd_verify_ui,
+        "browser": cmd_browser,
+        "mobile": cmd_mobile,
+        "compose": cmd_compose,
     }
     return handlers[args.command](args)
 

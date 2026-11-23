@@ -37,6 +37,21 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ViewportCapture": (".visual_verify", "ViewportCapture"),
     "VisualVerifyReport": (".visual_verify", "VisualVerifyReport"),
     "verify_ui": (".visual_verify", "verify_ui"),
+    "InteractiveBrowserSession": (".cdp_browser", "InteractiveBrowserSession"),
+    "BrowserSessionPool": (".cdp_browser", "BrowserSessionPool"),
+    "get_browser_pool": (".cdp_browser", "get_browser_pool"),
+    "MobileDevice": (".mobile_bridge", "MobileDevice"),
+    "MobileVerifyReport": (".mobile_bridge", "MobileVerifyReport"),
+    "list_mobile_devices": (".mobile_bridge", "list_mobile_devices"),
+    "mobile_action": (".mobile_bridge", "mobile_action"),
+    "verify_mobile_app": (".mobile_bridge", "verify_mobile_app"),
+    "ComposeStackInfo": (".compose_stack", "ComposeStackInfo"),
+    "ComposeStackManager": (".compose_stack", "ComposeStackManager"),
+    "detect_compose_cmd": (".compose_stack", "detect_compose_cmd"),
+    "discover_compose_file": (".compose_stack", "discover_compose_file"),
+    "get_compose_manager": (".compose_stack", "get_compose_manager"),
+    "build_win_job_limits": (".sandbox", "build_win_job_limits"),
+    "win_sandbox_capabilities": (".sandbox", "win_sandbox_capabilities"),
 }
 
 __all__ = list(_EXPORTS)

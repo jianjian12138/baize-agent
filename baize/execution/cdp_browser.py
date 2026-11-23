@@ -20,6 +20,7 @@ import socket
 import ssl
 import struct
 import subprocess
+import threading
 import tempfile
 import time
 import urllib.parse
@@ -223,6 +224,7 @@ class CDPBrowserClient:
         self._msg_id = 0
         self.console_errors: list[str] = []
         self.exceptions: list[str] = []
+        self.network_errors: list[str] = []
 
     def _launch_local_browser(self) -> str:
         binary = find_browser_binary(self.browser_binary)
@@ -297,6 +299,14 @@ class CDPBrowserClient:
             details = params.get("exceptionDetails") or {}
             exc = details.get("exception") or {}
             self.exceptions.append(str(exc.get("description") or details.get("text") or "uncaught exception"))
+        elif ev == "Network.loadingFailed":
+            err_txt = str(params.get("errorText") or "network loading failed")
+            self.network_errors.append(f"loadingFailed: {err_txt}")
+        elif ev == "Network.responseReceived":
+            resp = params.get("response") or {}
+            status = int(resp.get("status") or 0)
+            if status >= 400:
+                self.network_errors.append(f"HTTP {status} {resp.get('url', '')}")
 
     def verify_page(self, url: str, *, screenshot_path: str | Path | None = None) -> CDPVerifyResult:
         try:
@@ -351,3 +361,389 @@ class CDPBrowserClient:
         if self._user_data_dir:
             shutil.rmtree(self._user_data_dir, ignore_errors=True)
             self._user_data_dir = ""
+
+
+# ===========================================================================
+# V47.0.0 Horizon: Stateful Interactive CDP Browser Session Pool (E2E Actions)
+# ===========================================================================
+
+class InteractiveBrowserSession:
+    """Long-lived stateful CDP browser session supporting multi-step E2E flows."""
+
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        ws_url: str = "",
+        browser_binary: str = "",
+        timeout: float = 15.0,
+    ) -> None:
+        self.session_id = session_id
+        self.client = CDPBrowserClient(ws_url=ws_url, browser_binary=browser_binary, timeout=timeout)
+        self.current_url: str = ""
+        self.last_screenshot: str = ""
+        self.action_count: int = 0
+        self.last_used: float = time.monotonic()
+        self._connected = False
+        self._lock = threading.RLock()
+
+    def ensure_connected(self) -> None:
+        with self._lock:
+            if not self._connected or self.client._ws is None:
+                self.client.connect()
+                self.client.send_command("Runtime.enable")
+                self.client.send_command("Page.enable")
+                try:
+                    self.client.send_command("Network.enable")
+                except Exception:
+                    pass
+                self._connected = True
+            self.last_used = time.monotonic()
+
+    def _eval(self, expr: str) -> Any:
+        res = self.client.send_command(
+            "Runtime.evaluate",
+            {"expression": expr, "returnByValue": True, "awaitPromise": True},
+        )
+        if "exceptionDetails" in res:
+            details = res["exceptionDetails"] or {}
+            raise RuntimeError(str(details.get("text") or "JS evaluation error"))
+        return (res.get("result") or {}).get("value")
+
+    def execute(
+        self,
+        action: str,
+        *,
+        url: str = "",
+        selector: str = "",
+        value: str = "",
+        expression: str = "",
+        timeout: float = 10.0,
+        screenshot_dir: Path | None = None,
+        cfg: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a single interactive E2E browser action on this live session."""
+        act = (action or "").strip().lower()
+        with self._lock:
+            self.last_used = time.monotonic()
+            if act == "close":
+                self.close()
+                return {"ok": True, "session_id": self.session_id, "action": "close", "closed": True}
+
+            if act == "navigate":
+                if not url.strip():
+                    return {"ok": False, "action": act, "error": "navigate requires non-empty url"}
+                # Enforce egress allowlist before connecting/navigating
+                try:
+                    from ..governance.dlp import check_egress_url
+                    allowed, reason = check_egress_url(url.strip(), cfg=cfg)
+                    if not allowed:
+                        return {"ok": False, "action": act, "error": f"egress blocked: {reason}"}
+                except Exception:
+                    pass
+
+            self.ensure_connected()
+            self.action_count += 1
+
+            if act == "navigate":
+                self.client.send_command("Page.navigate", {"url": url.strip()})
+                self.current_url = url.strip()
+                title = str(self._eval("document.title || ''") or "")
+                return {
+                    "ok": True,
+                    "session_id": self.session_id,
+                    "action": "navigate",
+                    "url": self.current_url,
+                    "title": title,
+                    "console_errors": list(self.client.console_errors),
+                    "exceptions": list(self.client.exceptions),
+                    "network_errors": list(self.client.network_errors),
+                }
+
+            if act == "click":
+                if not selector.strip():
+                    return {"ok": False, "action": act, "error": "click requires CSS selector"}
+                sel_json = json.dumps(selector.strip())
+                js = (
+                    f"(() => {{ const el = document.querySelector({sel_json}); "
+                    f"if (!el) return {{found: false}}; "
+                    f"if (el.scrollIntoView) el.scrollIntoView({{block: 'center'}}); "
+                    f"el.click(); "
+                    f"return {{found: true, tag: el.tagName, text: (el.innerText || el.value || '').slice(0, 120)}}; }})()"
+                )
+                r = self._eval(js) or {}
+                found = bool(isinstance(r, dict) and r.get("found"))
+                return {
+                    "ok": found,
+                    "session_id": self.session_id,
+                    "action": "click",
+                    "selector": selector,
+                    "element": r if isinstance(r, dict) else {},
+                    "error": "" if found else f"element not found for selector: {selector}",
+                    "console_errors": list(self.client.console_errors),
+                    "exceptions": list(self.client.exceptions),
+                }
+
+            if act == "fill":
+                if not selector.strip():
+                    return {"ok": False, "action": act, "error": "fill requires CSS selector"}
+                sel_json = json.dumps(selector.strip())
+                val_json = json.dumps(str(value))
+                js = (
+                    f"(() => {{ const el = document.querySelector({sel_json}); "
+                    f"if (!el) return {{found: false}}; "
+                    f"el.focus && el.focus(); "
+                    f"el.value = {val_json}; "
+                    f"el.dispatchEvent(new Event('input', {{bubbles: true}})); "
+                    f"el.dispatchEvent(new Event('change', {{bubbles: true}})); "
+                    f"return {{found: true, tag: el.tagName, length: String(el.value).length}}; }})()"
+                )
+                r = self._eval(js) or {}
+                found = bool(isinstance(r, dict) and r.get("found"))
+                return {
+                    "ok": found,
+                    "session_id": self.session_id,
+                    "action": "fill",
+                    "selector": selector,
+                    "result": r if isinstance(r, dict) else {},
+                    "error": "" if found else f"input element not found for selector: {selector}",
+                }
+
+            if act == "wait":
+                deadline = time.monotonic() + max(0.2, min(float(timeout), 30.0))
+                sel = selector.strip()
+                expr = expression.strip()
+                if not sel and not expr:
+                    return {"ok": False, "action": act, "error": "wait requires selector or expression"}
+                check_js = f"Boolean(document.querySelector({json.dumps(sel)}))" if sel else f"Boolean({expr})"
+                matched = False
+                while time.monotonic() < deadline:
+                    if bool(self._eval(check_js)):
+                        matched = True
+                        break
+                    time.sleep(0.15)
+                return {
+                    "ok": matched,
+                    "session_id": self.session_id,
+                    "action": "wait",
+                    "selector": sel,
+                    "expression": expr,
+                    "matched": matched,
+                    "error": "" if matched else f"timed out waiting for {sel or expr}",
+                }
+
+            if act == "eval_assert":
+                expr = expression.strip()
+                if not expr:
+                    return {"ok": False, "action": act, "error": "eval_assert requires expression"}
+                val = self._eval(expr)
+                passed = bool(val)
+                return {
+                    "ok": passed,
+                    "session_id": self.session_id,
+                    "action": "eval_assert",
+                    "expression": expr,
+                    "value": val,
+                    "error": "" if passed else f"assertion evaluated falsy: {val!r}",
+                }
+
+            if act == "screenshot":
+                shot = self.client.send_command("Page.captureScreenshot", {"format": "png"})
+                b64 = shot.get("data") or ""
+                if not b64:
+                    return {"ok": False, "session_id": self.session_id, "action": "screenshot", "error": "empty screenshot data"}
+                out_dir = screenshot_dir or Path("persistence/browser_shots")
+                out_dir.mkdir(parents=True, exist_ok=True)
+                sp = out_dir / f"{self.session_id}_{int(time.time() * 1000)}.png"
+                sp.write_bytes(base64.b64decode(b64))
+                self.last_screenshot = str(sp)
+                return {
+                    "ok": True,
+                    "session_id": self.session_id,
+                    "action": "screenshot",
+                    "screenshot_path": str(sp),
+                    "bytes": sp.stat().st_size,
+                }
+
+            if act == "snapshot":
+                snap_js = (
+                    "(() => ({"
+                    "url: location.href, "
+                    "title: document.title || '', "
+                    "text: (document.body ? document.body.innerText : '').slice(0, 1200), "
+                    "interactive_count: document.querySelectorAll('a,button,input,select,textarea').length"
+                    "}))()"
+                )
+                info = self._eval(snap_js) or {}
+                if isinstance(info, dict) and info.get("url"):
+                    self.current_url = str(info["url"])
+                return {
+                    "ok": len(self.client.console_errors) == 0 and len(self.client.exceptions) == 0,
+                    "session_id": self.session_id,
+                    "action": "snapshot",
+                    "page": info if isinstance(info, dict) else {},
+                    "console_errors": list(self.client.console_errors),
+                    "exceptions": list(self.client.exceptions),
+                    "network_errors": list(self.client.network_errors),
+                }
+
+            return {
+                "ok": False,
+                "session_id": self.session_id,
+                "action": act,
+                "error": f"unsupported browser action '{act}'. Valid: navigate, click, fill, wait, eval_assert, screenshot, snapshot, close.",
+            }
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "connected": self._connected and self.client._ws is not None,
+            "current_url": self.current_url,
+            "action_count": self.action_count,
+            "console_errors_count": len(self.client.console_errors),
+            "exceptions_count": len(self.client.exceptions),
+            "network_errors_count": len(self.client.network_errors),
+            "last_screenshot": self.last_screenshot,
+            "idle_seconds": round(max(0.0, time.monotonic() - self.last_used), 1),
+        }
+
+    def close(self) -> None:
+        with self._lock:
+            self._connected = False
+            self.client.close()
+
+
+class BrowserSessionPool:
+    """Process-wide pool of stateful interactive CDP browser sessions."""
+
+    def __init__(self, idle_timeout: float | None = None) -> None:
+        self._lock = threading.RLock()
+        self._sessions: dict[str, InteractiveBrowserSession] = {}
+        self._idle_timeout = idle_timeout
+
+    def _effective_idle_timeout(self) -> float:
+        if self._idle_timeout is not None:
+            return self._idle_timeout
+        try:
+            return max(10.0, float(os.environ.get("BAIZE_BROWSER_IDLE_TIMEOUT", "300") or "300"))
+        except ValueError:
+            return 300.0
+
+    def evict_idle(self) -> int:
+        now = time.monotonic()
+        limit = self._effective_idle_timeout()
+        evicted = 0
+        with self._lock:
+            for sid in list(self._sessions.keys()):
+                sess = self._sessions[sid]
+                if now - sess.last_used > limit:
+                    self._sessions.pop(sid, None)
+                    sess.close()
+                    evicted += 1
+        return evicted
+
+    def run_action(
+        self,
+        action: str,
+        *,
+        session_id: str = "default",
+        url: str = "",
+        selector: str = "",
+        value: str = "",
+        expression: str = "",
+        timeout: float = 10.0,
+        ws_url: str = "",
+        cfg: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Dispatch an interactive browser E2E action against a pooled session."""
+        self.evict_idle()
+        sid = (session_id or "default").strip() or "default"
+        act = (action or "").strip().lower()
+        if act == "close":
+            with self._lock:
+                sess = self._sessions.pop(sid, None)
+            if sess is not None:
+                sess.close()
+            return {"ok": True, "session_id": sid, "action": "close", "closed": True}
+
+        from ..core.config import load_config
+        eff_cfg = cfg if cfg is not None else load_config()
+        bin_override = str(eff_cfg.get("BAIZE_CDP_BINARY", "") or "")
+        cdp_timeout = float(eff_cfg.get("BAIZE_CDP_TIMEOUT", "15") or 15)
+        shot_dir = Path(eff_cfg.get("BAIZE_PERSISTENCE_DIR", "persistence")) / "browser_shots"
+
+        with self._lock:
+            sess = self._sessions.get(sid)
+            if sess is None:
+                sess = InteractiveBrowserSession(
+                    sid,
+                    ws_url=ws_url,
+                    browser_binary=bin_override,
+                    timeout=cdp_timeout,
+                )
+                self._sessions[sid] = sess
+
+        try:
+            return sess.execute(
+                act,
+                url=url,
+                selector=selector,
+                value=value,
+                expression=expression,
+                timeout=timeout,
+                screenshot_dir=shot_dir,
+                cfg=eff_cfg,
+            )
+        except CDPUnavailableError as exc:
+            with self._lock:
+                self._sessions.pop(sid, None)
+            sess.close()
+            return {
+                "ok": False,
+                "degraded": True,
+                "session_id": sid,
+                "action": act,
+                "error": str(exc),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "session_id": sid,
+                "action": act,
+                "error": str(exc),
+            }
+
+    def status(self) -> dict[str, Any]:
+        self.evict_idle()
+        with self._lock:
+            sessions = [s.status() for s in self._sessions.values()]
+        return {
+            "active_count": len(sessions),
+            "idle_timeout_s": self._effective_idle_timeout(),
+            "browser_binary_found": bool(find_browser_binary()),
+            "sessions": sessions,
+        }
+
+    def close_all(self) -> int:
+        with self._lock:
+            items = list(self._sessions.values())
+            self._sessions.clear()
+        for sess in items:
+            try:
+                sess.close()
+            except Exception:
+                pass
+        return len(items)
+
+
+_BROWSER_POOL_LOCK = threading.Lock()
+_GLOBAL_BROWSER_POOL: BrowserSessionPool | None = None
+
+
+def get_browser_pool() -> BrowserSessionPool:
+    """Return the singleton :class:`BrowserSessionPool`."""
+    global _GLOBAL_BROWSER_POOL
+    with _BROWSER_POOL_LOCK:
+        if _GLOBAL_BROWSER_POOL is None:
+            _GLOBAL_BROWSER_POOL = BrowserSessionPool()
+        return _GLOBAL_BROWSER_POOL

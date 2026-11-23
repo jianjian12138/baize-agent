@@ -320,6 +320,58 @@ def landlock_driver() -> str:
     return "none"
 
 
+# ---------------------------------------------------------------------------
+# Windows native Job Object + optional Restricted Token (pure stdlib ctypes)
+# ---------------------------------------------------------------------------
+JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008
+JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
+JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
+JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x00000400
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+_JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS = 9
+_DISABLE_MAX_PRIVILEGE = 0x1
+_TOKEN_QUERY = 0x0008
+_TOKEN_DUPLICATE = 0x0002
+_TOKEN_ASSIGN_PRIMARY = 0x0001
+_CREATE_SUSPENDED = 0x00000004
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+def _win32_job_object_supported() -> bool:
+    """True only on real Windows NT hosts where Win32 Job Object APIs are callable.
+
+    Deliberately checks ``os.name == "nt"`` so Linux/macOS tests that monkeypatch
+    ``platform.system()`` to ``"Windows"`` preserve honest ``"logical-only"`` behavior.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        k32 = getattr(ctypes, "windll", None)
+        k32 = getattr(k32, "kernel32", None) if k32 is not None else None
+        if k32 is None:
+            return False
+        for fn in ("CreateJobObjectW", "SetInformationJobObject", "AssignProcessToJobObject", "CloseHandle"):
+            if getattr(k32, fn, None) is None:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _win32_restricted_token_supported() -> bool:
+    """True on real Windows NT hosts where advapi32.CreateRestrictedToken is callable."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        adv = getattr(ctypes, "windll", None)
+        adv = getattr(adv, "advapi32", None) if adv is not None else None
+        return adv is not None and getattr(adv, "CreateRestrictedToken", None) is not None
+    except Exception:
+        return False
+
+
 def platform_mechanism() -> str:
     """Return the best available OS mechanism name for this platform."""
     sysname = platform.system()
@@ -332,7 +384,8 @@ def platform_mechanism() -> str:
         return "logical-only"
     if sysname == "Darwin":
         return "seatbelt" if which("sandbox-exec") else "logical-only"
-    # Windows restricted token is not implemented -> honest degrade.
+    if sysname == "Windows" and _win32_job_object_supported():
+        return "win-job-object"
     return "logical-only"
 
 
@@ -443,6 +496,9 @@ def plan_argv(argv, workspace: str, cfg: dict | None = None) -> ArgvPlan:
     mech = platform_mechanism()
     if mech == "landlock":  # pragma: no cover - Linux only
         return ArgvPlan(args, "landlock", _landlock_preexec(workspace))
+    if mech == "win-job-object":  # pragma: no cover - Windows NT only
+        return _run_with_win_job_object(command, cwd, timeout, pol, child_env)
+
     if mech == "seatbelt":  # pragma: no cover - macOS only
         return ArgvPlan(
             ["sandbox-exec", "-p", _seatbelt_profile(workspace, allow_net=allow_net), *args],
@@ -478,8 +534,10 @@ class SandboxPolicy:
     cpu_seconds: int = 60
     memory_mb: int = 1024
     nofile: int = 256
+    max_processes: int = 32
     scrub_env: bool = True
     allow_net: bool = True
+    win_restricted_token: bool = False
     docker_image: str = "python:3.11-slim"
     docker_network: str = "none"
     docker_session_pool: bool = True
@@ -523,6 +581,7 @@ def _build_policy(cfg: dict[str, str] | None = None, mode_override: str | None =
         cpu_seconds=max(5, int(cfg.get("BAIZE_SANDBOX_CPU_LIMIT_S", "60") or "60")),
         memory_mb=max(128, int(cfg.get("BAIZE_SANDBOX_MEM_LIMIT_MB", "1024") or "1024")),
         allow_net=(net_policy != "none"),
+        win_restricted_token=(str(cfg.get("BAIZE_WIN_SANDBOX_RESTRICTED_TOKEN", "0")).strip().lower() in ("1", "true", "yes")),
         docker_image=(cfg.get("BAIZE_SANDBOX_DOCKER_IMAGE") or "python:3.11-slim").strip(),
         docker_session_pool=(str(cfg.get("BAIZE_DOCKER_SESSION_POOL", "1")).strip().lower() in ("1", "true", "yes")),
     )
@@ -554,6 +613,262 @@ def _rlimit_preexec(policy: SandboxPolicy, landlock_workspace: str | None = None
     return _apply
 
 
+
+
+def build_win_job_limits(policy: SandboxPolicy) -> dict[str, Any]:
+    """Compute exact Win32 ``JOBOBJECT_EXTENDED_LIMIT_INFORMATION`` parameters for *policy*."""
+    mem_bytes = max(128, int(policy.memory_mb)) * 1024 * 1024
+    proc_limit = max(1, int(policy.max_processes))
+    limit_flags = (
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        | JOB_OBJECT_LIMIT_JOB_MEMORY
+        | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+    )
+    return {
+        "info_class": _JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS,
+        "limit_flags": limit_flags,
+        "kill_on_job_close": True,
+        "active_process_limit": proc_limit,
+        "process_memory_bytes": mem_bytes,
+        "job_memory_bytes": mem_bytes,
+        "cpu_seconds": max(5, int(policy.cpu_seconds)),
+        "restricted_token": bool(policy.win_restricted_token),
+    }
+
+
+def win_sandbox_capabilities(cfg: dict[str, str] | None = None) -> dict[str, Any]:
+    """Honest disclosure of Windows native Job Object & Restricted Token capabilities."""
+    eff_cfg = cfg if cfg is not None else load_config()
+    pol = _build_policy(eff_cfg)
+    job_ok = _win32_job_object_supported()
+    tok_ok = _win32_restricted_token_supported()
+    return {
+        "is_windows_nt": os.name == "nt",
+        "job_object_supported": job_ok,
+        "restricted_token_supported": tok_ok,
+        "restricted_token_enabled": bool(pol.win_restricted_token),
+        "process_isolation": (
+            "win-job-object+restricted-token"
+            if (job_ok and pol.win_restricted_token and tok_ok)
+            else ("win-job-object" if job_ok else "unavailable-on-non-windows")
+        ),
+        "filesystem_isolation": (
+            "logical-workspace-guard-only (Windows Job Object enforces process/memory/tree limits; "
+            "use Docker mode for filesystem namespace isolation)"
+        ),
+        "limits": build_win_job_limits(pol),
+    }
+
+
+def _make_win_extended_limit_struct(limits: dict[str, Any]):
+    """Build ctypes ``JOBOBJECT_EXTENDED_LIMIT_INFORMATION`` structure (pure stdlib)."""
+    import ctypes
+
+    class _IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", _IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = int(limits["limit_flags"])
+    info.BasicLimitInformation.ActiveProcessLimit = int(limits["active_process_limit"])
+    info.ProcessMemoryLimit = int(limits["process_memory_bytes"])
+    info.JobMemoryLimit = int(limits["job_memory_bytes"])
+    return info
+
+
+def _probe_restricted_token(win_api: Any) -> tuple[bool, str]:
+    """Attempt ``advapi32.CreateRestrictedToken(..., DISABLE_MAX_PRIVILEGE, ...)`` when enabled.
+
+    Returns ``(ok, note)`` and always closes temporary handles cleanly.
+    """
+    import ctypes
+    try:
+        k32 = getattr(win_api, "kernel32", None)
+        adv = getattr(win_api, "advapi32", None)
+        if k32 is None or adv is None:
+            return False, "advapi32 unavailable"
+        cur_proc = k32.GetCurrentProcess()
+        h_token = ctypes.c_void_p()
+        if not adv.OpenProcessToken(cur_proc, _TOKEN_DUPLICATE | _TOKEN_QUERY | _TOKEN_ASSIGN_PRIMARY, ctypes.byref(h_token)):
+            return False, "OpenProcessToken denied"
+        h_restricted = ctypes.c_void_p()
+        try:
+            ok = bool(adv.CreateRestrictedToken(
+                h_token,
+                _DISABLE_MAX_PRIVILEGE,
+                0, None,
+                0, None,
+                0, None,
+                ctypes.byref(h_restricted),
+            ))
+            if ok and h_restricted.value:
+                k32.CloseHandle(h_restricted)
+                return True, "restricted-token-verified"
+            return False, "CreateRestrictedToken failed"
+        finally:
+            if h_token.value:
+                k32.CloseHandle(h_token)
+    except Exception as exc:
+        return False, f"restricted-token-error: {exc}"
+
+
+def _run_with_win_job_object(
+    command: str,
+    cwd: str,
+    timeout: int,
+    policy: SandboxPolicy,
+    env: dict[str, str] | None = None,
+    *,
+    _win_api: Any = None,
+    mechanism_suffix: str = "",
+) -> SandboxResult:
+    """Execute *command* attached to a Win32 Job Object (process-tree + memory + active-process limits).
+
+    Pure stdlib ``ctypes`` implementation. When ``_win_api`` is passed in tests, exercises the exact
+    Job Object lifecycle deterministically on any host OS without touching native DLLs.
+    """
+    import ctypes
+
+    limits = build_win_job_limits(policy)
+    mech = "win-job-object"
+    k32 = None
+    if _win_api is not None:
+        k32 = getattr(_win_api, "kernel32", _win_api)
+    elif os.name == "nt":
+        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+
+    if k32 is None:
+        res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd, env=env)
+        if res.timed_out:
+            return SandboxResult(-1, "", f"command timed out after {timeout}s",
+                                 degraded=True, mechanism=f"logical-only{mechanism_suffix}")
+        return SandboxResult(res.returncode, redact(res.stdout or ""), redact(res.stderr or ""),
+                             degraded=True, mechanism=f"logical-only{mechanism_suffix}")
+
+    if policy.win_restricted_token:
+        tok_ok, _ = _probe_restricted_token(_win_api if _win_api is not None else getattr(ctypes, "windll", None))
+        if tok_ok:
+            mech = "win-job-object+restricted-token"
+
+    job_handle = None
+    proc = None
+    try:
+        job_handle = k32.CreateJobObjectW(None, None)
+        if not job_handle:
+            raise OSError("CreateJobObjectW returned NULL")
+        info = _make_win_extended_limit_struct(limits)
+        ok_set = k32.SetInformationJobObject(
+            job_handle,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok_set:
+            raise OSError("SetInformationJobObject failed")
+
+        creation_flags = _CREATE_BREAKAWAY_FROM_JOB if os.name == "nt" else 0
+        popen_kwargs: dict[str, Any] = {
+            "shell": True,
+            "cwd": cwd,
+            "env": env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if creation_flags:
+            popen_kwargs["creationflags"] = creation_flags
+
+        try:
+            proc = subprocess.Popen(command, **popen_kwargs)
+        except OSError:
+            popen_kwargs.pop("creationflags", None)
+            proc = subprocess.Popen(command, **popen_kwargs)
+
+        proc_handle = getattr(proc, "_handle", None) or proc.pid
+        ok_assign = k32.AssignProcessToJobObject(job_handle, proc_handle)
+        if not ok_assign:
+            logger.warning("AssignProcessToJobObject returned False; continuing with timeout guard")
+
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                if hasattr(k32, "TerminateJobObject"):
+                    k32.TerminateJobObject(job_handle, 1)
+            except Exception:
+                pass
+            try:
+                proc.kill()
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
+            return SandboxResult(
+                -1, "", f"command timed out after {timeout}s",
+                degraded=bool(mechanism_suffix),
+                mechanism=f"{mech}{mechanism_suffix}",
+            )
+
+        return SandboxResult(
+            int(proc.returncode or 0),
+            redact(stdout or ""),
+            redact(stderr or ""),
+            degraded=bool(mechanism_suffix),
+            mechanism=f"{mech}{mechanism_suffix}",
+        )
+    except Exception as exc:
+        logger.warning("Windows Job Object setup failed (%s); degrading to logical-only", exc)
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd, env=env)
+        if res.timed_out:
+            return SandboxResult(-1, "", f"command timed out after {timeout}s",
+                                 degraded=True, mechanism=f"logical-only{mechanism_suffix}")
+        return SandboxResult(res.returncode, redact(res.stdout or ""), redact(res.stderr or ""),
+                             degraded=True, mechanism=f"logical-only{mechanism_suffix}")
+    finally:
+        if job_handle:
+            try:
+                k32.CloseHandle(job_handle)
+            except Exception:
+                pass
+
+
 def sandbox_posture(cfg: dict[str, str] | None = None) -> dict[str, Any]:
     """Honest disclosure of active sandbox isolation tier and OS capabilities."""
     from .docker_sandbox import get_docker_pool, is_docker_available
@@ -573,6 +888,17 @@ def sandbox_posture(cfg: dict[str, str] | None = None) -> dict[str, Any]:
     else:
         effective = "disabled (guardrails-only)"
 
+    win_caps = win_sandbox_capabilities(cfg)
+    if os_mech in ("landlock", "bwrap", "seatbelt"):
+        fs_iso = f"os-kernel ({os_mech})"
+        proc_iso = f"posix-rlimit+{os_mech}"
+    elif os_mech == "win-job-object":
+        fs_iso = "logical-workspace-guard-only (use Docker for FS namespace isolation)"
+        proc_iso = win_caps["process_isolation"]
+    else:
+        fs_iso = "logical-workspace-guard-only"
+        proc_iso = "posix-rlimit" if rlimit_ok else "logical-only"
+
     return {
         "configured_mode": pol.mode or "disabled",
         "effective_isolation": effective,
@@ -580,6 +906,10 @@ def sandbox_posture(cfg: dict[str, str] | None = None) -> dict[str, Any]:
         "landlock_driver": landlock_driver(),
         "bwrap_available": bool(which("bwrap")),
         "rlimit_supported": rlimit_ok,
+        "win_job_object_available": bool(win_caps["job_object_supported"]),
+        "win_restricted_token": bool(pol.win_restricted_token),
+        "process_isolation": proc_iso,
+        "filesystem_isolation": fs_iso,
         "cpu_limit_s": pol.cpu_seconds,
         "memory_limit_mb": pol.memory_mb,
         "env_scrub": pol.scrub_env,
@@ -634,6 +964,11 @@ def run(command: str, cwd: str = ".", timeout: int = 30,
         # pol.mode == "auto" and docker unavailable -> explicit local-hardened fallback
         mech = platform_mechanism()
         child_env = scrub_environment() if pol.scrub_env else None
+        if mech == "win-job-object":
+            return _run_with_win_job_object(
+                command, cwd, timeout, pol, child_env,
+                mechanism_suffix=" (docker-fallback)",
+            )
         if mech == "landlock":
             res = proc_mod.run(command, shell=True, timeout=timeout, cwd=cwd,
                                env=child_env, preexec_fn=_rlimit_preexec(pol, cwd))

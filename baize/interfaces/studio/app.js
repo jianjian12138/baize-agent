@@ -1735,6 +1735,7 @@ function switchHeliosPane(paneId) {
   if (paneId === 'helios-tree') loadHeliosSessionTree();
   if (paneId === 'helios-gov') { loadHeliosAudit(); loadHeliosTraces(); loadHeliosEvalHistory(); }
   if (paneId === 'helios-v46') { loadHeliosPlatformStatus(); loadHeliosMcpTemplates(); }
+  if (paneId === 'helios-v48') { loadHeliosBrowserSessions(); loadHeliosMobileDevices(); loadHeliosComposeStatus(); loadHeliosV48Posture(); }
 }
 
 function refreshHeliosAll() {
@@ -2281,5 +2282,125 @@ async function checkHeliosMcpHealth() {
     if (out) out.textContent = JSON.stringify(d, null, 2);
   } catch (e) {
     if (out) out.textContent = 'MCP 健康自检失败: ' + e;
+  }
+}
+
+
+// --- V47.0.0 Horizon & V48.0.0 Apex Studio Handlers ---
+async function loadHeliosBrowserSessions() {
+  const out = document.getElementById('helios-browser-out');
+  try {
+    const res = await apiFetch('/api/browser/sessions');
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '加载浏览器会话池失败: ' + e;
+  }
+}
+
+async function runHeliosBrowserAction(actionOverride) {
+  const out = document.getElementById('helios-browser-out');
+  const sid = (document.getElementById('helios-browser-sid')?.value || 'default').trim();
+  const act = actionOverride || (document.getElementById('helios-browser-act')?.value || 'snapshot');
+  const target = (document.getElementById('helios-browser-url')?.value || '').trim();
+  const val = (document.getElementById('helios-browser-val')?.value || '');
+  const payload = { action: act, session_id: sid };
+  if (act === 'navigate') payload.url = target;
+  else if (act === 'eval_assert') payload.expression = target;
+  else if (act === 'click' || act === 'fill' || act === 'wait') payload.selector = target;
+  if (act === 'fill') payload.value = val;
+  if (out) out.textContent = '正在执行浏览器动作: ' + act + ' ...';
+  try {
+    const res = await apiFetch('/api/browser/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '执行浏览器动作失败: ' + e;
+  }
+}
+
+async function loadHeliosMobileDevices() {
+  const out = document.getElementById('helios-mobile-out');
+  try {
+    const res = await apiFetch('/api/mobile/devices');
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '探测移动端设备失败: ' + e;
+  }
+}
+
+async function runHeliosMobileVerify() {
+  const out = document.getElementById('helios-mobile-out');
+  const device_id = (document.getElementById('helios-mobile-device')?.value || '').trim();
+  const fallback_web_url = (document.getElementById('helios-mobile-fallback')?.value || '').trim();
+  const check_visual = !!(document.getElementById('helios-mobile-vision')?.checked);
+  if (out) out.textContent = '正在执行移动端校验（自动探测模拟器或诚实降级校验）...';
+  try {
+    const res = await apiFetch('/api/mobile/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'verify', device_id, fallback_web_url, check_visual }),
+    });
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '移动端校验请求失败: ' + e;
+  }
+}
+
+async function loadHeliosComposeStatus() {
+  const out = document.getElementById('helios-compose-out');
+  try {
+    const res = await apiFetch('/api/compose/status');
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '查询 Compose 状态失败: ' + e;
+  }
+}
+
+async function runHeliosCompose(action) {
+  const out = document.getElementById('helios-compose-out');
+  const compose_file = (document.getElementById('helios-compose-file')?.value || '').trim();
+  const wait_ports = (document.getElementById('helios-compose-ports')?.value || '').trim();
+  const service = (document.getElementById('helios-compose-service')?.value || '').trim();
+  if (out) out.textContent = '正在执行 Compose 操作: ' + action + ' ...';
+  try {
+    const res = await apiFetch('/api/compose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, compose_file, wait_ports, service }),
+    });
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = 'Compose 操作失败: ' + e;
+  }
+}
+
+async function loadHeliosV48Posture() {
+  const out = document.getElementById('helios-v48-posture-out');
+  try {
+    const res = await apiFetch('/api/platform/status');
+    const d = await res.json();
+    const sb = d.sandbox || {};
+    const summary = {
+      sandbox_mode: sb.configured_mode,
+      effective_isolation: sb.effective_isolation,
+      os_mechanism: sb.os_mechanism,
+      process_isolation: sb.process_isolation,
+      filesystem_isolation: sb.filesystem_isolation,
+      win_job_object_available: sb.win_job_object_available,
+      win_restricted_token: sb.win_restricted_token,
+      project_profile: d.project_profile || {},
+    };
+    if (out) out.textContent = JSON.stringify(summary, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '加载跨平台态势失败: ' + e;
   }
 }

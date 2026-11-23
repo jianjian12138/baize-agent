@@ -60,6 +60,9 @@ Available Slash Commands:
   /sandbox             Inspect active zero-install OS sandbox & Docker pool posture (V45)
   /verify-ui <url>     Run multi-viewport CDP & visual UI verification (V46)
   /mcp-templates       List built-in zero-secret MCP templates & readiness (V46)
+  /browser [status|navigate|snapshot|close] Drive stateful CDP browser E2E pool (V47)
+  /mobile [devices|verify] Probe Android ADB / iOS Simctl or run degraded verify (V47)
+  /compose [status|up|logs|down] Control isolated Docker Compose test stack (V48)
   /search <query>      Run persistent SQLite FTS5 + Embedding hybrid search (V42)
   /cost                Inspect session token usage and estimated cost
   /trace               Inspect step-by-step tool execution timeline & latency
@@ -515,7 +518,7 @@ class BaizeREPL:
                 print(f"Stopped {n} pooled LSP session(s).")
             else:
                 st = pool.status()
-                print(f"LSP Pool: active={st['active_count']} idle_timeout={st['idle_timeout_s']}s")
+                print(f"LSP Pool: active={st.get('active_count', len(st.get('sessions', [])))} idle_timeout={st.get('idle_timeout_s', 300)}s")
                 for s in st["sessions"]:
                     print(f"  - [{s['language']}] {s['workspace']} docs={s['open_documents']}")
             return True
@@ -545,6 +548,54 @@ class BaizeREPL:
             for t in list_mcp_templates():
                 mark = "READY" if t["binary_available"] else "MISSING-BIN"
                 print(f"  - {t['id']:12s} [{mark}] ({t['category']}) {t['description']}")
+            return True
+
+        if cmd == "/browser":
+            from ..execution.cdp_browser import get_browser_pool
+            parts = arg.strip().split(None, 1)
+            sub = parts[0].lower() if parts else "status"
+            rest = parts[1].strip() if len(parts) > 1 else ""
+            pool = get_browser_pool()
+            if sub == "status":
+                st = pool.status()
+                print(f"Browser Pool: active={st.get('active_count', len(st.get('sessions', [])))} idle_timeout={st.get('idle_timeout_s', 300)}s")
+            elif sub == "navigate" and rest:
+                res = pool.run_action("navigate", url=rest, cfg=self.cfg)
+                print(json.dumps(res, ensure_ascii=False, indent=2)[:1500])
+            else:
+                res = pool.run_action(sub, selector=rest, expression=rest, cfg=self.cfg)
+                print(json.dumps(res, ensure_ascii=False, indent=2)[:1500])
+            return True
+
+        if cmd == "/mobile":
+            from ..execution.mobile_bridge import list_mobile_devices, verify_mobile_app
+            sub = (arg.strip().split() or ["devices"])[0].lower()
+            if sub == "verify":
+                ws = self.cfg.get("BAIZE_WORKSPACE_DIR", ".")
+                rep = verify_mobile_app(workspace=ws, cfg=self.cfg)
+                print(rep.format_for_agent())
+            else:
+                info = list_mobile_devices()
+                devs = info.get("devices", [])
+                print(f"Mobile Devices: {len(devs)} (adb={info.get('adb_available')} simctl={info.get('simctl_available')})")
+                for d in devs:
+                    print(f"  - [{d['platform']}] {d['device_id']} ({d['name']}) state={d['state']}")
+            return True
+
+        if cmd == "/compose":
+            from ..execution.compose_stack import get_compose_manager
+            sub = (arg.strip().split() or ["status"])[0].lower()
+            ws = self.cfg.get("BAIZE_WORKSPACE_DIR", ".")
+            mgr = get_compose_manager()
+            if sub == "up":
+                res = mgr.up(ws)
+            elif sub == "down":
+                res = mgr.down(ws)
+            elif sub == "logs":
+                res = mgr.logs(ws)
+            else:
+                res = mgr.status(ws)
+            print(json.dumps(res, ensure_ascii=False, indent=2)[:2000])
             return True
 
         if cmd == "/traces":

@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🏛️ Baize Agent — V46.0.0 Sovereign
+# 🏛️ Baize Agent — V48.0.0 Apex
 
 **Zero Runtime Dependencies · Physical Verification Gates (`NO FAKE DONE`) · 8-Domain, 58-Module Industrial Pure-Python Autonomous Engineering Runtime**
 
-[![Version](https://img.shields.io/badge/version-V46.0.0--Sovereign-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1344%2F1344%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
+[![Version](https://img.shields.io/badge/version-V48.0.0--Apex-orange?style=flat-square)](baize/__init__.py)
+[![Tests](https://img.shields.io/badge/tests-1362%2F1362%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -18,7 +18,7 @@
 
 ## Why Baize Agent?
 
-**Baize Agent V46 Sovereign** delivers an industrial-grade autonomous coding runtime with **zero third-party runtime dependencies (100% Python 3.10+ stdlib)**:
+**Baize Agent V48 Apex** delivers an industrial-grade autonomous coding runtime with **zero third-party runtime dependencies (100% Python 3.10+ stdlib)**:
 
 - **Accelerated Core Loop & Atomic Git Rollback**: End-to-end live token streaming (REPL & HTTP SSE), concurrent read-only tool batch execution (mutating calls strictly serialized), and non-invasive Git tree checkpoints (`GitCheckpointManager`) with automatic or one-command rollback (`baize rollback`).
 - **Tiered Isolation Sandbox**: Local hardened default (static guardrails + Landlock/Seatbelt + POSIX `rlimit` CPU/FD caps + secret env scrubbing) plus one-flag Docker container isolation (`BAIZE_SANDBOX_MODE=docker|auto` with `--network=none`, `--pids-limit`, and fail-closed strict mode).
