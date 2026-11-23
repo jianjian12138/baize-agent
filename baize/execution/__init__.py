@@ -30,6 +30,13 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "CDPUnavailableError": (".cdp_browser", "CDPUnavailableError"),
     "SimpleWebSocketClient": (".cdp_browser", "SimpleWebSocketClient"),
     "verify_url_with_cdp": (".browser_verify", "verify_url_with_cdp"),
+    "SessionDockerPool": (".docker_sandbox", "SessionDockerPool"),
+    "get_docker_pool": (".docker_sandbox", "get_docker_pool"),
+    "landlock_driver": (".sandbox", "landlock_driver"),
+    "VIEWPORT_PRESETS": (".visual_verify", "VIEWPORT_PRESETS"),
+    "ViewportCapture": (".visual_verify", "ViewportCapture"),
+    "VisualVerifyReport": (".visual_verify", "VisualVerifyReport"),
+    "verify_ui": (".visual_verify", "verify_ui"),
 }
 
 __all__ = list(_EXPORTS)

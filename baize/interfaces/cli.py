@@ -833,6 +833,40 @@ def cmd_mcp(args) -> int:
     except ImportError as e:
         print(f"[mcp] tools module unavailable - {e}", file=sys.stderr)
         return 2
+    if args.action == "templates":
+        from baize.ext.mcp.client import list_mcp_templates, render_mcp_template
+        tpl_name = getattr(args, "template", "") or ""
+        if tpl_name:
+            try:
+                spec = render_mcp_template(tpl_name)
+                print(json.dumps(spec, indent=2, ensure_ascii=False))
+                return 0
+            except KeyError as e:
+                print(f"[mcp] {e}", file=sys.stderr)
+                return 2
+        tpls = list_mcp_templates()
+        if getattr(args, "json", False):
+            print(json.dumps({"templates": tpls, "total": len(tpls)}, indent=2, ensure_ascii=False))
+        else:
+            print(f"MCP Templates ({len(tpls)}):")
+            for t in tpls:
+                mark = "READY" if t["binary_available"] else "MISSING-BIN"
+                req = f" env={','.join(t['required_env'])}" if t["required_env"] else ""
+                print(f"  - {t['id']:12s} [{mark}] ({t['category']}) {t['description']}{req}")
+        return 0
+    if args.action == "health":
+        from ..core.config import load_config
+        from baize.ext.mcp.client import check_mcp_health
+        rep = check_mcp_health(cfg=load_config(), live_probe=bool(getattr(args, "live", False)))
+        if getattr(args, "json", False):
+            print(json.dumps(rep, indent=2, ensure_ascii=False))
+        else:
+            print(f"MCP Health: {rep['healthy']}/{rep['total']} healthy")
+            for s in rep["servers"]:
+                tag = "OK" if s["ok"] else "WARN"
+                detail = "; ".join(s["issues"]) if s["issues"] else s["live_probe"]
+                print(f"  [{tag:4s}] {s['name']:12s} cmd={s['command']} — {detail}")
+        return 0
     if args.action == "client":
         spec_path = args.spec or "mcp_server.json"
         try:
@@ -958,11 +992,16 @@ def build_parser() -> argparse.ArgumentParser:
     route_p.add_argument("--explain", action="store_true", help="print detailed decision breakdown")
 
     mcp_p = sub.add_parser("mcp",
-                           help="MCP compat (V25): client (call ext server) / "
-                                "server (expose baize tools over stdio)")
-    mcp_p.add_argument("action", choices=["client", "server"])
+                           help="MCP compat & templates (V25/V46): client / server / templates / health")
+    mcp_p.add_argument("action", choices=["client", "server", "templates", "health"])
     mcp_p.add_argument("--spec", default="",
                        help="path to mcp_server.json (client mode)")
+    mcp_p.add_argument("--template", default="",
+                       help="render a specific template id (templates mode)")
+    mcp_p.add_argument("--live", action="store_true",
+                       help="attempt live stdio handshake probe (health mode)")
+    mcp_p.add_argument("--json", action="store_true",
+                       help="output JSON")
 
     sp = sub.add_parser("sessions", help="list sessions / show a transcript / inspect timeline")
     sp.add_argument("session_id", nargs="?", default="")
@@ -1127,6 +1166,23 @@ def build_parser() -> argparse.ArgumentParser:
     tr_p.add_argument("--limit", type=int, default=20, help="number of recent spans")
     tr_p.add_argument("--flush", action="store_true", help="flush pending spans to BAIZE_OTLP_ENDPOINT")
     tr_p.add_argument("--json", action="store_true", help="output JSON")
+
+    sp_p = sub.add_parser("spec", help="manage Spec-Driven Workflow read-only hard-gate (V46 Sovereign)")
+    sp_p.add_argument("action", nargs="?", default="status", choices=["status", "on", "off", "draft", "approve", "reject", "verify"])
+    sp_p.add_argument("--session", default="default", help="target session id (default: default)")
+    sp_p.add_argument("--summary", default="", help="spec summary (draft action)")
+    sp_p.add_argument("--reason", default="", help="rejection reason or note")
+    sp_p.add_argument("--json", action="store_true", help="output JSON")
+
+    lsp_p = sub.add_parser("lsp", help="inspect or stop persistent LSP server pool (V45 Nexus)")
+    lsp_p.add_argument("action", nargs="?", default="status", choices=["status", "stop"])
+    lsp_p.add_argument("--json", action="store_true", help="output JSON")
+
+    vu_p = sub.add_parser("verify-ui", help="verify live web app UI via multi-viewport CDP & optional vision review (V46 Sovereign)")
+    vu_p.add_argument("url", help="target HTTP/HTTPS URL (e.g. http://127.0.0.1:3000)")
+    vu_p.add_argument("--viewports", default="desktop,mobile", help="comma-separated viewports (desktop,mobile,tablet)")
+    vu_p.add_argument("--vision", action="store_true", help="enable Stage 2 multimodal vision LLM review")
+    vu_p.add_argument("--json", action="store_true", help="output JSON")
 
     return p
 
@@ -1406,6 +1462,67 @@ def cmd_traces(args) -> int:
     return 0
 
 
+def cmd_spec(args) -> int:
+    from ..orchestration.spec_workflow import get_spec_manager
+    mgr = get_spec_manager()
+    sid = args.session or "default"
+    act = args.action
+    if act == "on":
+        st = mgr.enable(sid, note=args.reason)
+    elif act == "off":
+        st = mgr.disable(sid, note=args.reason)
+    elif act == "draft":
+        st = mgr.submit_spec(sid, summary=args.summary or "Spec draft", note=args.reason)
+    elif act == "approve":
+        st = mgr.approve(sid, actor="cli_user", note=args.reason)
+    elif act == "reject":
+        st = mgr.reject(sid, reason=args.reason)
+    elif act == "verify":
+        st = mgr.mark_verified(sid, note=args.reason)
+    else:
+        st = mgr.get(sid)
+    if args.json:
+        print(json.dumps(st.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        lock = "LOCKED (read-only)" if st.write_locked else "UNLOCKED"
+        print(f"Spec Workflow [{st.session_id}]: enabled={st.enabled} phase={st.phase} gate={lock}")
+        if st.spec_summary:
+            print(f"  summary: {st.spec_summary}")
+    return 0
+
+
+def cmd_lsp(args) -> int:
+    from ..codebase.diagnostics import get_lsp_pool
+    pool = get_lsp_pool()
+    if args.action == "stop":
+        n = pool.shutdown_all()
+        if args.json:
+            print(json.dumps({"stopped": n}, indent=2))
+        else:
+            print(f"Stopped {n} pooled LSP session(s).")
+        return 0
+    st = pool.status()
+    if args.json:
+        print(json.dumps(st, indent=2, ensure_ascii=False))
+    else:
+        print(f"LSP Session Pool: active={st['active_count']} idle_timeout={st['idle_timeout_s']}s")
+        for s in st["sessions"]:
+            print(f"  - [{s['language']}] {s['workspace']} alive={s['alive']} docs={s['open_documents']} idle={s['idle_seconds']}s")
+    return 0
+
+
+def cmd_verify_ui(args) -> int:
+    from ..core.config import load_config
+    from ..execution.visual_verify import verify_ui
+    vps = [v.strip() for v in (args.viewports or "desktop,mobile").split(",") if v.strip()]
+    rep = verify_ui(args.url, viewports=vps, check_visual=bool(args.vision), cfg=load_config())
+    if args.json:
+        print(json.dumps(rep.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(rep.format_for_agent())
+    return 0 if rep.passed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     if not actual_argv:
@@ -1413,7 +1530,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces", "spec", "lsp", "verify-ui"):
         try:
             validate()
         except ConfigError as e:
@@ -1457,6 +1574,9 @@ def main(argv: list[str] | None = None) -> int:
         "budget": cmd_budget,
         "audit": cmd_audit,
         "traces": cmd_traces,
+        "spec": cmd_spec,
+        "lsp": cmd_lsp,
+        "verify-ui": cmd_verify_ui,
     }
     return handlers[args.command](args)
 

@@ -52,7 +52,7 @@ _DEFAULTS = {
     "BAIZE_AGENT_MAX_STEPS": "24",       # hard cap per agent run
     "BAIZE_WORKSPACE_DIR": str(ROOT),    # tool sandbox root
     "BAIZE_ALLOW_OUTSIDE_WORKSPACE": "0",
-    "BAIZE_SANDBOX_ENABLED": "0",        # V21 P0-1 optional OS-level sandbox (off by default)
+    "BAIZE_SANDBOX_ENABLED": "1",        # V21 P0-1 optional OS-level sandbox (off by default)
     # --- V40 industrial upgrade (tiered sandbox, checkpoints, diagnostics, jobs) ---
     "BAIZE_SANDBOX_MODE": "",                  # "" | local-hardened | docker | auto
     "BAIZE_SANDBOX_DOCKER_IMAGE": "python:3.11-slim",
@@ -186,6 +186,13 @@ _DEFAULTS = {
     "BAIZE_AUTO_DIAGNOSE_ON_EDIT": "1",      # tools.py: run fast AST diagnostics after write_file/patch_file
     "BAIZE_OTLP_ENDPOINT": "",               # telemetry.py: optional OTLP/HTTP JSON trace endpoint
     "BAIZE_OTLP_HEADERS": "",                # telemetry.py: optional comma-separated OTLP headers (k=v)
+    # --- V45.0.0 Nexus & V46.0.0 Sovereign (Polyglot LSP Pool, Native Sandbox, Spec Gate & Visual Verify) ---
+    "BAIZE_SANDBOX_NET": "allow",            # sandbox.py: local OS sandbox network policy ("allow" | "none")
+    "BAIZE_LSP_IDLE_TIMEOUT": "300",         # diagnostics.py: pooled LSP server idle eviction seconds
+    "BAIZE_LSP_AUTO_DIAGNOSE": "0",          # tools.py: also query pooled LSP after write_file/patch_file
+    "BAIZE_SPEC_MODE": "0",                  # spec_workflow.py: default enable spec-first read-only hard-gate
+    "BAIZE_DOCKER_SESSION_POOL": "1",        # docker_sandbox.py: reuse warm per-session Docker container via exec
+    "BAIZE_VISUAL_VERIFY_VIEWPORTS": "desktop,mobile",  # visual_verify.py: default viewports for verify_ui
 }
 
 
@@ -358,6 +365,13 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_AUTO_DIAGNOSE_ON_EDIT": ("bool", None),
     "BAIZE_OTLP_ENDPOINT": ("any", None),
     "BAIZE_OTLP_HEADERS": ("any", None),
+    # --- V45.0.0 Nexus & V46.0.0 Sovereign ---
+    "BAIZE_SANDBOX_NET": ("enum", ("allow", "none")),
+    "BAIZE_LSP_IDLE_TIMEOUT": ("int_range", (10, 3600)),
+    "BAIZE_LSP_AUTO_DIAGNOSE": ("bool", None),
+    "BAIZE_SPEC_MODE": ("bool", None),
+    "BAIZE_DOCKER_SESSION_POOL": ("bool", None),
+    "BAIZE_VISUAL_VERIFY_VIEWPORTS": ("any", None),
 }
 
 

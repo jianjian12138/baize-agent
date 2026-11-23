@@ -3,6 +3,8 @@ name: picasso-dev-methods
 description: Use when Picasso 开发链路需要补齐方法论能力，如规划、任务拆分、TDD、系统化排障、完成前验证、代码审查处理、多代理并行与隔离策略，并要求这些方法在 skill 包内自包含、可迁移。
 ---
 
+> **Self-Contained Notice (V46)**: External Picasso monorepo references (`picasso-repo/...`) are domain-specific conventions; for general-purpose engineering projects, prefer the universal `spec_driven_dev` skill.
+
 # Picasso Dev Methods
 
 ## 定位
@@ -16,7 +18,7 @@ description: Use when Picasso 开发链路需要补齐方法论能力，如规�
 1. 主流程入口仍然是 `../picasso-dev/SKILL.md`
 2. 本 skill 只负责“怎么做更稳”，不负责替代需求产物链路
 3. 所有方法都必须服从 Picasso 既有规则：
-   - 需求产物写入 `../../workspace/requests/<request-key>/`
+   - 需求产物写入 `picasso-repo/workspace/requests/<request-key>/`
    - 编码 / SQL / 部署前先过 `doctor.sh`
    - 默认 `local-only`
    - 阶段推进以 `stage-gate.py` 为准
@@ -49,7 +51,7 @@ description: Use when Picasso 开发链路需要补齐方法论能力，如规�
 1. 先识别当前问题属于哪类方法问题，再选择对应参考
 2. 优先把方法落实到当前需求目录中的真实产物、脚本、测试和验证记录
 3. 不把宿主机外部 skill 当成运行依赖
-4. 如需引入外部 skill 内容，先登记到 `../../governance/vendor-skills.yaml`
+4. 如需引入外部 skill 内容，先登记到 `picasso-repo/governance/vendor-skills.yaml`
 5. 如需长期收编外部方法，优先内化到本 skill 的 `references/`，而不是运行时引用外部路径
 
 ## 与适配层关系
@@ -58,9 +60,9 @@ description: Use when Picasso 开发链路需要补齐方法论能力，如规�
 
 不同运行端的接入说明在仓库根目录适配层中维护：
 
-- `../../.claude-plugin/`
-- `../../.codex/`
-- `../../.opencode/`
-- `../../.openclaw/`
+- `picasso-repo/.claude-plugin/`
+- `picasso-repo/.codex/`
+- `picasso-repo/.opencode/`
+- `picasso-repo/.openclaw/`
 
 这些目录只负责说明各端如何接入 Picasso 方法层，不得复制出多套相互冲突的主流程。

@@ -168,3 +168,245 @@ def _read_text(path: str) -> str:
 
 # Backwards-friendly alias used by some docs/examples.
 MCPClientResult = dict
+
+
+# ===========================================================================
+# V46.0.0 Sovereign: Zero-Secret Curated MCP Template Catalog & Health Check
+# ===========================================================================
+
+MCP_TEMPLATES: dict[str, dict] = {
+    "filesystem": {
+        "id": "filesystem",
+        "name": "filesystem",
+        "category": "workspace",
+        "description": "Read/write local workspace files via @modelcontextprotocol/server-filesystem",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "${WORKSPACE_DIR}"],
+        "env": {},
+        "required_env": [],
+        "required_binary": "npx",
+        "install_hint": "Install Node.js 18+ (provides npx).",
+    },
+    "github": {
+        "id": "github",
+        "name": "github",
+        "category": "vcs",
+        "description": "Issues, PRs, branches, and repository search via @modelcontextprotocol/server-github",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"},
+        "required_env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+        "required_binary": "npx",
+        "install_hint": "Set GITHUB_PERSONAL_ACCESS_TOKEN in .env and install Node.js 18+.",
+    },
+    "postgres": {
+        "id": "postgres",
+        "name": "postgres",
+        "category": "database",
+        "description": "Read-only PostgreSQL schema inspection and SQL queries",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"],
+        "env": {"DATABASE_URL": "${DATABASE_URL}"},
+        "required_env": ["DATABASE_URL"],
+        "required_binary": "npx",
+        "install_hint": "Set DATABASE_URL (postgres://...) and install Node.js 18+.",
+    },
+    "sqlite": {
+        "id": "sqlite",
+        "name": "sqlite",
+        "category": "database",
+        "description": "Local SQLite database inspection via uvx mcp-server-sqlite",
+        "command": "uvx",
+        "args": ["mcp-server-sqlite", "--db-path", "${SQLITE_DB_PATH}"],
+        "env": {},
+        "required_env": ["SQLITE_DB_PATH"],
+        "required_binary": "uvx",
+        "install_hint": "Install uv (provides uvx) and set SQLITE_DB_PATH.",
+    },
+    "figma": {
+        "id": "figma",
+        "name": "figma",
+        "category": "design",
+        "description": "Read Figma design tokens, frames, and component specs",
+        "command": "npx",
+        "args": ["-y", "figma-developer-mcp", "--stdio"],
+        "env": {"FIGMA_API_KEY": "${FIGMA_API_KEY}"},
+        "required_env": ["FIGMA_API_KEY"],
+        "required_binary": "npx",
+        "install_hint": "Set FIGMA_API_KEY in .env and install Node.js 18+.",
+    },
+    "browser-cdp": {
+        "id": "browser-cdp",
+        "name": "browser-cdp",
+        "category": "browser",
+        "description": "Playwright / Chrome DevTools MCP bridge for browser automation & screenshots",
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest"],
+        "env": {},
+        "required_env": [],
+        "required_binary": "npx",
+        "install_hint": "Install Node.js 18+ and Chrome/Chromium.",
+    },
+    "fetch": {
+        "id": "fetch",
+        "name": "fetch",
+        "category": "web",
+        "description": "Fetch web pages and convert HTML to clean markdown via uvx mcp-server-fetch",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "env": {},
+        "required_env": [],
+        "required_binary": "uvx",
+        "install_hint": "Install uv (provides uvx).",
+    },
+    "slack": {
+        "id": "slack",
+        "name": "slack",
+        "category": "collaboration",
+        "description": "Read/post Slack channels and threads via @modelcontextprotocol/server-slack",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-slack"],
+        "env": {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}", "SLACK_TEAM_ID": "${SLACK_TEAM_ID}"},
+        "required_env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"],
+        "required_binary": "npx",
+        "install_hint": "Set SLACK_BOT_TOKEN and SLACK_TEAM_ID in .env and install Node.js 18+.",
+    },
+}
+
+
+def list_mcp_templates() -> list[dict]:
+    """Return metadata for all built-in zero-secret MCP server templates."""
+    import shutil
+    out: list[dict] = []
+    for tid in sorted(MCP_TEMPLATES.keys()):
+        tpl = dict(MCP_TEMPLATES[tid])
+        binary = tpl.get("required_binary") or tpl.get("command") or ""
+        tpl["binary_available"] = bool(shutil.which(binary)) if binary else True
+        out.append(tpl)
+    return out
+
+
+def render_mcp_template(template_id: str, overrides: dict | None = None) -> dict:
+    """Render an MCP server spec dict from a built-in template without persisting secrets."""
+    key = template_id.strip().lower()
+    if key not in MCP_TEMPLATES:
+        available = ", ".join(sorted(MCP_TEMPLATES.keys()))
+        raise KeyError(f"Unknown MCP template '{template_id}'. Available: {available}")
+    tpl = MCP_TEMPLATES[key]
+    ov = dict(overrides or {})
+
+    def _subst(val: str) -> str:
+        out = str(val)
+        for k, v in ov.items():
+            out = out.replace(f"${{{k}}}", str(v))
+        return out
+
+    args = [_subst(a) for a in tpl.get("args", [])]
+    env = {k: _subst(v) for k, v in (tpl.get("env") or {}).items()}
+    return {
+        "name": str(ov.get("name") or tpl["name"]),
+        "command": str(ov.get("command") or tpl["command"]),
+        "args": args,
+        "env": env,
+        "protocol_version": "2024-11-05",
+        "template_id": key,
+        "required_env": list(tpl.get("required_env", [])),
+    }
+
+
+def check_mcp_health(
+    specs: list[dict] | None = None,
+    *,
+    cfg: dict | None = None,
+    live_probe: bool = False,
+) -> dict:
+    """Audit configured or template MCP servers for binary availability, required env vars, and optional stdio handshake."""
+    import os as _os
+    import shutil
+
+    env_src = dict(_os.environ)
+    if cfg:
+        for k, v in cfg.items():
+            if v:
+                env_src[k] = str(v)
+
+    targets: list[dict] = []
+    if specs is not None:
+        targets = list(specs)
+    else:
+        raw_cfg = (cfg or {}).get("BAIZE_MCP_SERVERS") or _os.environ.get("BAIZE_MCP_SERVERS", "")
+        if str(raw_cfg).strip():
+            try:
+                parsed = json.loads(str(raw_cfg))
+                if isinstance(parsed, list):
+                    targets = [x for x in parsed if isinstance(x, dict)]
+            except Exception:
+                pass
+        if not targets:
+            # Default audit against built-in templates so users see environment readiness
+            targets = [render_mcp_template(tid) for tid in sorted(MCP_TEMPLATES.keys())]
+
+    results: list[dict] = []
+    healthy = 0
+    for sp in targets:
+        name = str(sp.get("name") or sp.get("id") or "unnamed")
+        cmd = str(sp.get("command") or "").strip()
+        cmd_path = shutil.which(cmd) if cmd else None
+        req_env = list(sp.get("required_env") or [])
+        missing_env = []
+        for var in req_env:
+            spec_val = str((sp.get("env") or {}).get(var, ""))
+            resolved = env_src.get(var, "")
+            if (not resolved) and (not spec_val or spec_val.startswith("${")):
+                missing_env.append(var)
+
+        issues: list[str] = []
+        if not cmd:
+            issues.append("missing command")
+        elif not cmd_path:
+            issues.append(f"binary '{cmd}' not found on PATH")
+        if missing_env:
+            issues.append(f"missing env var(s): {', '.join(missing_env)}")
+
+        probe_status = "skipped"
+        if live_probe and not issues:
+            try:
+                spec_obj = MCPServerSpec(
+                    name=name,
+                    command=cmd_path or cmd,
+                    args=list(sp.get("args") or []),
+                    env={k: v for k, v in (sp.get("env") or {}).items() if not str(v).startswith("${")},
+                )
+                cli = MCPClient(spec_obj)
+                try:
+                    cli.connect()
+                    tools = cli.list_tools()
+                    probe_status = f"ok ({len(tools)} tools)"
+                finally:
+                    cli.close()
+            except Exception as exc:
+                probe_status = f"failed: {exc}"
+                issues.append(f"handshake failed: {exc}")
+
+        ok = len(issues) == 0
+        if ok:
+            healthy += 1
+        tpl_meta = MCP_TEMPLATES.get(str(sp.get("template_id") or name), {})
+        results.append({
+            "name": name,
+            "command": cmd,
+            "binary_found": bool(cmd_path),
+            "missing_env": missing_env,
+            "ok": ok,
+            "issues": issues,
+            "live_probe": probe_status,
+            "install_hint": tpl_meta.get("install_hint", ""),
+        })
+
+    return {
+        "ok": healthy == len(results) and len(results) > 0,
+        "total": len(results),
+        "healthy": healthy,
+        "unhealthy": len(results) - healthy,
+        "servers": results,
+    }

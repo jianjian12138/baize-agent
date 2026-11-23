@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
+import time
 import uuid
 from typing import Any
 from pathlib import Path
@@ -53,6 +55,8 @@ class DockerSandboxDriver:
         network_mode: str = "none",
         pids_limit: int = 128,
         strict: bool = False,
+        session_id: str = "",
+        use_session_pool: bool = False,
     ):
         self.image = image
         self.workspace = str(Path(workspace).resolve())
@@ -62,6 +66,8 @@ class DockerSandboxDriver:
         self.network_mode = network_mode
         self.pids_limit = pids_limit
         self.strict = strict
+        self.session_id = session_id
+        self.use_session_pool = use_session_pool
         self.docker_available = is_docker_available()
 
     def _run_local_fallback(self, command: str) -> dict[str, Any]:
@@ -120,6 +126,20 @@ class DockerSandboxDriver:
                     "mechanism": "docker_unavailable",
                 }
             return self._run_local_fallback(command)
+
+        # Fast path: reuse warm session container via docker exec when enabled
+        if self.use_session_pool and self.session_id:
+            return get_docker_pool().exec_in_session(
+                session_id=self.session_id,
+                command=command,
+                workspace=self.workspace,
+                image=self.image,
+                timeout=self.timeout,
+                memory_limit=self.memory_limit,
+                cpu_limit=self.cpu_limit,
+                network_mode=self.network_mode,
+                pids_limit=self.pids_limit,
+            )
 
         # Build docker run invocation. The container gets an explicit unique name
         # so the timeout path can remove *the container* rather than only the
@@ -211,3 +231,185 @@ class DockerSandboxDriver:
         if res.returncode != 0 and "No such container" in err:
             return 0, f"already gone ({err})"
         return res.returncode, err
+
+
+# ---------------------------------------------------------------------------
+# V45.0.0 Nexus: Warm Per-Session Docker Container Pool (docker exec reuse)
+# ---------------------------------------------------------------------------
+
+class SessionDockerPool:
+    """Reuses a single warm Docker container per ``(session_id, workspace, image)``.
+
+    Avoids cold container startup overhead on every tool call by keeping a
+    detached container running ``sleep infinity`` and dispatching commands via
+    ``docker exec``. All pooled containers are force-removed on ``stop_all()``.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        # key -> {"container": str, "image": str, "workspace": str, "started_at": float, "exec_count": int}
+        self._containers: dict[str, dict[str, Any]] = {}
+
+    def _pool_key(self, session_id: str, workspace: str, image: str) -> str:
+        return f"{session_id}::{workspace}::{image}"
+
+    def _ensure_container(
+        self,
+        session_id: str,
+        workspace: str,
+        image: str,
+        memory_limit: str,
+        cpu_limit: str,
+        network_mode: str,
+        pids_limit: int,
+    ) -> tuple[str | None, str]:
+        key = self._pool_key(session_id, workspace, image)
+        with self._lock:
+            entry = self._containers.get(key)
+            if entry is not None:
+                return entry["container"], ""
+            safe_sid = "".join(ch for ch in session_id if ch.isalnum() or ch in ("-", "_"))[:18] or "default"
+            cname = f"baize-pool-{safe_sid}-{uuid.uuid4().hex[:6]}"
+            start_cmd = [
+                "docker", "run", "-d", "--rm",
+                "--name", cname,
+                "-v", f"{workspace}:/workspace",
+                "-w", "/workspace",
+                f"--memory={memory_limit}",
+                f"--cpus={cpu_limit}",
+                f"--network={network_mode}",
+                f"--pids-limit={pids_limit}",
+                image,
+                "sleep", "infinity",
+            ]
+            try:
+                res = subprocess.run(
+                    start_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except Exception as exc:
+                return None, f"Failed to start session container: {exc}"
+            if res.returncode != 0:
+                return None, (res.stderr or res.stdout or "docker run -d failed").strip()
+            self._containers[key] = {
+                "container": cname,
+                "session_id": session_id,
+                "image": image,
+                "workspace": workspace,
+                "started_at": time.time(),
+                "exec_count": 0,
+            }
+            return cname, ""
+
+    def exec_in_session(
+        self,
+        *,
+        session_id: str,
+        command: str,
+        workspace: str,
+        image: str = "python:3.11-slim",
+        timeout: int = 60,
+        memory_limit: str = "1g",
+        cpu_limit: str = "2.0",
+        network_mode: str = "none",
+        pids_limit: int = 128,
+    ) -> dict[str, Any]:
+        """Execute ``command`` inside a warm pooled session container via ``docker exec``."""
+        cname, err = self._ensure_container(
+            session_id, workspace, image, memory_limit, cpu_limit, network_mode, pids_limit
+        )
+        if not cname:
+            return {
+                "returncode": 1,
+                "stdout": "",
+                "stderr": f"ERROR: {err}",
+                "degraded": True,
+                "driver": "docker_error",
+            }
+        key = self._pool_key(session_id, workspace, image)
+        exec_cmd = ["docker", "exec", "-w", "/workspace", cname, "sh", "-c", command]
+        try:
+            res = proc_mod.run(exec_cmd, timeout=timeout, encoding="utf-8")
+        except Exception as exc:
+            return {
+                "returncode": 1,
+                "stdout": "",
+                "stderr": f"ERROR: Failed to exec in session Docker container: {exc}",
+                "degraded": True,
+                "driver": "docker_error",
+                "container": cname,
+            }
+        with self._lock:
+            if key in self._containers:
+                self._containers[key]["exec_count"] += 1
+        if res.timed_out:
+            # Tear down tainted container so next command gets a clean state
+            self.stop_session(session_id)
+            return {
+                "returncode": 124,
+                "stdout": res.stdout,
+                "stderr": f"ERROR: Command timed out after {timeout}s in pooled Docker container {cname} (recycled).",
+                "degraded": False,
+                "driver": "docker_session_pool",
+                "image": image,
+                "container": cname,
+            }
+        return {
+            "returncode": res.returncode,
+            "stdout": res.stdout,
+            "stderr": res.stderr,
+            "degraded": False,
+            "driver": "docker_session_pool",
+            "image": image,
+            "container": cname,
+        }
+
+    def stop_session(self, session_id: str) -> int:
+        """Stop and remove all pooled containers belonging to ``session_id``."""
+        removed = 0
+        with self._lock:
+            keys = [k for k, v in self._containers.items() if v.get("session_id") == session_id]
+            entries = [self._containers.pop(k) for k in keys]
+        for entry in entries:
+            try:
+                subprocess.run(["docker", "rm", "-f", entry["container"]], capture_output=True, timeout=15)
+            except Exception:
+                pass
+            removed += 1
+        return removed
+
+    def stop_all(self) -> int:
+        """Stop and remove all pooled containers across all sessions."""
+        with self._lock:
+            entries = list(self._containers.values())
+            self._containers.clear()
+        for entry in entries:
+            try:
+                subprocess.run(["docker", "rm", "-f", entry["container"]], capture_output=True, timeout=15)
+            except Exception:
+                pass
+        return len(entries)
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "active_containers": len(self._containers),
+                "containers": [dict(v) for v in self._containers.values()],
+            }
+
+
+_DOCKER_POOL_LOCK = threading.Lock()
+_GLOBAL_DOCKER_POOL: SessionDockerPool | None = None
+
+
+def get_docker_pool() -> SessionDockerPool:
+    """Return the singleton :class:`SessionDockerPool`."""
+    global _GLOBAL_DOCKER_POOL
+    with _DOCKER_POOL_LOCK:
+        if _GLOBAL_DOCKER_POOL is None:
+            _GLOBAL_DOCKER_POOL = SessionDockerPool()
+        return _GLOBAL_DOCKER_POOL

@@ -624,4 +624,40 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         runs = EvalHistoryStore(cfg=cfg).recent(limit=20)
         return handler._send(200, {"runs": runs, "total": len(runs)})
 
+    if req_path == "/api/platform/status":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...codebase.diagnostics import get_lsp_pool
+        from ...codebase.project_profile import detect_project_profile
+        from ...execution.sandbox import sandbox_posture
+        from ...orchestration.spec_workflow import get_spec_manager
+        from ...ext.mcp.client import MCP_TEMPLATES
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        params = parse_qs(urlparse(handler.path).query)
+        sid = (params.get("session_id") or ["default"])[0].strip() or "default"
+        return handler._send(200, {
+            "project_profile": detect_project_profile(ws).to_dict(),
+            "lsp_pool": get_lsp_pool().status(),
+            "sandbox": sandbox_posture(cfg),
+            "spec_workflow": get_spec_manager(cfg).get(sid).to_dict(),
+            "mcp_templates_count": len(MCP_TEMPLATES),
+        })
+
+    if req_path == "/api/spec":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...orchestration.spec_workflow import get_spec_manager
+        cfg = load_config()
+        params = parse_qs(urlparse(handler.path).query)
+        sid = (params.get("session_id") or ["default"])[0].strip() or "default"
+        return handler._send(200, get_spec_manager(cfg).get(sid).to_dict())
+
+    if req_path == "/api/mcp/templates":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...ext.mcp.client import list_mcp_templates
+        tpls = list_mcp_templates()
+        return handler._send(200, {"templates": tpls, "total": len(tpls)})
+
     return handler._send(404, {"error": "not found"})

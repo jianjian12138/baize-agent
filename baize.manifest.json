@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "44.0.0",
+  "version": "46.0.0",
   "phases": [
     {
       "id": "V68",
@@ -606,6 +606,42 @@
         "baize/interfaces/repl.py",
         "tests/governance/test_v44_atlas_telemetry_eval.py",
         "tests/interfaces/test_v43_v44_routes_and_bridge.py"
+      ]
+    },
+    {
+      "id": "V141",
+      "name": "V45.0.0 Nexus 多语言代码底座与零安装原生沙盒（常驻 LSP 进程池与 definition/references/hover/rename 语义工具、多语言项目指纹识别与自动校验门禁、跨语言 SymbolGraph 调用链与 TestImpactMatrix、零依赖 ctypes Linux Landlock 与强化 macOS Seatbelt 默认本地轻沙盒、会话级 Docker 热容器复用池）",
+      "status": "done",
+      "evidence": [
+        "baize/codebase/project_profile.py",
+        "baize/codebase/diagnostics.py",
+        "baize/codebase/symbol_graph.py",
+        "baize/codebase/impact.py",
+        "baize/execution/sandbox.py",
+        "baize/execution/docker_sandbox.py",
+        "baize/core/config.py",
+        "tests/codebase/test_v45_polyglot_lsp_and_profile.py",
+        "tests/execution/test_v45_native_sandbox_and_docker_pool.py"
+      ]
+    },
+    {
+      "id": "V142",
+      "name": "V46.0.0 Sovereign 通用规格硬门禁、视觉 UI 自愈闭环与 MCP 生态底座（SQLite WAL 可切换规格模式未审批前只读硬锁定、清理全部 51 处毕加索技能断链并新增通用 spec_driven_dev 技能、两阶段 CDP 多视口截图与多模态视觉 verify_ui 自检闭环、8 类预置零密钥 MCP 模板库与健康巡检、Studio 底座/规格/预览控制台及 CLI/REPL 全套指令）",
+      "status": "done",
+      "evidence": [
+        "baize/orchestration/spec_workflow.py",
+        "baize/execution/visual_verify.py",
+        "baize/core/agent.py",
+        "baize/execution/tools.py",
+        "baize/ext/mcp/client.py",
+        "assets/skills/spec_driven_dev/SKILL.md",
+        "baize/interfaces/server/routes_get.py",
+        "baize/interfaces/server/routes_post.py",
+        "baize/interfaces/studio/index.html",
+        "baize/interfaces/studio/app.js",
+        "baize/interfaces/cli.py",
+        "baize/interfaces/repl.py",
+        "tests/orchestration/test_v46_spec_visual_mcp_and_skills.py"
       ]
     }
   ]

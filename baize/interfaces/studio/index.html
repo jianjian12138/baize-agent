@@ -747,6 +747,7 @@ __STYLE_BLOCK__
           <button class="helios-tab-btn" data-helios-pane="helios-rag" onclick="switchHeliosPane('helios-rag')">混合检索与记忆</button>
           <button class="helios-tab-btn" data-helios-pane="helios-tree" onclick="switchHeliosPane('helios-tree')">会话树与回溯</button>
           <button class="helios-tab-btn" data-helios-pane="helios-gov" onclick="switchHeliosPane('helios-gov')">审计、追踪与评测</button>
+          <button class="helios-tab-btn" data-helios-pane="helios-v46" onclick="switchHeliosPane('helios-v46')">底座、规格与视觉自检</button>
         </nav>
 
         <!-- Sub-view 1: Cost Ledger & IM Channels -->
@@ -1003,6 +1004,101 @@ __STYLE_BLOCK__
               </div>
             </div>
             <pre id="helios-eval-list" class="helios-code-box">点击「运行离线基准」执行 CodingBench 并记录基线...</pre>
+          </div>
+        </div>
+
+        <!-- Sub-view 7: V45/V46 Polyglot Platform, Spec Hard-Gate, Visual UI Verify & MCP Catalog -->
+        <div id="helios-v46" class="helios-pane">
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>多语言底座、LSP 池与零安装沙盒态势</h3>
+                <span class="helios-hint" id="helios-v46-meta">自动识别项目指纹、常驻 LSP 进程池与本机 OS 轻沙盒边界</span>
+              </div>
+              <button class="chip-btn" onclick="loadHeliosPlatformStatus()">刷新底座态势</button>
+            </div>
+            <div class="helios-kpi-grid" id="helios-v46-kpis">
+              <div class="helios-kpi-card">
+                <div class="helios-kpi-label">项目技术栈</div>
+                <div class="helios-kpi-value" id="helios-v46-langs">-</div>
+                <div class="helios-kpi-meta" id="helios-v46-pm">包管理器：-</div>
+              </div>
+              <div class="helios-kpi-card">
+                <div class="helios-kpi-label">常驻 LSP 会话池</div>
+                <div class="helios-kpi-value tabular-nums" id="helios-v46-lsp">0</div>
+                <div class="helios-kpi-meta">懒启动 + 空闲自动回收</div>
+              </div>
+              <div class="helios-kpi-card">
+                <div class="helios-kpi-label">沙盒隔离层级</div>
+                <div class="helios-kpi-value" id="helios-v46-sbx">-</div>
+                <div class="helios-kpi-meta" id="helios-v46-sbx-meta">默认本地免装轻沙盒</div>
+              </div>
+              <div class="helios-kpi-card">
+                <div class="helios-kpi-label">规格门禁状态</div>
+                <div class="helios-kpi-value" id="helios-v46-spec-badge">未启用</div>
+                <div class="helios-kpi-meta" id="helios-v46-spec-phase">phase: disabled</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>通用规格驱动硬门禁 (Spec-Driven Hard-Gate)</h3>
+                <span class="helios-hint">开启后未审批前自动锁定所有写入/执行类工具，审批后即时放行</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="updateHeliosSpec('enable')">开启规格锁定</button>
+                <button class="chip-btn" onclick="updateHeliosSpec('approve')">批准规格放行</button>
+                <button class="chip-btn helios-danger-btn" onclick="updateHeliosSpec('reject')">退回修改</button>
+                <button class="chip-btn" onclick="updateHeliosSpec('disable')">关闭规格模式</button>
+              </div>
+            </div>
+            <div class="helios-form-row">
+              <input id="helios-spec-sid" type="text" value="default" placeholder="会话 ID (default)" />
+              <input id="helios-spec-summary" type="text" placeholder="规格摘要（提交草案时填写）" />
+              <button class="chip-btn" onclick="updateHeliosSpec('draft')">提交规格草案</button>
+            </div>
+            <pre id="helios-spec-detail" class="helios-code-box">点击「刷新底座态势」查看当前会话规格门禁详情...</pre>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>实时应用预览与 CDP + 多模态视觉自检</h3>
+                <span class="helios-hint">支持桌面 (1280px) / 移动端 (390px) 双视口截图、控制台报错与破图自检</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="setHeliosPreviewViewport('desktop')">桌面 1280px</button>
+                <button class="chip-btn" onclick="setHeliosPreviewViewport('mobile')">移动 390px</button>
+                <button class="chip-btn" onclick="runHeliosVisualVerify()">执行视觉自检</button>
+              </div>
+            </div>
+            <div class="helios-form-row">
+              <input id="helios-ui-url" type="text" value="http://127.0.0.1:3000" placeholder="输入本地预览 URL (如 http://127.0.0.1:3000)" />
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input id="helios-ui-vision" type="checkbox" /> 启用多模态视觉评审
+              </label>
+              <button class="chip-btn" onclick="loadHeliosPreviewIframe()">加载预览</button>
+            </div>
+            <div id="helios-ui-frame-wrap" style="margin-top:8px;overflow:auto;border:1px solid var(--border, #2a2f3a);border-radius:8px;background:#0d1017;padding:8px;">
+              <iframe id="helios-ui-iframe" title="Baize Live App Preview" sandbox="allow-scripts allow-same-origin allow-forms" style="width:100%;height:320px;border:0;border-radius:6px;background:#fff;"></iframe>
+            </div>
+            <pre id="helios-ui-verify-out" class="helios-code-box" style="margin-top:8px;">点击「执行视觉自检」运行多视口 DOM/Console/视觉检查...</pre>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>预置 MCP 生态模板库与健康自检</h3>
+                <span class="helios-hint">零密钥模板一键巡检：自动检查本机依赖二进制与环境变量就绪度</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosMcpTemplates()">加载模板库</button>
+                <button class="chip-btn" onclick="checkHeliosMcpHealth()">运行健康自检</button>
+              </div>
+            </div>
+            <pre id="helios-mcp-out" class="helios-code-box">点击「加载模板库」或「运行健康自检」查看 8 类预置 MCP 服务状态...</pre>
           </div>
         </div>
       </div>

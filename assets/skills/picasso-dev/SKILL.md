@@ -3,6 +3,8 @@ name: picasso-dev
 description: Use when Picasso 项目需要统一推进新需求、需求变更、Bug 修复或 UI 优化，并希望按标准流程生成需求、方案、UI、任务、自测、审查、验收等产物后再进入开发。
 ---
 
+> **Self-Contained Notice (V46)**: External Picasso monorepo references (`picasso-repo/...`) are domain-specific conventions; for general-purpose engineering projects, prefer the universal `spec_driven_dev` skill.
+
 # Picasso Dev
 
 ## 定位
@@ -29,23 +31,23 @@ description: Use when Picasso 项目需要统一推进新需求、需求变更�
 
 ## 必须先读取
 
-1. `../../profiles/picasso/profile.yaml`
-2. `../../profiles/picasso/repo-map.md`
-3. `../../profiles/picasso/execution-modes.md`
-4. `../../shared/references/naming.md`
-5. `../../shared/references/artifact-standard.md`
-6. `../../profiles/picasso/environments.md`
-7. `../../profiles/picasso/配置入口说明.md`
-8. `../../shared/references/requirements/README.md`
-9. `../../shared/references/requirements/Codex CLI 标准执行输入.md`
-10. `../../shared/references/task/README.md`
-11. `../../shared/references/quality/前端开发自测清单.md`
-12. `../../shared/references/quality/两关制冒烟测试说明.md`
+1. `picasso-repo/profiles/picasso/profile.yaml`
+2. `picasso-repo/profiles/picasso/repo-map.md`
+3. `picasso-repo/profiles/picasso/execution-modes.md`
+4. `picasso-repo/shared/references/naming.md`
+5. `picasso-repo/shared/references/artifact-standard.md`
+6. `picasso-repo/profiles/picasso/environments.md`
+7. `picasso-repo/profiles/picasso/配置入口说明.md`
+8. `picasso-repo/shared/references/requirements/README.md`
+9. `picasso-repo/shared/references/requirements/Codex CLI 标准执行输入.md`
+10. `picasso-repo/shared/references/task/README.md`
+11. `picasso-repo/shared/references/quality/前端开发自测清单.md`
+12. `picasso-repo/shared/references/quality/两关制冒烟测试说明.md`
 13. 根据任务类型读取对应工作流：
-   - 新需求：`../../shared/workflow/new-feature.md`
-   - 需求变更：`../../shared/workflow/change-request.md`
-   - Bug 修复：`../../shared/workflow/bugfix.md`
-   - UI 优化：`../../shared/workflow/ui-optimization.md`
+   - 新需求：`picasso-repo/shared/workflow/new-feature.md`
+   - 需求变更：`picasso-repo/shared/workflow/change-request.md`
+   - Bug 修复：`picasso-repo/shared/workflow/bugfix.md`
+   - UI 优化：`picasso-repo/shared/workflow/ui-optimization.md`
 
 若 `workspace/requests/<request-key>/` 已存在，还必须继续读取：
 

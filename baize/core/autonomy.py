@@ -11,7 +11,8 @@ from ..execution.tools import command_allowed
 # Tools that never mutate the workspace / environment.
 READONLY_TOOLS = {
     "read_file", "list_dir", "search_skills", "load_skill",
-    "memory_recall",
+    "memory_recall", "lsp_definition", "lsp_references",
+    "lsp_hover", "verify_ui",
 }
 
 # Tools that can irreversibly change state / run untrusted logic.

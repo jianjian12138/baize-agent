@@ -12,17 +12,18 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (70 modules)
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (73 modules)
 ├── core/                           # 10 modules: agent loop, context engine, cost ledger, plugin lifecycle, LLM client, config, sessions, autonomy
 │   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  cost_ledger.py  llm.py  plugin.py  plugin_lifecycle.py  sessions.py
-├── orchestration/                  # 7 modules: Director->Executor->Verifier DAG, contracts, hooks, ledger
-│   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  system1.py  team.py
-├── execution/                      # 10 modules: tools, bg_proc, worktree pool, CDP browser, tiered sandbox, Git checkpoints, proc, PowerShell, Docker
-│   ├── bg_proc.py  browser_verify.py  cdp_browser.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py  worktree.py
-├── codebase/                       # 7 orthogonal static code intelligence & diagnostics modules
+├── orchestration/                  # 8 modules: Director->Executor->Verifier DAG, spec hard-gate, contracts, hooks, ledger
+│   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  spec_workflow.py  system1.py  team.py
+├── execution/                      # 11 modules: tools, bg_proc, worktree pool, CDP & visual UI verify, native sandbox, Git checkpoints, proc, PowerShell, Docker pool
+│   ├── bg_proc.py  browser_verify.py  cdp_browser.py  checkpoint.py  docker_sandbox.py  powershell.py  proc.py  sandbox.py  tools.py  visual_verify.py  worktree.py
+├── codebase/                       # 8 orthogonal static code intelligence, profile & diagnostics modules
 │   ├── arch_cache.py               # incremental mtime/size-keyed SQLite architecture cache
 │   ├── diagnostics.py              # zero-dependency stdio LSP client & compiler/linter diagnostic bridge
 │   ├── impact.py                   # blast-radius analyzer, test-impact matrix & unified change-impact
+│   ├── project_profile.py          # polyglot project fingerprint detection & automated build/test/lint gate
 │   ├── recon.py                    # pre-flight prior-art & skill library reconnaissance
 │   ├── repo_map.py                 # flat + L0/L1/L2 hierarchical repo maps & AST context slicer
 │   ├── symbol_graph.py             # AST/regex symbol graph, PageRank, canonical SKIP_DIRS/SUPPORTED_EXTS

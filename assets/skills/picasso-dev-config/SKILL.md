@@ -3,6 +3,8 @@ name: picasso-dev-config
 description: Use when Picasso 开发链路中需要处理菜单、字典、SQL、环境配置、初始化数据或联调配置，避免因配置缺失导致页面入口、枚举值或接口能力不完整。
 ---
 
+> **Self-Contained Notice (V46)**: External Picasso monorepo references (`picasso-repo/...`) are domain-specific conventions; for general-purpose engineering projects, prefer the universal `spec_driven_dev` skill.
+
 # Picasso Dev Config
 
 ## 定位
@@ -18,8 +20,8 @@ description: Use when Picasso 开发链路中需要处理菜单、字典、SQL�
 
 ## 必须先读取
 
-1. `../../profiles/picasso/profile.yaml`
-2. `../../profiles/picasso/environments.md`
+1. `picasso-repo/profiles/picasso/profile.yaml`
+2. `picasso-repo/profiles/picasso/environments.md`
 3. 当前需求目录中的：
    - `manifest.json`
    - `00-需求总览.md`
@@ -27,9 +29,9 @@ description: Use when Picasso 开发链路中需要处理菜单、字典、SQL�
    - `*-技术方案.md`
    - `*-任务分解.md`
 4. 模板：
-   - `../../shared/templates/config/MENU_DATA.md`
-   - `../../shared/templates/config/DICT_DATA.md`
-   - `../../shared/templates/config/sql-change.sql`
+   - `picasso-repo/shared/templates/config/MENU_DATA.md`
+   - `picasso-repo/shared/templates/config/DICT_DATA.md`
+   - `picasso-repo/shared/templates/config/sql-change.sql`
 
 ## 什么时候使用
 

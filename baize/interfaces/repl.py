@@ -55,6 +55,11 @@ Available Slash Commands:
   /bg [list|output|stop] Manage background shell processes
   /budget [usd|reset]  Inspect session cost/cache ledger or set hard USD cap (V42)
   /worktree [list|cleanup] Inspect or clean up isolated parallel Git worktrees (V42)
+  /spec [on|off|status|approve|reject] Control Spec-Driven read-only hard-gate (V46)
+  /lsp [status|stop]   Inspect or stop persistent LSP server pool (V45)
+  /sandbox             Inspect active zero-install OS sandbox & Docker pool posture (V45)
+  /verify-ui <url>     Run multi-viewport CDP & visual UI verification (V46)
+  /mcp-templates       List built-in zero-secret MCP templates & readiness (V46)
   /search <query>      Run persistent SQLite FTS5 + Embedding hybrid search (V42)
   /cost                Inspect session token usage and estimated cost
   /trace               Inspect step-by-step tool execution timeline & latency
@@ -479,6 +484,68 @@ class BaizeREPL:
             for e in ledger.list_entries(limit=10):
                 print(f"  #{e['seq']} [{e['event_type']}] {e['actor']} -> {e['target']} ({e['outcome']})")
             return
+
+        if cmd == "/spec":
+            from ..orchestration.spec_workflow import get_spec_manager
+            mgr = get_spec_manager(self.cfg)
+            sid = self.session.id
+            sub_act = (arg.split()[0].lower() if arg else "status")
+            rest = arg[len(sub_act):].strip() if arg else ""
+            if sub_act == "on":
+                st = mgr.enable(sid, note=rest)
+            elif sub_act == "off":
+                st = mgr.disable(sid, note=rest)
+            elif sub_act == "approve":
+                st = mgr.approve(sid, actor="repl_user", note=rest)
+            elif sub_act == "reject":
+                st = mgr.reject(sid, reason=rest)
+            elif sub_act == "draft":
+                st = mgr.submit_spec(sid, summary=rest or "Spec draft")
+            else:
+                st = mgr.get(sid)
+            gate = "LOCKED (read-only)" if st.write_locked else "UNLOCKED"
+            print(f"Spec Workflow [{sid}]: enabled={st.enabled} phase={st.phase} gate={gate}")
+            return True
+
+        if cmd == "/lsp":
+            from ..codebase.diagnostics import get_lsp_pool
+            pool = get_lsp_pool()
+            if arg.strip().lower() == "stop":
+                n = pool.shutdown_all()
+                print(f"Stopped {n} pooled LSP session(s).")
+            else:
+                st = pool.status()
+                print(f"LSP Pool: active={st['active_count']} idle_timeout={st['idle_timeout_s']}s")
+                for s in st["sessions"]:
+                    print(f"  - [{s['language']}] {s['workspace']} docs={s['open_documents']}")
+            return True
+
+        if cmd == "/sandbox":
+            from ..execution.sandbox import sandbox_posture
+            post = sandbox_posture(self.cfg)
+            print(
+                f"Sandbox: mode={post['configured_mode']} effective={post['effective_isolation']} "
+                f"landlock={post['landlock_driver']} net={post['network_policy']} "
+                f"docker={post['docker_available']}"
+            )
+            return True
+
+        if cmd == "/verify-ui":
+            target_url = arg.strip()
+            if not target_url:
+                print("Usage: /verify-ui <http://127.0.0.1:3000>")
+                return True
+            from ..execution.visual_verify import verify_ui
+            rep = verify_ui(target_url, cfg=self.cfg)
+            print(rep.format_for_agent())
+            return True
+
+        if cmd == "/mcp-templates":
+            from ..ext.mcp.client import list_mcp_templates
+            for t in list_mcp_templates():
+                mark = "READY" if t["binary_available"] else "MISSING-BIN"
+                print(f"  - {t['id']:12s} [{mark}] ({t['category']}) {t['description']}")
+            return True
 
         if cmd == "/traces":
             from ..governance.telemetry import get_tracer

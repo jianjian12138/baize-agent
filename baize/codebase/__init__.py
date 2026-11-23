@@ -1,4 +1,4 @@
-"""baize.codebase — 6 orthogonal static code intelligence modules."""
+"""baize.codebase — 7 orthogonal static code intelligence modules."""
 from __future__ import annotations
 
 import importlib
@@ -35,8 +35,14 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "Diagnostic": (".diagnostics", "Diagnostic"),
     "DiagnosticReport": (".diagnostics", "DiagnosticReport"),
     "LspClient": (".diagnostics", "LspClient"),
+    "LspSessionPool": (".diagnostics", "LspSessionPool"),
+    "get_lsp_pool": (".diagnostics", "get_lsp_pool"),
     "diagnose_file": (".diagnostics", "diagnose_file"),
     "diagnose_workspace": (".diagnostics", "diagnose_workspace"),
+    "ProjectProfile": (".project_profile", "ProjectProfile"),
+    "detect_project_profile": (".project_profile", "detect_project_profile"),
+    "run_polyglot_gate": (".project_profile", "run_polyglot_gate"),
+    "clear_profile_cache": (".project_profile", "clear_profile_cache"),
 }
 
 __all__ = list(_EXPORTS)

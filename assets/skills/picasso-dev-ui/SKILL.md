@@ -3,6 +3,8 @@ name: picasso-dev-ui
 description: Use when Picasso 需求进入 UI 设计阶段，或需要优化 PC Web、微信小程序、移动端 App 的页面结构、视觉层级、交互路径、状态设计和端适配体验。
 ---
 
+> **Self-Contained Notice (V46)**: External Picasso monorepo references (`picasso-repo/...`) are domain-specific conventions; for general-purpose engineering projects, prefer the universal `spec_driven_dev` skill.
+
 # Picasso Dev UI
 
 ## 定位
@@ -27,10 +29,10 @@ description: Use when Picasso 需求进入 UI 设计阶段，或需要优化 PC 
 
 ## 必须先读取
 
-1. `../../profiles/picasso/profile.yaml`
-2. `../../profiles/picasso/conventions.md`
-3. `../../shared/templates/UI交互设计模板.md`
-4. `../../shared/templates/页面接口验收总表模板.md`
+1. `picasso-repo/profiles/picasso/profile.yaml`
+2. `picasso-repo/profiles/picasso/conventions.md`
+3. `picasso-repo/shared/templates/UI交互设计模板.md`
+4. `picasso-repo/shared/templates/页面接口验收总表模板.md`
 5. 当前需求目录中的：
    - `manifest.json`
    - `00-需求总览.md`

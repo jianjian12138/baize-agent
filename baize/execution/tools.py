@@ -330,15 +330,19 @@ def _check_blast_radius(file_path: Path, old_code: str, new_code: str) -> str:
 
 
 def _auto_diagnose_after_edit(file_path: Path) -> str:
-    """V44: Fast post-edit syntax/diagnostic feedback loop for self-healing."""
-    if file_path.suffix.lower() not in (".py", ".ts", ".tsx", ".js", ".jsx", ".json"):
+    """V44/V45: Fast post-edit polyglot syntax/diagnostic + optional pooled LSP feedback loop."""
+    if file_path.suffix.lower() not in (
+        ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+        ".go", ".rs", ".java", ".dart", ".c", ".cpp", ".cc", ".h", ".hpp", ".json",
+    ):
         return ""
     try:
         cfg = load_config()
         if str(cfg.get("BAIZE_AUTO_DIAGNOSE_ON_EDIT", "1")).strip() == "0":
             return ""
         from ..codebase.diagnostics import diagnose_file
-        rep = diagnose_file(str(file_path), workspace=str(_workspace_root(cfg)), use_lsp=False)
+        use_lsp = str(cfg.get("BAIZE_LSP_AUTO_DIAGNOSE", "0")).strip().lower() in ("1", "true", "yes")
+        rep = diagnose_file(str(file_path), workspace=str(_workspace_root(cfg)), use_lsp=use_lsp)
         if not rep.ok and rep.diagnostics:
             summary = "; ".join(
                 f"L{iss.line}:{iss.message}" for iss in rep.diagnostics[:4]
@@ -1095,6 +1099,112 @@ def _tool_memory_profile(slot: str = "memory", action: str = "read", content: st
     return json.dumps(store.update(slot, action, content=content, target=target), ensure_ascii=False)
 
 
+def _tool_lsp_definition(path: str, line: int, col: int = 1) -> str:
+    """Jump to symbol definition via persistent LSP pool (falls back to SymbolGraph)."""
+    cfg = load_config()
+    ws = _workspace_root(cfg)
+    target = _safe_path(path, cfg)
+    from ..codebase.diagnostics import get_lsp_pool
+    try:
+        client = get_lsp_pool().get_or_start(target, workspace=ws)
+        if client is not None:
+            locs = client.definition(target, int(line), int(col))
+            return json.dumps({"backend": "lsp", "locations": locs}, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return json.dumps({"backend": "lsp", "error": str(exc), "locations": []}, ensure_ascii=False)
+    # Honest fallback: local SymbolGraph definition lookup on word under cursor
+    try:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_line = lines[max(0, int(line) - 1)] if lines else ""
+        import re as _re
+        toks = _re.findall(r"[A-Za-z_][A-Za-z0-9_]*", src_line)
+        from ..codebase.symbol_graph import build_workspace_symbol_graph
+        graph = build_workspace_symbol_graph(str(ws))
+        hits = []
+        for tok in toks:
+            defs = graph.find_definitions(tok)
+            if defs:
+                hits.extend(defs[:3])
+                break
+        return json.dumps({
+            "backend": "symbol_graph_fallback",
+            "note": "No language server installed on PATH; used local SymbolGraph fallback.",
+            "locations": hits,
+        }, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return f"ERROR: lsp_definition failed: {exc}"
+
+
+def _tool_lsp_references(path: str, line: int, col: int = 1, include_declaration: bool = True) -> str:
+    """Find cross-file references to symbol at (line, col) via persistent LSP pool."""
+    cfg = load_config()
+    ws = _workspace_root(cfg)
+    target = _safe_path(path, cfg)
+    from ..codebase.diagnostics import get_lsp_pool
+    try:
+        client = get_lsp_pool().get_or_start(target, workspace=ws)
+        if client is None:
+            return json.dumps({
+                "backend": "none",
+                "note": "No language server installed on PATH for this file extension.",
+                "locations": [],
+            }, ensure_ascii=False)
+        locs = client.references(target, int(line), int(col), include_declaration=bool(include_declaration))
+        return json.dumps({"backend": "lsp", "count": len(locs), "locations": locs[:50]}, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return f"ERROR: lsp_references failed: {exc}"
+
+
+def _tool_lsp_hover(path: str, line: int, col: int = 1) -> str:
+    """Inspect inferred type signature / docstring via persistent LSP pool."""
+    cfg = load_config()
+    ws = _workspace_root(cfg)
+    target = _safe_path(path, cfg)
+    from ..codebase.diagnostics import get_lsp_pool
+    try:
+        client = get_lsp_pool().get_or_start(target, workspace=ws)
+        if client is None:
+            return json.dumps({
+                "backend": "none",
+                "note": "No language server installed on PATH for this file extension.",
+                "contents": "",
+            }, ensure_ascii=False)
+        info = client.hover(target, int(line), int(col))
+        return json.dumps({"backend": "lsp", **info}, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return f"ERROR: lsp_hover failed: {exc}"
+
+
+def _tool_lsp_rename(path: str, line: int, col: int, new_name: str, apply: bool = False) -> str:
+    """Compute (and optionally apply) a semantic workspace rename via persistent LSP pool."""
+    cfg = load_config()
+    ws = _workspace_root(cfg)
+    target = _safe_path(path, cfg)
+    from ..codebase.diagnostics import get_lsp_pool
+    try:
+        client = get_lsp_pool().get_or_start(target, workspace=ws)
+        if client is None:
+            return json.dumps({
+                "ok": False,
+                "applied": False,
+                "note": "No language server installed on PATH for this file extension.",
+            }, ensure_ascii=False)
+        res = client.rename(target, int(line), int(col), str(new_name), apply=bool(apply))
+        return json.dumps(res, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return f"ERROR: lsp_rename failed: {exc}"
+
+
+def _tool_verify_ui(url: str, viewports: str = "", check_visual: bool = False) -> str:
+    """Run two-stage CDP + optional multimodal visual UI verification against a URL."""
+    cfg = load_config()
+    vp_raw = viewports.strip() or str(cfg.get("BAIZE_VISUAL_VERIFY_VIEWPORTS", "desktop,mobile") or "desktop,mobile")
+    vp_list = [v.strip() for v in vp_raw.split(",") if v.strip()]
+    from .visual_verify import verify_ui
+    rep = verify_ui(url, viewports=vp_list, check_visual=bool(check_visual), cfg=cfg)
+    return rep.format_for_agent() + "\n" + json.dumps(rep.to_dict(), ensure_ascii=False, indent=2)[:2500]
+
+
 def default_registry() -> ToolRegistry:
     global _DEFAULT_REGISTRY
     if _DEFAULT_REGISTRY is None:
@@ -1228,6 +1338,40 @@ def default_registry() -> ToolRegistry:
                         content={"type": "string", "_opt": True},
                         target={"type": "string", "_opt": True}),
                      _tool_memory_profile)
+        # V45/V46: Persistent LSP semantic tools & Visual UI verification
+        reg.register("lsp_definition",
+                     "Jump to symbol definition at (path, line, col) via persistent LSP pool (with SymbolGraph fallback).",
+                     _s(path={"type": "string"},
+                        line={"type": "integer"},
+                        col={"type": "integer", "_opt": True}),
+                     _tool_lsp_definition)
+        reg.register("lsp_references",
+                     "Find cross-file references to symbol at (path, line, col) via persistent LSP pool.",
+                     _s(path={"type": "string"},
+                        line={"type": "integer"},
+                        col={"type": "integer", "_opt": True},
+                        include_declaration={"type": "boolean", "_opt": True}),
+                     _tool_lsp_references)
+        reg.register("lsp_hover",
+                     "Inspect inferred type signature and documentation at (path, line, col) via persistent LSP pool.",
+                     _s(path={"type": "string"},
+                        line={"type": "integer"},
+                        col={"type": "integer", "_opt": True}),
+                     _tool_lsp_hover)
+        reg.register("lsp_rename",
+                     "Compute or apply a workspace-wide semantic symbol rename via persistent LSP pool.",
+                     _s(path={"type": "string"},
+                        line={"type": "integer"},
+                        col={"type": "integer"},
+                        new_name={"type": "string"},
+                        apply={"type": "boolean", "_opt": True}),
+                     _tool_lsp_rename)
+        reg.register("verify_ui",
+                     "Verify a live web app UI across viewports (desktop/mobile) via CDP DOM/console/layout checks and optional multimodal vision review.",
+                     _s(url={"type": "string"},
+                        viewports={"type": "string", "_opt": True},
+                        check_visual={"type": "boolean", "_opt": True}),
+                     _tool_verify_ui)
         # V33-A2: fetch_url - opt-in HTTP retrieval (BAIZE_ALLOW_FETCH_URL=1)
         cfg = load_config()
         if cfg.get("BAIZE_ALLOW_FETCH_URL", "0") == "1":

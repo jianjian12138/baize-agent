@@ -31,6 +31,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "get_system1_engine": (".system1", "get_system1_engine"),
     "RalphLoopEngine": (".contract", "RalphLoopEngine"),
     "CoreInvariantsAnchor": (".contract", "CoreInvariantsAnchor"),
+    "SPEC_PHASES": (".spec_workflow", "SPEC_PHASES"),
+    "LOCKED_PHASES": (".spec_workflow", "LOCKED_PHASES"),
+    "SpecState": (".spec_workflow", "SpecState"),
+    "SpecWorkflowManager": (".spec_workflow", "SpecWorkflowManager"),
+    "get_spec_manager": (".spec_workflow", "get_spec_manager"),
 }
 
 __all__ = list(_EXPORTS)

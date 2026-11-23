@@ -3,6 +3,8 @@ name: picasso-dev-maintainer
 description: Use when modifying picasso-dev-skill 自身的 skill、模板、脚本、README、profile 或规则文件，并需要同步维护 CHANGELOG、更新记录、决策记录和迁移说明。
 ---
 
+> **Self-Contained Notice (V46)**: External Picasso monorepo references (`picasso-repo/...`) are domain-specific conventions; for general-purpose engineering projects, prefer the universal `spec_driven_dev` skill.
+
 # Picasso Dev Maintainer
 
 ## 定位
@@ -17,11 +19,11 @@ description: Use when modifying picasso-dev-skill 自身的 skill、模板、脚
 
 ## 必须先读取
 
-1. `../../AGENTS.md`
-2. `../../governance/INDEX.md`
-3. `../../governance/CHANGELOG.md`
-4. `../../governance/maintainers.md`
-5. 最近一条更新记录：`../../governance/updates/`
+1. `picasso-repo/AGENTS.md`
+2. `picasso-repo/governance/INDEX.md`
+3. `picasso-repo/governance/CHANGELOG.md`
+4. `picasso-repo/governance/maintainers.md`
+5. 最近一条更新记录：`picasso-repo/governance/updates/`
 
 ## 强制规则
 

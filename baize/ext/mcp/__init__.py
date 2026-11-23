@@ -14,7 +14,15 @@ Modules:
 """
 from __future__ import annotations
 
-from .client import MCPClient, MCPServerSpec, McpTool
+from .client import (
+    MCP_TEMPLATES,
+    MCPClient,
+    MCPServerSpec,
+    McpTool,
+    check_mcp_health,
+    list_mcp_templates,
+    render_mcp_template,
+)
 from .component import MCPComponent, MCPToolProvider
 from .dispatcher import (
     DEFAULT_MCP_CONFIG,
@@ -42,4 +50,8 @@ __all__ = [
     "load_mcp_servers",
     "list_all_mcp_tools",
     "call_mcp_tool",
+    "MCP_TEMPLATES",
+    "list_mcp_templates",
+    "render_mcp_template",
+    "check_mcp_health",
 ]

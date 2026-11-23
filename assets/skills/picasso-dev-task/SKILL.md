@@ -3,6 +3,8 @@ name: picasso-dev-task
 description: Use when Picasso 需求涉及服务端接口、数据库表结构、删除策略、编码规则、OpenSpec 任务推进或后端实现联动，需要把业务需求翻译成服务端可执行任务和技术方案。
 ---
 
+> **Self-Contained Notice (V46)**: External Picasso monorepo references (`picasso-repo/...`) are domain-specific conventions; for general-purpose engineering projects, prefer the universal `spec_driven_dev` skill.
+
 # Picasso Dev Task
 
 ## 定位
@@ -18,22 +20,22 @@ description: Use when Picasso 需求涉及服务端接口、数据库表结构�
 
 ## 必须先读取
 
-1. `../../profiles/picasso/profile.yaml`
-2. `../../profiles/picasso/repo-map.md`
-3. `../../profiles/picasso/tech-stack.md`
-4. `../../profiles/picasso/配置入口说明.md`
-5. `../../shared/references/requirements/README.md`
-6. `../../shared/references/task/README.md`
+1. `picasso-repo/profiles/picasso/profile.yaml`
+2. `picasso-repo/profiles/picasso/repo-map.md`
+3. `picasso-repo/profiles/picasso/tech-stack.md`
+4. `picasso-repo/profiles/picasso/配置入口说明.md`
+5. `picasso-repo/shared/references/requirements/README.md`
+6. `picasso-repo/shared/references/task/README.md`
 7. 按需继续读取：
-   - `../../shared/references/task/服务端任务路径布局.md`
-   - `../../shared/references/task/服务端任务门槛校验.md`
-   - `../../shared/references/task/服务端设计约束.md`
-   - `../../shared/references/task/服务端任务状态管理.md`
-   - `../../shared/references/task/服务端任务归档恢复与撤销.md`
-   - `../../shared/references/task/服务端需求变更流程.md`
-   - `../../shared/references/task/服务端快捷触发语义.md`
-   - `../../shared/references/task/服务端 Codex 协作规范.md`
-   - `../../shared/references/task/子产品与模块映射.md`
+   - `picasso-repo/shared/references/task/服务端任务路径布局.md`
+   - `picasso-repo/shared/references/task/服务端任务门槛校验.md`
+   - `picasso-repo/shared/references/task/服务端设计约束.md`
+   - `picasso-repo/shared/references/task/服务端任务状态管理.md`
+   - `picasso-repo/shared/references/task/服务端任务归档恢复与撤销.md`
+   - `picasso-repo/shared/references/task/服务端需求变更流程.md`
+   - `picasso-repo/shared/references/task/服务端快捷触发语义.md`
+   - `picasso-repo/shared/references/task/服务端 Codex 协作规范.md`
+   - `picasso-repo/shared/references/task/子产品与模块映射.md`
 8. 当前需求目录：
    - `manifest.json`
    - `00-需求总览.md`

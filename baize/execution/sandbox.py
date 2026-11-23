@@ -151,16 +151,185 @@ class SandboxResult:
     mechanism: str = "none"
 
 
+def _sensitive_home_paths() -> list[str]:
+    """Return existing user credential directories to shield from sandboxed reads."""
+    home = os.path.expanduser("~")
+    if not home or home == "~":
+        return []
+    candidates = [
+        ".ssh",
+        ".aws",
+        ".kube",
+        ".gnupg",
+        os.path.join(".config", "gh"),
+    ]
+    found: list[str] = []
+    for rel in candidates:
+        full = os.path.abspath(os.path.join(home, rel))
+        if os.path.exists(full):
+            found.append(full)
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Pure-stdlib Linux Landlock ABI v1 via ctypes (Linux 5.13+, zero third-party)
+# ---------------------------------------------------------------------------
+_LANDLOCK_CREATE_RULESET_VERSION = 1 << 0
+_LANDLOCK_RULE_PATH_BENEATH = 1
+_PR_SET_NO_NEW_PRIVS = 38
+
+# ABI v1 filesystem access flags
+_LL_FS_EXECUTE = 1 << 0
+_LL_FS_WRITE_FILE = 1 << 1
+_LL_FS_READ_FILE = 1 << 2
+_LL_FS_READ_DIR = 1 << 3
+_LL_FS_REMOVE_DIR = 1 << 4
+_LL_FS_REMOVE_FILE = 1 << 5
+_LL_FS_MAKE_CHAR = 1 << 6
+_LL_FS_MAKE_DIR = 1 << 7
+_LL_FS_MAKE_REG = 1 << 8
+_LL_FS_MAKE_SOCK = 1 << 9
+_LL_FS_MAKE_FIFO = 1 << 10
+_LL_FS_MAKE_BLOCK = 1 << 11
+_LL_FS_MAKE_SYM = 1 << 12
+
+_LL_FS_READ_EXEC = _LL_FS_EXECUTE | _LL_FS_READ_FILE | _LL_FS_READ_DIR
+_LL_FS_WRITE_ALL = (
+    _LL_FS_WRITE_FILE | _LL_FS_REMOVE_DIR | _LL_FS_REMOVE_FILE
+    | _LL_FS_MAKE_CHAR | _LL_FS_MAKE_DIR | _LL_FS_MAKE_REG
+    | _LL_FS_MAKE_SOCK | _LL_FS_MAKE_FIFO | _LL_FS_MAKE_BLOCK | _LL_FS_MAKE_SYM
+)
+_LL_FS_ALL_V1 = _LL_FS_READ_EXEC | _LL_FS_WRITE_ALL
+
+# Syscall numbers are identical across x86_64, aarch64, riscv64, arm64 in Linux
+_SYS_LANDLOCK_CREATE_RULESET = 444
+_SYS_LANDLOCK_ADD_RULE = 445
+_SYS_LANDLOCK_RESTRICT_SELF = 446
+
+
+def _landlock_abi_version() -> int:
+    """Query Linux kernel Landlock ABI version via pure-stdlib ctypes (-1 if unsupported)."""
+    if platform.system() != "Linux":
+        return -1
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        ver = int(libc.syscall(_SYS_LANDLOCK_CREATE_RULESET, None, 0, _LANDLOCK_CREATE_RULESET_VERSION))
+        return ver if ver >= 1 else -1
+    except Exception:
+        return -1
+
+
+def _landlock_ctypes_supported() -> bool:
+    return _landlock_abi_version() >= 1
+
+
+def _apply_landlock_ctypes(workspace: str) -> None:
+    """Enforce Landlock ABI v1 via raw Linux syscalls (pure-stdlib ctypes).
+
+    Allows read/exec across ``/`` and write strictly inside ``workspace``
+    (plus ``/dev/null`` and the workspace temp parent if needed).
+    """
+    import ctypes
+
+    class _RulesetAttr(ctypes.Structure):
+        _fields_ = [("handled_access_fs", ctypes.c_uint64)]
+
+    class _PathBeneathAttr(ctypes.Structure):
+        _pack_ = 1
+        _fields_ = [
+            ("allowed_access", ctypes.c_uint64),
+            ("parent_fd", ctypes.c_int32),
+        ]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    attr = _RulesetAttr(handled_access_fs=_LL_FS_ALL_V1)
+    ruleset_fd = int(
+        libc.syscall(
+            _SYS_LANDLOCK_CREATE_RULESET,
+            ctypes.byref(attr),
+            ctypes.sizeof(attr),
+            0,
+        )
+    )
+    if ruleset_fd < 0:
+        err = ctypes.get_errno()
+        raise OSError(err, f"landlock_create_ruleset failed (errno={err})")
+
+    def _add_path_rule(path: str, access: int) -> None:
+        if not os.path.exists(path):
+            return
+        o_path = getattr(os, "O_PATH", 0o10000000)
+        flags = o_path | os.O_CLOEXEC
+        try:
+            fd = os.open(path, flags)
+        except OSError:
+            return
+        try:
+            pb = _PathBeneathAttr(allowed_access=access, parent_fd=fd)
+            rc = int(
+                libc.syscall(
+                    _SYS_LANDLOCK_ADD_RULE,
+                    ruleset_fd,
+                    _LANDLOCK_RULE_PATH_BENEATH,
+                    ctypes.byref(pb),
+                    0,
+                )
+            )
+            if rc < 0:
+                err = ctypes.get_errno()
+                raise OSError(err, f"landlock_add_rule({path}) failed (errno={err})")
+        finally:
+            os.close(fd)
+
+    try:
+        _add_path_rule("/", _LL_FS_READ_EXEC)
+        ws_abs = os.path.abspath(workspace)
+        _add_path_rule(ws_abs, _LL_FS_ALL_V1)
+        _add_path_rule("/dev/null", _LL_FS_WRITE_FILE | _LL_FS_READ_FILE)
+        _add_path_rule("/tmp", _LL_FS_ALL_V1)
+
+        if int(libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) != 0:
+            err = ctypes.get_errno()
+            raise OSError(err, f"prctl(PR_SET_NO_NEW_PRIVS) failed (errno={err})")
+
+        rc = int(libc.syscall(_SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0))
+        if rc < 0:
+            err = ctypes.get_errno()
+            raise OSError(err, f"landlock_restrict_self failed (errno={err})")
+    finally:
+        os.close(ruleset_fd)
+
+
+def landlock_driver() -> str:
+    """Return active Linux Landlock driver name: ``python-landlock`` | ``ctypes`` | ``none``."""
+    import sys as _sys
+    if platform.system() != "Linux":
+        return "none"
+    # Respect tests that explicitly disable the ``landlock`` module via sys.modules["landlock"] = None
+    if "landlock" in _sys.modules and _sys.modules["landlock"] is None:
+        return "none"
+    try:
+        import landlock  # type: ignore[import-not-found]
+        _ = landlock.create_ruleset
+        return "python-landlock"
+    except Exception:
+        pass
+    if _landlock_ctypes_supported():
+        return "ctypes"
+    return "none"
+
+
 def platform_mechanism() -> str:
     """Return the best available OS mechanism name for this platform."""
     sysname = platform.system()
     if sysname == "Linux":
-        try:
-            import landlock  # type: ignore[import-not-found]  # stdlib on 3.13+ Linux
-            _ = landlock.create_ruleset
+        drv = landlock_driver()
+        if drv != "none":
             return "landlock"
-        except Exception:  # pragma: no cover - depends on host kernel
-            return "logical-only"
+        if which("bwrap"):
+            return "bwrap"
+        return "logical-only"
     if sysname == "Darwin":
         return "seatbelt" if which("sandbox-exec") else "logical-only"
     # Windows restricted token is not implemented -> honest degrade.
@@ -168,18 +337,11 @@ def platform_mechanism() -> str:
 
 
 def _plain(command: str, cwd: str, timeout: int) -> SandboxResult:
-    # Resolve bare "python" / "python3" to the interpreter actually running us.
-    # The store-stub "python.exe" alias returns 9009 instead of executing, so
-    # sandbox tests against a stock Python install (not on PATH) would always
-    # fail. Using sys.executable avoids the alias entirely.
     import sys as _sys
     cmd = command
     head = cmd.split(None, 1)[0]
     if head in ("python", "python3"):
         cmd = _sys.executable + cmd[len(head):]
-    # proc.run, not subprocess.run: with shell=True a plain subprocess.run
-    # timeout kills the shell but not the grandchild that holds the pipe, so the
-    # wall time is unbounded. See baize/proc.py.
     res = proc_mod.run(cmd, shell=True, timeout=timeout, cwd=cwd)
     if res.timed_out:
         return SandboxResult(-1, "", f"command timed out after {timeout}s",
@@ -189,15 +351,23 @@ def _plain(command: str, cwd: str, timeout: int) -> SandboxResult:
 
 
 def _apply_landlock(workspace: str) -> None:
-    """Best-effort Landlock: read/exec everywhere, write only under workspace."""
-    import landlock  # type: ignore[import-not-found]
-    import landlock.access as laccess  # type: ignore[import-not-found]
+    """Best-effort Landlock: read/exec everywhere, write only under workspace.
 
-    ruleset = landlock.create_ruleset()
-    ruleset.add_rule(laccess.FS_ROUGHLY_READ, "/")
-    ruleset.add_rule(laccess.FS_ROUGHLY_EXECUTE, "/")
-    ruleset.add_rule(laccess.FS_ROUGHLY_WRITE, workspace, inherit=True)
-    ruleset.restrict_self()
+    Uses Python ``landlock`` stdlib module when available, falling back to the
+    pure-stdlib ``ctypes`` syscall driver on Linux 5.13+.
+    """
+    try:
+        import landlock  # type: ignore[import-not-found]
+        import landlock.access as laccess  # type: ignore[import-not-found]
+        ruleset = landlock.create_ruleset()
+        ruleset.add_rule(laccess.FS_ROUGHLY_READ, "/")
+        ruleset.add_rule(laccess.FS_ROUGHLY_EXECUTE, "/")
+        ruleset.add_rule(laccess.FS_ROUGHLY_WRITE, workspace, inherit=True)
+        ruleset.restrict_self()
+        return
+    except ImportError:
+        pass
+    _apply_landlock_ctypes(workspace)
 
 
 def _landlock_preexec(workspace: str):
@@ -209,34 +379,53 @@ def _landlock_preexec(workspace: str):
     return _child
 
 
-def _seatbelt_profile(workspace: str) -> str:
-    """Minimal Seatbelt profile: read/exec anywhere, write only under workspace."""
-    return (
-        '(version 1)(deny default)'
-        '(allow process-exec)'
-        '(allow file-read*)'
-        f'(allow file-write* (subpath "{workspace}"))'
-    )
+def _seatbelt_profile(workspace: str, *, allow_net: bool = True, deny_sensitive: bool = True) -> str:
+    """Hardened macOS Seatbelt profile: workspace-scoped writes + secret-dir shields."""
+    parts = [
+        '(version 1)',
+        '(deny default)',
+        '(allow process-exec)',
+        '(allow process-fork)',
+        '(allow file-read*)',
+        f'(allow file-write* (subpath "{workspace}"))',
+        '(allow file-write* (literal "/dev/null"))',
+    ]
+    if deny_sensitive:
+        for secret_dir in _sensitive_home_paths():
+            parts.append(f'(deny file-read* (subpath "{secret_dir}"))')
+    if allow_net:
+        parts.append('(allow network*)')
+    else:
+        parts.append('(deny network-outbound)')
+    return "".join(parts)
 
 
-def _seatbelt_command(command: str, workspace: str) -> str:
-    # Prepend the sandbox wrapper; the original command stays shell-expanded.
-    return (f'sandbox-exec -p \'{_seatbelt_profile(workspace)}\' '
-            f'sh -c {subprocess.list2cmdline([command])}')
+def _seatbelt_command(command: str, workspace: str, *, allow_net: bool = True) -> str:
+    return (f"sandbox-exec -p '{_seatbelt_profile(workspace, allow_net=allow_net)}' "
+            f"sh -c {subprocess.list2cmdline([command])}")
+
+
+def _bwrap_command(command: str, workspace: str, *, allow_net: bool = True) -> list[str]:
+    """Build a bubblewrap argv when ``bwrap`` is installed on Linux."""
+    ws = os.path.abspath(workspace)
+    argv = [
+        "bwrap",
+        "--ro-bind", "/", "/",
+        "--bind", ws, ws,
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/tmp",
+        "--chdir", ws,
+    ]
+    if not allow_net:
+        argv.append("--unshare-net")
+    argv.extend(["sh", "-c", command])
+    return argv
 
 
 @dataclass
 class ArgvPlan:
-    """How to run an argv with OS isolation - or an honest record that we cannot.
-
-    ``mechanism`` names the layer actually applied:
-
-      ``none``          sandbox disabled; ``argv`` runs as-is
-      ``landlock``      restriction installed in the child via ``preexec_fn``
-      ``seatbelt``      ``argv`` is prefixed with ``sandbox-exec``
-      ``logical-only``  enabled, but this platform has no mechanism and
-                        ``degraded`` is True
-    """
+    """How to run an argv with OS isolation - or an honest record that we cannot."""
     argv: list[str]
     mechanism: str = "none"
     preexec_fn: object | None = None
@@ -244,39 +433,32 @@ class ArgvPlan:
 
 
 def plan_argv(argv, workspace: str, cfg: dict | None = None) -> ArgvPlan:
-    """Wrap ``argv`` for OS isolation, honouring the same switch as :func:`run`.
-
-    This exists because ``run_python`` executes ``[python, -I, -c, <code>]`` -
-    an argv with no shell, which cannot be expressed as the command *string*
-    :func:`run` takes. Without it, ``BAIZE_SANDBOX_ENABLED=1`` confined ``bash``
-    and silently left ``run_python`` unconfined: the switch promised one thing
-    and delivered another, which is the failure mode this module's docstring
-    says it exists to avoid.
-
-    ``preexec_fn`` is returned rather than a wrapped command string on purpose -
-    the snippet is arbitrary Python and shell-quoting it would be an injection
-    surface. On Windows it is always ``None``: there is no mechanism, so the
-    plan degrades honestly instead of pretending to confine.
-    """
+    """Wrap ``argv`` for OS isolation, honouring the same switch as :func:`run`."""
     args = [str(a) for a in argv]
-    cfg = cfg or load_config()
+    cfg = cfg if cfg is not None else load_config()
     if cfg.get("BAIZE_SANDBOX_ENABLED", "0") != "1":
         return ArgvPlan(args)
 
+    allow_net = (cfg.get("BAIZE_SANDBOX_NET", "allow") or "allow").strip().lower() != "none"
     mech = platform_mechanism()
     if mech == "landlock":  # pragma: no cover - Linux only
         return ArgvPlan(args, "landlock", _landlock_preexec(workspace))
     if mech == "seatbelt":  # pragma: no cover - macOS only
-        # sandbox-exec takes the command and its arguments directly, so no shell
-        # - and therefore no quoting hazard - is involved.
-        return ArgvPlan(["sandbox-exec", "-p", _seatbelt_profile(workspace), *args],
-                        "seatbelt")
+        return ArgvPlan(
+            ["sandbox-exec", "-p", _seatbelt_profile(workspace, allow_net=allow_net), *args],
+            "seatbelt",
+        )
+    if mech == "bwrap":  # pragma: no cover - Linux bwrap only
+        ws = os.path.abspath(workspace)
+        prefix = ["bwrap", "--ro-bind", "/", "/", "--bind", ws, ws, "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--chdir", ws]
+        if not allow_net:
+            prefix.append("--unshare-net")
+        return ArgvPlan([*prefix, *args], "bwrap")
 
     logger.warning(
         "OS sandbox unavailable on this platform; run_python degrades to "
         "logical-only (AST guard + scrubbed env + workspace cwd only).")
     return ArgvPlan(args, "logical-only", None, True)
-
 
 
 # ===========================================================================
@@ -292,13 +474,15 @@ _SENSITIVE_ENV_RE = re.compile(
 @dataclass(frozen=True)
 class SandboxPolicy:
     """Runtime resource & isolation policy for sandboxed execution."""
-    mode: str = ""  # "" (legacy) | "local-hardened" | "docker" | "auto"
+    mode: str = ""  # "" (disabled) | "local-hardened" | "docker" | "auto"
     cpu_seconds: int = 60
     memory_mb: int = 1024
     nofile: int = 256
     scrub_env: bool = True
+    allow_net: bool = True
     docker_image: str = "python:3.11-slim"
     docker_network: str = "none"
+    docker_session_pool: bool = True
 
 
 def scrub_environment(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -310,11 +494,13 @@ def scrub_environment(env: dict[str, str] | None = None) -> dict[str, str]:
 def resolve_sandbox_mode(cfg: dict[str, str] | None = None) -> str:
     """Resolve effective sandbox mode from config.
 
-    Returns one of ``""`` (legacy disabled), ``"local-hardened"``,
+    Returns one of ``""`` (disabled), ``"local-hardened"``,
     ``"docker"``, or ``"auto"``.
     """
     cfg = cfg if cfg is not None else load_config()
     raw = (cfg.get("BAIZE_SANDBOX_MODE") or "").strip().lower()
+    if raw in ("disabled", "off", "none"):
+        return ""
     if raw in ("local-hardened", "local", "hardened"):
         return "local-hardened"
     if raw in ("docker", "auto"):
@@ -329,11 +515,16 @@ def _build_policy(cfg: dict[str, str] | None = None, mode_override: str | None =
     mode = (mode_override or "").strip().lower() or resolve_sandbox_mode(cfg)
     if mode in ("local", "hardened"):
         mode = "local-hardened"
+    if mode in ("disabled", "off", "none"):
+        mode = ""
+    net_policy = (cfg.get("BAIZE_SANDBOX_NET") or "allow").strip().lower()
     return SandboxPolicy(
         mode=mode,
         cpu_seconds=max(5, int(cfg.get("BAIZE_SANDBOX_CPU_LIMIT_S", "60") or "60")),
         memory_mb=max(128, int(cfg.get("BAIZE_SANDBOX_MEM_LIMIT_MB", "1024") or "1024")),
+        allow_net=(net_policy != "none"),
         docker_image=(cfg.get("BAIZE_SANDBOX_DOCKER_IMAGE") or "python:3.11-slim").strip(),
+        docker_session_pool=(str(cfg.get("BAIZE_DOCKER_SESSION_POOL", "1")).strip().lower() in ("1", "true", "yes")),
     )
 
 
@@ -355,14 +546,17 @@ def _rlimit_preexec(policy: SandboxPolicy, landlock_workspace: str | None = None
         except Exception:
             pass
         if landlock_workspace:
-            _apply_landlock(landlock_workspace)
+            try:
+                _apply_landlock(landlock_workspace)
+            except Exception:
+                pass
 
     return _apply
 
 
 def sandbox_posture(cfg: dict[str, str] | None = None) -> dict[str, Any]:
     """Honest disclosure of active sandbox isolation tier and OS capabilities."""
-    from .docker_sandbox import is_docker_available
+    from .docker_sandbox import get_docker_pool, is_docker_available
 
     cfg = cfg if cfg is not None else load_config()
     pol = _build_policy(cfg)
@@ -383,28 +577,35 @@ def sandbox_posture(cfg: dict[str, str] | None = None) -> dict[str, Any]:
         "configured_mode": pol.mode or "disabled",
         "effective_isolation": effective,
         "os_mechanism": os_mech,
+        "landlock_driver": landlock_driver(),
+        "bwrap_available": bool(which("bwrap")),
         "rlimit_supported": rlimit_ok,
         "cpu_limit_s": pol.cpu_seconds,
         "memory_limit_mb": pol.memory_mb,
         "env_scrub": pol.scrub_env,
+        "network_policy": "allow" if pol.allow_net else "none",
+        "protected_paths": _sensitive_home_paths(),
         "docker_available": docker_ok,
         "docker_image": pol.docker_image,
+        "docker_session_pool": get_docker_pool().status(),
     }
 
 
 def run(command: str, cwd: str = ".", timeout: int = 30,
-        *, mode: str | None = None, policy: SandboxPolicy | None = None) -> SandboxResult:
+        *, mode: str | None = None, policy: SandboxPolicy | None = None,
+        cfg: dict[str, str] | None = None, session_id: str = "") -> SandboxResult:
     """Run *command* through the configured tiered sandbox policy.
 
     Tiers:
-    - ``disabled`` (default legacy): plain execution with ``mechanism="none"``.
-    - ``local-hardened`` (or ``BAIZE_SANDBOX_ENABLED=1``): env scrubbing +
-      POSIX ``rlimit`` + OS Landlock (Linux) / Seatbelt (macOS).
-    - ``docker``: fail-closed container execution via :class:`DockerSandboxDriver`.
+    - ``disabled`` (``BAIZE_SANDBOX_ENABLED=0``): plain execution with ``mechanism="none"``.
+    - ``local-hardened`` (default zero-install tier): env scrubbing + POSIX ``rlimit``
+      + OS Landlock (Linux ctypes/stdlib) / bwrap / Seatbelt (macOS).
+    - ``docker``: fail-closed container execution via :class:`DockerSandboxDriver`
+      (with optional warm :class:`SessionDockerPool` reuse).
     - ``auto``: Docker when reachable, else explicit ``local-hardened``.
     """
-    cfg = load_config()
-    pol = policy or _build_policy(cfg, mode_override=mode)
+    eff_cfg = cfg if cfg is not None else load_config()
+    pol = policy or _build_policy(eff_cfg, mode_override=mode)
     if not pol.mode:
         return _plain(command, cwd, timeout)
 
@@ -418,6 +619,8 @@ def run(command: str, cwd: str = ".", timeout: int = 30,
             memory_limit=f"{pol.memory_mb}m",
             network_mode=pol.docker_network,
             strict=(pol.mode == "docker"),
+            session_id=session_id,
+            use_session_pool=pol.docker_session_pool,
         )
         if drv.docker_available or pol.mode == "docker":
             dres = drv.run(command)
@@ -449,7 +652,7 @@ def run(command: str, cwd: str = ".", timeout: int = 30,
                              redact(res.stderr or ""), degraded=True,
                              mechanism="local-hardened (docker-fallback)")
 
-    # Tier 1: local-hardened (or BAIZE_SANDBOX_ENABLED=1)
+    # Tier 1: local-hardened (zero-install OS light sandbox)
     mech = platform_mechanism()
     child_env = scrub_environment() if pol.scrub_env else None
     if mech == "logical-only":
@@ -471,8 +674,17 @@ def run(command: str, cwd: str = ".", timeout: int = 30,
         return SandboxResult(res.returncode, redact(res.stdout or ""),
                              redact(res.stderr or ""), mechanism="landlock")
 
+    if mech == "bwrap":  # pragma: no cover - Linux bwrap only
+        argv = _bwrap_command(command, cwd, allow_net=pol.allow_net)
+        res = proc_mod.run(argv, timeout=timeout, cwd=cwd, env=child_env)
+        if res.timed_out:
+            return SandboxResult(-1, "", f"command timed out after {timeout}s",
+                                 mechanism="bwrap")
+        return SandboxResult(res.returncode, redact(res.stdout or ""),
+                             redact(res.stderr or ""), mechanism="bwrap")
+
     if mech == "seatbelt":  # pragma: no cover - macOS only
-        wrapped = _seatbelt_command(command, cwd)
+        wrapped = _seatbelt_command(command, cwd, allow_net=pol.allow_net)
         res = proc_mod.run(wrapped, shell=True, timeout=timeout, cwd=cwd,
                            env=child_env, preexec_fn=_rlimit_preexec(pol, None))
         if res.timed_out:

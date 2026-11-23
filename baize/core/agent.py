@@ -351,6 +351,10 @@ READ_ONLY_TOOLS = frozenset({
     "memory_recall",
     "tool_search",
     "bash_bg_output",
+    "lsp_definition",
+    "lsp_references",
+    "lsp_hover",
+    "verify_ui",
 })
 
 #: Tools that mutate workspace files and trigger automatic post-edit diagnostics.
@@ -584,6 +588,27 @@ class Agent:
                     extra = f"{extra}\n\n{mem_snap}".strip() if extra else mem_snap
             except Exception:
                 pass
+
+        # V45: Auto-inject polyglot project fingerprint (languages, PM, test/build commands)
+        try:
+            from ..codebase.project_profile import detect_project_profile
+            ws_dir = str(self.cfg.get("BAIZE_WORKSPACE_DIR") or ".")
+            prof_ctx = detect_project_profile(ws_dir).format_for_context()
+            if prof_ctx:
+                extra = f"{extra}\n\n{prof_ctx}".strip() if extra else prof_ctx
+        except Exception:
+            pass
+
+        # V46: Auto-enable Spec Mode when BAIZE_SPEC_MODE=1 on a fresh session
+        try:
+            if str(self.cfg.get("BAIZE_SPEC_MODE", "0")).strip().lower() in ("1", "true", "yes"):
+                from ..orchestration.spec_workflow import get_spec_manager
+                sm = get_spec_manager(self.cfg)
+                st = sm.get(self.session.id)
+                if not st.enabled and st.phase == "off":
+                    sm.enable(self.session.id, note="auto-enabled via BAIZE_SPEC_MODE=1")
+        except Exception:
+            pass
 
         sys_prompt = build_system_prompt(self.role, self.cfg,
                                          self.registry, extra)
@@ -882,6 +907,26 @@ class Agent:
                     })
                     continue
 
+                # V46: Spec-Driven Workflow Hard-Gate (locks mutating tools until user approves spec)
+                try:
+                    from ..orchestration.spec_workflow import get_spec_manager
+                    _spec_mgr = get_spec_manager(self.cfg)
+                    _spec_ok, _spec_reason = _spec_mgr.check_tool_allowed(
+                        self.session.id, name, READ_ONLY_TOOLS
+                    )
+                except Exception:
+                    _spec_mgr = None
+                    _spec_ok, _spec_reason = True, ""
+                if not _spec_ok:
+                    obs.inc("tool_blocked_spec_gate")
+                    self._emit("spec_locked", f"{name}: {_spec_reason}")
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": f"ERROR: SPEC_GATE_LOCKED: {_spec_reason}",
+                    })
+                    continue
+
                 # V21 P2-1: Plan Mode + autonomy slider (fail-closed). A deny
                 # reports an ERROR observation and the loop continues - the
                 # action never silently succeeds.
@@ -927,6 +972,13 @@ class Agent:
                 warn_now = (repeat_count == self.loop_window and not warned_loop)
                 if warn_now:
                     warned_loop = True
+                if _spec_mgr is not None and name not in READ_ONLY_TOOLS:
+                    try:
+                        _st_now = _spec_mgr.get(self.session.id)
+                        if _st_now.enabled and _st_now.phase == "approved":
+                            _spec_mgr.mark_executing(self.session.id)
+                    except Exception:
+                        pass
                 prepared_calls.append({
                     "call_id": call.get("id", ""),
                     "name": name,

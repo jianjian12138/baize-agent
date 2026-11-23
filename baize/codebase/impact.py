@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import collections
 import os
+import re
 import subprocess
 import sys
 import time
@@ -420,18 +421,76 @@ class TestImpactMatrix:
                 if entry.is_dir(follow_symlinks=False):
                     _scan(Path(entry.path))
                 elif entry.is_file(follow_symlinks=False):
-                    if (name.startswith("test_") and name.endswith(".py")) or name.endswith("_test.py"):
+                    if self._is_test_filename(name):
                         full_p = Path(entry.path)
                         try:
                             rel_p = str(full_p.relative_to(self.root_dir)).replace("\\", "/")
                         except Exception:
                             rel_p = str(full_p).replace("\\", "/")
                         self._test_files.append(rel_p)
-                        self._parse_test_file(full_p, rel_p)
+                        if name.endswith(".py"):
+                            self._parse_test_file(full_p, rel_p)
+                        else:
+                            self._parse_polyglot_test_file(full_p, rel_p)
 
         _scan(self.root_dir)
 
         self._indexed = True
+
+    @staticmethod
+    def _is_test_filename(name: str) -> bool:
+        low = name.lower()
+        if (name.startswith("test_") and name.endswith(".py")) or name.endswith("_test.py"):
+            return True
+        for suffix in (
+            ".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx",
+            ".test.js", ".spec.js", ".test.jsx", ".spec.jsx",
+            "_test.go", "_test.rs", "_test.dart",
+            "test.java", "tests.java", "it.java",
+        ):
+            if low.endswith(suffix):
+                return True
+        return False
+
+    def _parse_polyglot_test_file(self, full_path: Path, rel_path: str) -> None:
+        """Lightweight import & identifier indexer for TS/JS/Go/Rust/Java/Dart tests."""
+        try:
+            content = full_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return
+        imported: set[str] = set()
+        # JS/TS/Dart/Java/Rust import patterns
+        for pat in (
+            r"""from\s+['"]([^'"]+)['"]""",
+            r"""require\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+            r"""import\s+['"]([^'"]+)['"]""",
+            r"""^\s*import\s+([A-Za-z0-9_.]+);""",
+            r"""^\s*use\s+([A-Za-z0-9_:]+);""",
+        ):
+            for m in re.finditer(pat, content, re.MULTILINE):
+                raw = m.group(1).strip()
+                imported.add(raw)
+                stem = Path(raw.replace("::", "/").replace(".", "/")).stem
+                if stem:
+                    self._module_to_test_files[stem].append(rel_path)
+
+        # Map test file's own subject stem (e.g. cart.test.ts -> cart, auth_test.go -> auth)
+        fname = full_path.name
+        subject = re.sub(
+            r"(\.(?:test|spec)\.(?:ts|tsx|js|jsx)|_test\.(?:go|rs|dart)|(?:Tests|Test|IT)\.java)$",
+            "",
+            fname,
+            flags=re.IGNORECASE,
+        )
+        if subject and subject != fname:
+            self._module_to_test_files[subject].append(rel_path)
+
+        # Index called identifiers inside test bodies
+        for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", content):
+            sym = m.group(1)
+            if sym not in ("describe", "it", "test", "expect", "assert", "if", "for", "while", "func", "fn"):
+                self._symbol_to_tests[sym].append(f"{rel_path}::{sym}")
+        self._test_imports[rel_path] = sorted(imported)
 
     def _parse_test_file(self, full_path: Path, rel_path: str) -> None:
         """Extract imports and function-level symbol calls from test file."""
@@ -529,10 +588,16 @@ class TestImpactMatrix:
                     if Path(t).name == p.name and (p.name.startswith("test_") or p.name.endswith("_test.py")):
                         impacted_files_set.add(t)
 
-            # Heuristic match by naming convention (e.g. calculator.py -> test_calculator.py)
+            # Heuristic match by naming convention across Python/TS/JS/Go/Rust/Java/Dart
             for t in self._test_files:
-                t_stem = Path(t).stem
-                if t_stem == f"test_{stem}" or t_stem == f"{stem}_test":
+                t_path = Path(t)
+                t_stem = t_path.stem
+                t_name_low = t_path.name.lower()
+                if (
+                    t_stem in (f"test_{stem}", f"{stem}_test", f"{stem}.test", f"{stem}.spec", f"{stem}Test", f"{stem}Tests")
+                    or t_name_low.startswith(f"{stem.lower()}.test.")
+                    or t_name_low.startswith(f"{stem.lower()}.spec.")
+                ):
                     impacted_files_set.add(t)
 
         for sym in changed_symbols:
@@ -547,9 +612,22 @@ class TestImpactMatrix:
         impacted_files = sorted(list(impacted_files_set))
         impacted_cases = sorted(list(impacted_cases_set))
 
-        # Recommend pytest command
+        # Recommend language-appropriate test runner command
         targets_str = " ".join(impacted_files) if impacted_files else ""
-        cmd = f"pytest {targets_str}" if targets_str else "pytest"
+        if impacted_files and all(f.endswith((".ts", ".tsx", ".js", ".jsx")) for f in impacted_files):
+            cmd = f"npx vitest run {targets_str}"
+        elif impacted_files and all(f.endswith("_test.go") for f in impacted_files):
+            pkgs = sorted({str(Path(f).parent).replace("\\", "/") for f in impacted_files})
+            cmd = "go test " + " ".join(f"./{p}" if p != "." else "." for p in pkgs)
+        elif impacted_files and all(f.endswith(".rs") for f in impacted_files):
+            cmd = "cargo test"
+        elif impacted_files and all(f.endswith(".dart") for f in impacted_files):
+            cmd = f"dart test {targets_str}"
+        elif impacted_files and all(f.endswith(".java") for f in impacted_files):
+            classes = ",".join(Path(f).stem for f in impacted_files)
+            cmd = f"mvn test -Dtest={classes}"
+        else:
+            cmd = f"pytest {targets_str}" if targets_str else "pytest"
 
         latency = (time.perf_counter() - t0) * 1000
         all_targets = [str(x) for x in (changed_files + changed_symbols)]
@@ -571,7 +649,7 @@ def analyze_test_impact(
     """Analyze impacted tests for a file path or symbol name."""
     matrix = TestImpactMatrix(root_dir=root_dir)
     target_clean = target.strip()
-    if target_clean.endswith((".py", ".ts", ".js", ".go", ".rs")) or "/" in target_clean or "\\" in target_clean:
+    if target_clean.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".dart", ".c", ".cpp")) or "/" in target_clean or "\\" in target_clean:
         return matrix.get_impacted_tests(changed_files=[target_clean])
     return matrix.get_impacted_tests(changed_symbols=[target_clean])
 

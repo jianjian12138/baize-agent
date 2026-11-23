@@ -359,6 +359,16 @@ def serve(host: str | None = None, port: int | None = None) -> None:
         except Exception:
             pass
         try:
+            from ..codebase.diagnostics import get_lsp_pool
+            get_lsp_pool().shutdown_all()
+        except Exception:
+            pass
+        try:
+            from ..execution.docker_sandbox import get_docker_pool
+            get_docker_pool().stop_all()
+        except Exception:
+            pass
+        try:
             from ..governance.telemetry import get_tracer
             get_tracer(cfg).flush_otlp(timeout=2.0)
         except Exception:

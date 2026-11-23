@@ -35,6 +35,15 @@ SUPPORTED_EXTS: dict[str, str] = {
     ".rs": "rust",
     ".go": "go",
     ".java": "java",
+    ".dart": "dart",
+    ".kt": "kotlin",
+    ".swift": "swift",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".cs": "csharp",
 }
 
 SKIP_DIRS = frozenset({
@@ -60,6 +69,45 @@ _RE_GO_IFACE = re.compile(r"\btype\s+([A-Za-z0-9_]+)\s+interface\b")
 _RE_GO_FUNC = re.compile(r"\bfunc\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]+)\s*\(")
 
 _RE_JAVA_DECL = re.compile(r"\b(?:public|private|protected)?\s*(?:abstract\s+|final\s+)?(class|interface|enum)\s+([A-Za-z0-9_]+)")
+_RE_JAVA_METHOD = re.compile(r"\b(?:public|private|protected)\s+(?:static\s+)?(?:[A-Za-z0-9_<>\[\]]+\s+)+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+_RE_DART_DECL = re.compile(r"\b(?:abstract\s+)?(class|mixin|enum|extension)\s+([A-Za-z0-9_]+)")
+_RE_DART_FUNC = re.compile(r"^\s*(?:Future<[^>]+>|Stream<[^>]+>|void|int|double|bool|String|dynamic|[A-Z][A-Za-z0-9_<>?]*)\s+([a-z_][A-Za-z0-9_]*)\s*\(")
+
+_RE_KT_DECL = re.compile(r"\b(?:data\s+|sealed\s+|abstract\s+)?(class|interface|object)\s+([A-Za-z0-9_]+)")
+_RE_KT_FUNC = re.compile(r"\bfun\s+(?:<[^>]+>\s+)?([A-Za-z0-9_]+)\s*\(")
+
+_RE_SWIFT_DECL = re.compile(r"\b(class|struct|protocol|enum)\s+([A-Za-z0-9_]+)")
+_RE_SWIFT_FUNC = re.compile(r"\bfunc\s+([A-Za-z0-9_]+)\s*\(")
+
+_RE_CPP_DECL = re.compile(r"\b(class|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:{]")
+_RE_CPP_FUNC = re.compile(r"^\s*(?:static\s+|inline\s+|virtual\s+)?[A-Za-z_][A-Za-z0-9_:*&<>\s]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:const\s*)?\{?")
+
+_RE_CS_DECL = re.compile(r"\b(?:public|private|internal|protected)?\s*(?:sealed\s+|abstract\s+|static\s+|partial\s+)?(class|interface|record|struct|enum)\s+([A-Za-z0-9_]+)")
+
+_RE_CALL_IDENT = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_CALL_KEYWORDS = frozenset({
+    "if", "for", "while", "switch", "catch", "return", "sizeof", "typeof",
+    "new", "delete", "throw", "function", "func", "fn", "def", "class",
+    "struct", "interface", "match", "else", "elif", "await", "async",
+    "print", "println", "fmt", "len", "cap", "make", "append", "super", "this",
+})
+
+
+def _extract_polyglot_calls(lines: list[str], start_idx: int, end_idx: int, own_name: str) -> list[str]:
+    """Extract direct identifier call names inside a polyglot function/method slice."""
+    seen: set[str] = set()
+    calls: list[str] = []
+    snippet = "\n".join(lines[start_idx:end_idx])
+    for m in _RE_CALL_IDENT.finditer(snippet):
+        name = m.group(1)
+        if name == own_name or name in _CALL_KEYWORDS or name in seen:
+            continue
+        seen.add(name)
+        calls.append(name)
+        if len(calls) >= 15:
+            break
+    return calls
 
 
 class _DirectCallCollector(ast.NodeVisitor):
@@ -344,11 +392,61 @@ class SymbolGraph:
                         file_nodes.append(SymbolNode(m.group(1), "function", rel_path, i, i, signature=line.strip(), language="go"))
         elif lang == "java":
             for i, line in enumerate(lines, 1):
-                if "class " not in line and "interface " not in line and "enum " not in line:
-                    continue
                 m = _RE_JAVA_DECL.search(line)
                 if m:
                     file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language="java"))
+                    continue
+                mm = _RE_JAVA_METHOD.search(line)
+                if mm and mm.group(1) not in _CALL_KEYWORDS:
+                    file_nodes.append(SymbolNode(mm.group(1), "method", rel_path, i, i, signature=line.strip(), language="java"))
+        elif lang == "dart":
+            for i, line in enumerate(lines, 1):
+                m = _RE_DART_DECL.search(line)
+                if m:
+                    file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language="dart"))
+                    continue
+                mf = _RE_DART_FUNC.search(line)
+                if mf and mf.group(1) not in _CALL_KEYWORDS:
+                    file_nodes.append(SymbolNode(mf.group(1), "function", rel_path, i, i, signature=line.strip(), language="dart"))
+        elif lang == "kotlin":
+            for i, line in enumerate(lines, 1):
+                m = _RE_KT_DECL.search(line)
+                if m:
+                    file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language="kotlin"))
+                mf = _RE_KT_FUNC.search(line)
+                if mf:
+                    file_nodes.append(SymbolNode(mf.group(1), "function", rel_path, i, i, signature=line.strip(), language="kotlin"))
+        elif lang == "swift":
+            for i, line in enumerate(lines, 1):
+                m = _RE_SWIFT_DECL.search(line)
+                if m:
+                    file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language="swift"))
+                mf = _RE_SWIFT_FUNC.search(line)
+                if mf:
+                    file_nodes.append(SymbolNode(mf.group(1), "function", rel_path, i, i, signature=line.strip(), language="swift"))
+        elif lang in ("c", "cpp"):
+            for i, line in enumerate(lines, 1):
+                m = _RE_CPP_DECL.search(line)
+                if m:
+                    file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language=lang))
+                    continue
+                if "(" in line and not line.strip().startswith(("//", "#", "*")):
+                    mf = _RE_CPP_FUNC.search(line)
+                    if mf and mf.group(1) not in _CALL_KEYWORDS:
+                        file_nodes.append(SymbolNode(mf.group(1), "function", rel_path, i, i, signature=line.strip(), language=lang))
+        elif lang == "csharp":
+            for i, line in enumerate(lines, 1):
+                m = _RE_CS_DECL.search(line)
+                if m:
+                    file_nodes.append(SymbolNode(m.group(2), m.group(1), rel_path, i, i, signature=line.strip(), language="csharp"))
+
+        # Populate polyglot call edges between consecutive definitions for blast-radius analysis
+        for idx, node in enumerate(file_nodes):
+            if node.kind in ("function", "method"):
+                start_i = node.line_number
+                end_i = (file_nodes[idx + 1].line_number - 1) if idx + 1 < len(file_nodes) else min(len(lines), start_i + 60)
+                node.end_line_number = max(node.line_number, end_i)
+                node.calls = _extract_polyglot_calls(lines, start_i, end_i, node.name)
 
         self.file_symbols[rel_path] = file_nodes
         for node in file_nodes:

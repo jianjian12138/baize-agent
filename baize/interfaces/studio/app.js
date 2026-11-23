@@ -1734,6 +1734,7 @@ function switchHeliosPane(paneId) {
   if (paneId === 'helios-rag') loadHeliosBoundedMemory();
   if (paneId === 'helios-tree') loadHeliosSessionTree();
   if (paneId === 'helios-gov') { loadHeliosAudit(); loadHeliosTraces(); loadHeliosEvalHistory(); }
+  if (paneId === 'helios-v46') { loadHeliosPlatformStatus(); loadHeliosMcpTemplates(); }
 }
 
 function refreshHeliosAll() {
@@ -2158,5 +2159,127 @@ async function runHeliosOfflineEval() {
     await loadHeliosEvalHistory();
   } catch (e) {
     if (el) el.textContent = '请求异常: ' + e;
+  }
+}
+
+
+// --- V45/V46: Polyglot Platform, Spec Hard-Gate, Visual UI Verify & MCP Catalog ---
+async function loadHeliosPlatformStatus() {
+  const sid = (document.getElementById('helios-spec-sid')?.value || 'default').trim() || 'default';
+  try {
+    const res = await apiFetch('/api/platform/status?session_id=' + encodeURIComponent(sid));
+    const d = await res.json();
+    const prof = d.project_profile || {};
+    const lsp = d.lsp_pool || {};
+    const sbx = d.sandbox || {};
+    const spec = d.spec_workflow || {};
+    const elLangs = document.getElementById('helios-v46-langs');
+    const elPm = document.getElementById('helios-v46-pm');
+    const elLsp = document.getElementById('helios-v46-lsp');
+    const elSbx = document.getElementById('helios-v46-sbx');
+    const elSbxMeta = document.getElementById('helios-v46-sbx-meta');
+    const elBadge = document.getElementById('helios-v46-spec-badge');
+    const elPhase = document.getElementById('helios-v46-spec-phase');
+    const elSpec = document.getElementById('helios-spec-detail');
+    if (elLangs) elLangs.textContent = (prof.languages && prof.languages.length) ? prof.languages.join(', ') : '未检测到';
+    if (elPm) elPm.textContent = '包管理器：' + (prof.package_manager || '无');
+    if (elLsp) elLsp.textContent = String(lsp.active_count || 0);
+    if (elSbx) elSbx.textContent = sbx.effective_isolation || sbx.configured_mode || '-';
+    if (elSbxMeta) elSbxMeta.textContent = '模式: ' + (sbx.configured_mode || '-') + ' | 网络: ' + (sbx.network_policy || 'allow');
+    if (elBadge) {
+      elBadge.innerHTML = spec.write_locked
+        ? '<span class="helios-status-warn">写入已锁定</span>'
+        : (spec.enabled ? '<span class="helios-status-ok">已审批放行</span>' : '<span class="helios-hint">未启用</span>');
+    }
+    if (elPhase) elPhase.textContent = 'phase: ' + (spec.phase || 'disabled');
+    if (elSpec) elSpec.textContent = JSON.stringify(spec, null, 2);
+  } catch (e) {
+    const elSpec = document.getElementById('helios-spec-detail');
+    if (elSpec) elSpec.textContent = '加载底座态势失败: ' + e;
+  }
+}
+
+async function updateHeliosSpec(action) {
+  const sid = (document.getElementById('helios-spec-sid')?.value || 'default').trim() || 'default';
+  const summary = (document.getElementById('helios-spec-summary')?.value || '').trim();
+  const elSpec = document.getElementById('helios-spec-detail');
+  try {
+    const res = await apiFetch('/api/spec', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sid, action, summary }),
+    });
+    const d = await res.json();
+    if (elSpec) elSpec.textContent = JSON.stringify(d, null, 2);
+    await loadHeliosPlatformStatus();
+  } catch (e) {
+    if (elSpec) elSpec.textContent = '规格状态更新失败: ' + e;
+  }
+}
+
+function setHeliosPreviewViewport(mode) {
+  const frame = document.getElementById('helios-ui-iframe');
+  if (!frame) return;
+  frame.style.width = mode === 'mobile' ? '390px' : '100%';
+  frame.style.height = mode === 'mobile' ? '640px' : '360px';
+}
+
+function loadHeliosPreviewIframe() {
+  const url = (document.getElementById('helios-ui-url')?.value || '').trim();
+  const frame = document.getElementById('helios-ui-iframe');
+  if (frame && url) frame.src = url;
+}
+
+async function runHeliosVisualVerify() {
+  const url = (document.getElementById('helios-ui-url')?.value || '').trim();
+  const check_visual = Boolean(document.getElementById('helios-ui-vision')?.checked);
+  const out = document.getElementById('helios-ui-verify-out');
+  if (!url) {
+    if (out) out.textContent = '请先输入有效的预览 URL。';
+    return;
+  }
+  if (out) out.textContent = '正在执行多视口 CDP 与视觉自检...';
+  try {
+    const res = await apiFetch('/api/ui/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, viewports: ['desktop', 'mobile'], check_visual }),
+    });
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '视觉自检请求失败: ' + e;
+  }
+}
+
+async function loadHeliosMcpTemplates() {
+  const out = document.getElementById('helios-mcp-out');
+  try {
+    const res = await apiFetch('/api/mcp/templates');
+    const d = await res.json();
+    const lines = (d.templates || []).map((t) => {
+      const mark = t.binary_available ? 'READY' : 'MISSING-BIN';
+      const envHint = (t.required_env && t.required_env.length) ? ' env=[' + t.required_env.join(',') + ']' : '';
+      return `[${mark}] ${t.id} (${t.category}) — ${t.description}${envHint}`;
+    });
+    if (out) out.textContent = lines.join('\n') || '暂无预置模板';
+  } catch (e) {
+    if (out) out.textContent = '加载 MCP 模板失败: ' + e;
+  }
+}
+
+async function checkHeliosMcpHealth() {
+  const out = document.getElementById('helios-mcp-out');
+  if (out) out.textContent = '正在巡检 MCP 服务依赖与环境变量...';
+  try {
+    const res = await apiFetch('/api/mcp/health', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ live_probe: false }),
+    });
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = 'MCP 健康自检失败: ' + e;
   }
 }

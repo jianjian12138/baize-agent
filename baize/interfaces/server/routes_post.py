@@ -716,4 +716,58 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
         rep = run_coding_benchmark(mode=mode, cfg=cfg, persist_history=True)
         return handler._send(200, rep)
 
+    if req_path == "/api/spec":
+        from ...orchestration.spec_workflow import get_spec_manager
+        cfg = load_config()
+        mgr = get_spec_manager(cfg)
+        sid = str(data.get("session_id") or "default").strip() or "default"
+        action = str(data.get("action") or "status").strip().lower()
+        if action == "enable":
+            st = mgr.enable(sid, note=str(data.get("note") or ""))
+        elif action == "disable":
+            st = mgr.disable(sid, note=str(data.get("note") or ""))
+        elif action == "draft":
+            st = mgr.submit_spec(
+                sid,
+                summary=str(data.get("summary") or ""),
+                content=str(data.get("content") or ""),
+                note=str(data.get("note") or ""),
+            )
+        elif action == "approve":
+            st = mgr.approve(sid, actor=str(data.get("actor") or "studio_user"), note=str(data.get("note") or ""))
+        elif action == "reject":
+            st = mgr.reject(sid, reason=str(data.get("reason") or ""))
+        elif action == "verify":
+            st = mgr.mark_verified(sid, note=str(data.get("note") or ""))
+        elif action == "status":
+            st = mgr.get(sid)
+        else:
+            return handler._send(400, {"error": f"invalid spec action: {action}"})
+        return handler._send(200, st.to_dict())
+
+    if req_path == "/api/mcp/health":
+        from ...ext.mcp.client import check_mcp_health
+        cfg = load_config()
+        specs = data.get("specs") if isinstance(data.get("specs"), list) else None
+        live_probe = bool(data.get("live_probe", False))
+        rep = check_mcp_health(specs=specs, cfg=cfg, live_probe=live_probe)
+        return handler._send(200, rep)
+
+    if req_path == "/api/ui/verify":
+        url = str(data.get("url") or "").strip()
+        if not url:
+            return handler._send(400, {"error": "missing required field: url"})
+        from ...execution.visual_verify import verify_ui
+        cfg = load_config()
+        raw_vps = data.get("viewports")
+        if isinstance(raw_vps, str):
+            vps = [v.strip() for v in raw_vps.split(",") if v.strip()]
+        elif isinstance(raw_vps, list):
+            vps = [str(v).strip() for v in raw_vps if str(v).strip()]
+        else:
+            vps = None
+        check_visual = bool(data.get("check_visual", False))
+        rep = verify_ui(url, viewports=vps, check_visual=check_visual, cfg=cfg)
+        return handler._send(200, rep.to_dict())
+
     return handler._send(404, {"error": "not found"})
