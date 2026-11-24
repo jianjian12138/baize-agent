@@ -574,6 +574,16 @@ class Agent:
         }
 
     def _run_loop(self, goal: str, extra_system: str = "") -> AgentResult:
+        from .runtime_ctx import execution_context
+        ws_dir = str(self.cfg.get("BAIZE_WORKSPACE_DIR", ".") or ".")
+
+        def _on_tool_out(tool_name: str, stream: str, chunk: str) -> None:
+            self._emit("tool_output_chunk", f"{tool_name}[{stream}]: {chunk[:400]}")
+
+        with execution_context(workspace=ws_dir, session_id=self.session.id, on_tool_output=_on_tool_out):
+            return self._run_loop_impl(goal, extra_system)
+
+    def _run_loop_impl(self, goal: str, extra_system: str = "") -> AgentResult:
         extra = extra_system
         ws_scope = getattr(self, "_workspace_scope", "")
         if ws_scope:
@@ -927,6 +937,28 @@ class Agent:
                     })
                     continue
 
+                # V49: fine-grained three-state permission rules engine (.baize/permissions.json: deny > ask > allow)
+                _perm_action = "default"
+                _perm_reason = ""
+                try:
+                    from ..governance.permissions import evaluate_tool_permission
+                    from .runtime_ctx import current_workspace
+                    _p_ws = str(current_workspace(self.cfg))
+                    _p_dec = evaluate_tool_permission(name, args, workspace=_p_ws, cfg=self.cfg)
+                    _perm_action = _p_dec.action
+                    _perm_reason = _p_dec.reason
+                except Exception:
+                    _p_ws = str(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
+                if _perm_action == "deny":
+                    obs.inc("tool_blocked_permission")
+                    self._emit("permission_denied", f"{name}: {_perm_reason}")
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": f"ERROR: PERMISSION_DENIED: {_perm_reason}",
+                    })
+                    continue
+
                 # V21 P2-1: Plan Mode + autonomy slider (fail-closed). A deny
                 # reports an ERROR observation and the loop continues - the
                 # action never silently succeeds.
@@ -941,13 +973,28 @@ class Agent:
                     })
                     continue
 
-                # V41/V43: tiered approval callback OR persistent SQLite ApprovalQueue bridge
+                # V41/V43/V49: tiered approval callback OR persistent SQLite ApprovalQueue bridge
                 _active_apr_cb = self.approval_callback
                 if _active_apr_cb is None and str(self.cfg.get("BAIZE_APPROVAL_BRIDGE", "")).strip().lower() == "queue":
                     from ..interfaces.approval import get_approval_queue as _get_apr_q
                     _apr_timeout = float(self.cfg.get("BAIZE_APPROVAL_TIMEOUT", "300") or "300")
                     _active_apr_cb = lambda req, _q=_get_apr_q(), _t=_apr_timeout: _q.submit(req, timeout=_t)
-                if _active_apr_cb is not None and name not in READ_ONLY_TOOLS:
+                _yolo = str(self.cfg.get("BAIZE_YOLO", "0")).strip().lower() in ("1", "true", "yes")
+                if _perm_action == "ask" and _active_apr_cb is None and not _yolo:
+                    obs.inc("tool_approval_denied")
+                    self._emit("approval_denied", f"{name}: {_perm_reason} (no interactive approver attached)")
+                    self.session.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": f"ERROR: APPROVAL_REQUIRED: {_perm_reason} (fail-closed: no approver attached).",
+                    })
+                    continue
+                _needs_approval = (
+                    _active_apr_cb is not None
+                    and _perm_action != "allow"
+                    and (name not in READ_ONLY_TOOLS or _perm_action == "ask")
+                )
+                if _needs_approval:
                     from ..interfaces.approval import ApprovalRequest, build_tool_preview
                     ws_dir = str(self.cfg.get("BAIZE_WORKSPACE_DIR", "."))
                     preview = build_tool_preview(name, args, workspace=ws_dir, color=False)
@@ -1020,8 +1067,10 @@ class Agent:
                 if is_ro and len(batch) > 1:
                     obs.inc("parallel_tool_batches")
                     self._emit("tool_batch_start", f"parallel x{len(batch)}: {', '.join(i['name'] for i in batch)}")
+                    import contextvars as _cv
                     with ThreadPoolExecutor(max_workers=min(4, len(batch))) as pool:
-                        results_batch = list(pool.map(_exec_one, batch))
+                        futs = [pool.submit(_cv.copy_context().run, _exec_one, it) for it in batch]
+                        results_batch = [f.result() for f in futs]
                 else:
                     results_batch = [_exec_one(item) for item in batch]
 

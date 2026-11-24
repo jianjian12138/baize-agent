@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "48.0.0",
+  "version": "49.0.0",
   "phases": [
     {
       "id": "V68",
@@ -674,6 +674,33 @@
         "baize/interfaces/cli.py",
         "baize/interfaces/repl.py",
         "tests/execution/test_v48_windows_sandbox_and_compose_stack.py"
+      ]
+    },
+    {
+      "id": "V145",
+      "name": "V49.0.0 Zenith 工业级内核加固：contextvars 并发工作区隔离、Read-Before-Edit 乐观锁与原子写入、.baize/permissions.json 三态细粒度权限规则引擎(deny>ask>allow)与统一沙盒调度、流式工具输出分块与交互式 PTY/stdin send_input、CDP ARIA 无障碍树(@eN 稳定引用)、LLM Retry-After/指数退避/4xx快速失败与 Anthropic Extended Thinking 回放、远程 Streamable HTTP/SSE MCP 传输与 resources/prompts 协议及多文件跨模块基准测试套件",
+      "status": "done",
+      "evidence": [
+        "baize/core/runtime_ctx.py",
+        "baize/governance/permissions.py",
+        "baize/core/config.py",
+        "baize/core/agent.py",
+        "baize/core/llm.py",
+        "baize/execution/bg_proc.py",
+        "baize/execution/tools.py",
+        "baize/execution/cdp_browser.py",
+        "baize/ext/mcp/transport.py",
+        "baize/ext/mcp/client.py",
+        "baize/governance/eval_harness.py",
+        "baize/interfaces/server/routes_get.py",
+        "baize/interfaces/server/routes_post.py",
+        "baize/interfaces/studio/index.html",
+        "baize/interfaces/studio/app.js",
+        "baize/interfaces/cli.py",
+        "baize/interfaces/repl.py",
+        "tests/core/test_v49_context_isolation_and_file_locks.py",
+        "tests/governance/test_v49_permissions_and_multifile_eval.py",
+        "tests/execution/test_v49_pty_aria_retry_and_mcp_http.py"
       ]
     }
   ]

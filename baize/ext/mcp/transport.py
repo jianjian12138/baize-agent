@@ -140,3 +140,107 @@ class MemoryTransport(Transport):
 
     def close(self) -> None:
         self.closed = True
+
+
+
+class StreamableHttpTransport(Transport):
+    """MCP 2025-03-26 Streamable HTTP / SSE JSON-RPC 2.0 transport (pure stdlib)."""
+
+    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout: float = 30.0, cfg: dict | None = None) -> None:
+        self.url = str(url or "").strip()
+        if not self.url.startswith(("http://", "https://")):
+            raise JsonRpcError(f"invalid MCP HTTP URL: {self.url!r}")
+        self.headers = dict(headers or {})
+        self.timeout = float(timeout)
+        self.cfg = cfg
+        self.session_id: str = ""
+        self._queue: list[dict] = []
+        self.closed = False
+
+    def _parse_sse(self, raw_text: str) -> list[dict]:
+        messages: list[dict] = []
+        data_lines: list[str] = []
+        for line in raw_text.splitlines():
+            stripped = line.rstrip("\r")
+            if stripped == "":
+                if data_lines:
+                    payload = "\n".join(data_lines).strip()
+                    data_lines.clear()
+                    if payload and payload != "[DONE]":
+                        try:
+                            obj = json.loads(payload)
+                            if isinstance(obj, dict):
+                                messages.append(obj)
+                        except json.JSONDecodeError:
+                            pass
+                continue
+            if stripped.startswith("data:"):
+                data_lines.append(stripped[5:].lstrip())
+        if data_lines:
+            payload = "\n".join(data_lines).strip()
+            if payload and payload != "[DONE]":
+                try:
+                    obj = json.loads(payload)
+                    if isinstance(obj, dict):
+                        messages.append(obj)
+                except json.JSONDecodeError:
+                    pass
+        return messages
+
+    def send(self, obj: dict) -> None:
+        if self.closed:
+            raise JsonRpcError("MCP HTTP transport is closed")
+        import urllib.error
+        import urllib.request
+        from ...governance.dlp import check_egress_url
+
+        ok_egress, reason = check_egress_url(self.url, cfg=self.cfg)
+        if not ok_egress:
+            raise JsonRpcError(f"MCP HTTP egress blocked: {reason}")
+
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        req_headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        req_headers.update(self.headers)
+        if self.session_id:
+            req_headers["Mcp-Session-Id"] = self.session_id
+
+        req = urllib.request.Request(self.url, data=body, headers=req_headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                status = getattr(resp, "status", 200)
+                sid = resp.headers.get("Mcp-Session-Id") or resp.headers.get("mcp-session-id")
+                if sid:
+                    self.session_id = str(sid).strip()
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                raw_bytes = resp.read()
+        except urllib.error.HTTPError as exc:
+            err_body = ""
+            try:
+                err_body = exc.read(512).decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            raise JsonRpcError(f"MCP HTTP {exc.code} from {self.url}: {err_body}") from exc
+        except Exception as exc:
+            raise JsonRpcError(f"MCP HTTP request failed: {exc}") from exc
+
+        if status in (202, 204) or not raw_bytes.strip():
+            return
+        raw_text = raw_bytes.decode("utf-8", errors="replace")
+        if "text/event-stream" in ctype or raw_text.lstrip().startswith(("event:", "data:")):
+            self._queue.extend(self._parse_sse(raw_text))
+        else:
+            try:
+                parsed = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                raise JsonRpcError(f"MCP HTTP invalid JSON response: {exc}") from exc
+            if isinstance(parsed, list):
+                self._queue.extend(x for x in parsed if isinstance(x, dict))
+            elif isinstance(parsed, dict):
+                self._queue.append(parsed)
+
+    def recv(self) -> dict | None:
+        return self._queue.pop(0) if self._queue else None
+
+    def close(self) -> None:
+        self.closed = True
+        self._queue.clear()

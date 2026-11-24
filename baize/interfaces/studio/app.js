@@ -2404,3 +2404,36 @@ async function loadHeliosV48Posture() {
     if (out) out.textContent = '加载跨平台态势失败: ' + e;
   }
 }
+
+
+async function loadHeliosPermissions() {
+  const out = document.getElementById('helios-perm-out');
+  try {
+    const res = await apiFetch('/api/permissions');
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '加载权限规则失败: ' + e;
+  }
+}
+
+async function checkHeliosPermission() {
+  const out = document.getElementById('helios-perm-out');
+  const tool = (document.getElementById('helios-perm-tool')?.value || '').trim();
+  const target = (document.getElementById('helios-perm-target')?.value || '').trim();
+  if (!tool) {
+    if (out) out.textContent = '请输入工具名（如 bash / write_file / read_file）';
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/permissions/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool, target }),
+    });
+    const d = await res.json();
+    if (out) out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    if (out) out.textContent = '权限模拟检测失败: ' + e;
+  }
+}

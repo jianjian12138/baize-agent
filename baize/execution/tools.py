@@ -249,8 +249,9 @@ EXECUTION_BOUNDARY: dict[str, object] = {
 
 
 def _workspace_root(cfg: dict | None = None) -> Path:
+    from ..core.runtime_ctx import current_workspace
     cfg = cfg or load_config()
-    return Path(cfg.get("BAIZE_WORKSPACE_DIR", str(ROOT))).resolve()
+    return current_workspace(cfg, fallback=ROOT)
 
 
 def _resolve_in_workspace(path_str: str, cfg: dict | None = None) -> Path:
@@ -291,9 +292,11 @@ def command_allowed(command: str) -> tuple[bool, str]:
 
 def _tool_read_file(path: str, start_line: int = 1, end_line: int | None = None,
                     max_lines: int = 400) -> str:
+    from ..core.runtime_ctx import get_file_read_tracker
     p = _resolve_in_workspace(path)
     if not p.is_file():
         return f"ERROR: file not found: {p}"
+    get_file_read_tracker().record_read(p)
     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     total = len(lines)
     if total == 0:
@@ -375,12 +378,19 @@ def _fuzzy_whitespace_replace(current: str, old_content: str, new_content: str) 
 
 
 def _tool_write_file(path: str, content: str) -> str:
-    p = _resolve_in_workspace(path)
+    from ..core.runtime_ctx import atomic_write_text, get_file_read_tracker
+    cfg = load_config()
+    p = _resolve_in_workspace(path, cfg)
+    require_read = str(cfg.get("BAIZE_REQUIRE_READ_BEFORE_EDIT", "0")).strip().lower() in ("1", "true", "yes")
+    tracker = get_file_read_tracker()
+    ok_fresh, fresh_err = tracker.verify_fresh(p, require_prior_read=require_read)
+    if not ok_fresh:
+        return f"ERROR: {fresh_err}"
     old_content = ""
     if p.is_file():
         old_content = p.read_text(encoding="utf-8", errors="replace")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
+    atomic_write_text(p, content)
+    tracker.record_read(p)
     advisory = _check_blast_radius(p, old_content, content) if old_content else ""
     diag = _auto_diagnose_after_edit(p)
     return f"wrote {len(content)} chars -> {p}{advisory}{diag}"
@@ -411,7 +421,13 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
         return f"ERROR: command rejected - {reason}"
     cfg = load_config()
     workspace = str(_workspace_root(cfg))
-    if cfg.get("BAIZE_SANDBOX_ENABLED", "0") == "1":
+    from .sandbox import resolve_sandbox_mode
+    from ..core.runtime_ctx import emit_tool_output, get_execution_context
+    stream_enabled = str(cfg.get("BAIZE_STREAM_TOOL_OUTPUT", "1")).strip().lower() in ("1", "true", "yes")
+    _ctx = get_execution_context()
+    _has_stream_cb = bool(stream_enabled and _ctx is not None and _ctx.on_tool_output is not None)
+    eff_sb_mode = (_ctx.sandbox_mode if (_ctx is not None and _ctx.sandbox_mode) else resolve_sandbox_mode(cfg))
+    if eff_sb_mode:
         # Honor a custom sandbox component (BAIZE_COMPONENTS) without editing
         # agent.py; default path returns the same sandbox.run result.
         from ..core import component
@@ -420,6 +436,8 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
         out = (result.stdout or "") + (
             ("\n[stderr]\n" + result.stderr) if result.stderr else "")
         out = redact(out)
+        if _has_stream_cb and out:
+            emit_tool_output("bash", "stdout", out[:4000])
         prefix = "[sandbox: degraded to logical-only] " if result.degraded else ""
         return prefix + f"exit={result.returncode}\n{out[:8000]}"
     # V35 Windows Native First-Class & V33-D2: Popen-based execution so the whole
@@ -447,6 +465,30 @@ def _tool_bash(command: str, timeout: int = 60) -> str:
     else:
         cmd, use_shell = command, True
 
+    if _has_stream_cb:
+        import subprocess as _sp
+        import time as _time
+        chunks: list[str] = []
+        t_start = _time.monotonic()
+        timed_out = False
+        try:
+            proc = _sp.Popen(cmd, shell=use_shell, cwd=workspace, env=env, stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                chunks.append(line)
+                emit_tool_output("bash", "stdout", redact(line))
+                if _time.monotonic() - t_start > timeout:
+                    timed_out = True
+                    proc.kill()
+                    break
+            proc.wait(timeout=max(1, int(timeout - (_time.monotonic() - t_start))) if not timed_out else 2)
+            rc = proc.returncode if proc.returncode is not None else -1
+        except Exception as exc:
+            return f"ERROR: failed to launch command: {exc}"
+        if timed_out:
+            return f"ERROR: command timed out after {timeout}s (process tree killed)"
+        out = redact("".join(chunks))
+        return f"exit={rc}\n{out[:8000]}"
     try:
         res = proc_mod.run(cmd, shell=use_shell, timeout=timeout,
                            cwd=workspace, env=env)
@@ -533,9 +575,16 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
     This is deliberately safer than ``write_file`` (full overwrite) because
     the model only specifies the delta, not the entire file.
     """
-    p = _resolve_in_workspace(path)
+    from ..core.runtime_ctx import atomic_write_text, get_file_read_tracker
+    cfg = load_config()
+    p = _resolve_in_workspace(path, cfg)
     if not p.is_file():
         return f"ERROR: file not found: {p}"
+    require_read = str(cfg.get("BAIZE_REQUIRE_READ_BEFORE_EDIT", "0")).strip().lower() in ("1", "true", "yes")
+    tracker = get_file_read_tracker()
+    ok_fresh, fresh_err = tracker.verify_fresh(p, require_prior_read=require_read)
+    if not ok_fresh:
+        return f"ERROR: {fresh_err}"
     current = p.read_text(encoding="utf-8", errors="replace")
 
     if mode == "replace":
@@ -550,7 +599,8 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
                     updated = curr_norm.replace(old_norm, new_norm, 1)
                     if "\r\n" in current:
                         updated = updated.replace("\n", "\r\n")
-                    p.write_text(updated, encoding="utf-8")
+                    atomic_write_text(p, updated)
+                    tracker.record_read(p)
                     lines_before = current.count("\n") + 1
                     lines_after = updated.count("\n") + 1
                     return (f"patched {path} (applied with newline normalization): "
@@ -558,7 +608,8 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
                             f"({len(new_content) - len(old_content):+d} chars)")
             fuzzy_updated, fuzzy_ok = _fuzzy_whitespace_replace(current, old_content, new_content)
             if fuzzy_ok:
-                p.write_text(fuzzy_updated, encoding="utf-8")
+                atomic_write_text(p, fuzzy_updated)
+                tracker.record_read(p)
                 lines_before = current.count("\n") + 1
                 lines_after = fuzzy_updated.count("\n") + 1
                 diag = _auto_diagnose_after_edit(p)
@@ -576,7 +627,8 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
                     f"times in {path}. Make old_content more specific to "
                     f"uniquely identify the target.")
         updated = current.replace(old_content, new_content, 1)
-        p.write_text(updated, encoding="utf-8")
+        atomic_write_text(p, updated)
+        tracker.record_read(p)
         lines_before = current.count("\n") + 1
         lines_after = updated.count("\n") + 1
         advisory = _check_blast_radius(p, current, updated)
@@ -674,7 +726,8 @@ def _tool_patch_file(path: str, old_content: str, new_content: str,
         updated = "".join(out_lines)
         if uses_crlf:
             updated = updated.replace("\n", "\r\n")
-        p.write_text(updated, encoding="utf-8")
+        atomic_write_text(p, updated)
+        tracker.record_read(p)
         advisory = _check_blast_radius(p, current, updated)
         return (f"patched {path} via diff: {updated.count(chr(10)) + 1} lines{advisory}")
     else:
@@ -1091,6 +1144,14 @@ def _tool_bash_bg_stop(proc_id: str) -> str:
     return json.dumps(get_bg_manager().stop(proc_id), ensure_ascii=False)
 
 
+def _tool_bash_bg_send_input(proc_id: str, text: str, append_newline: bool = True, wait_ms: int = 120) -> str:
+    from .bg_proc import get_bg_manager
+    return json.dumps(
+        get_bg_manager().send_input(proc_id, text, append_newline=bool(append_newline), wait_ms=int(wait_ms)),
+        ensure_ascii=False,
+    )
+
+
 def _tool_memory_profile(slot: str = "memory", action: str = "read", content: str = "", target: str = "") -> str:
     from ..knowledge.memory import BoundedMemoryStore
     store = BoundedMemoryStore(load_config())
@@ -1442,6 +1503,13 @@ def default_registry() -> ToolRegistry:
                      "Terminate a background process and its process group cleanly.",
                      _s(proc_id={"type": "string"}),
                      _tool_bash_bg_stop)
+        reg.register("bash_bg_send_input",
+                     "Send interactive stdin text to a running background process (PTY or stdin pipe) and return recent output.",
+                     _s(proc_id={"type": "string"},
+                        text={"type": "string"},
+                        append_newline={"type": "boolean", "_opt": True},
+                        wait_ms={"type": "integer", "_opt": True}),
+                     _tool_bash_bg_send_input)
         reg.register("memory_profile",
                      "Read or update bounded persistent MEMORY.md (project facts) or USER.md (developer preferences) snapshots.",
                      _s(slot={"type": "string", "_opt": True},
@@ -1485,7 +1553,7 @@ def default_registry() -> ToolRegistry:
                      _tool_verify_ui)
         reg.register("browser_action",
                      "Drive a persistent stateful CDP headless browser session for interactive E2E flows: "
-                     "navigate, click, fill, wait, eval_assert, screenshot, snapshot, close.",
+                     "navigate, click, fill, wait, eval_assert, screenshot, snapshot, aria_snapshot (@eN refs), close.",
                      _s(action={"type": "string"},
                         session_id={"type": "string", "_opt": True},
                         url={"type": "string", "_opt": True},
@@ -1563,9 +1631,15 @@ def register_mcp_client(spec, registry: "ToolRegistry | None" = None,
         client_spec = MCPClient.from_spec_file(spec, transport=transport).spec
     elif isinstance(spec, dict):
         client_spec = MCPServerSpec(
-            name=spec["name"], command=spec["command"],
-            args=spec.get("args", []), env=spec.get("env", {}),
-            protocol_version=spec.get("protocol_version", "2024-11-05"))
+            name=spec["name"],
+            command=spec.get("command", ""),
+            args=spec.get("args", []),
+            env=spec.get("env", {}),
+            protocol_version=spec.get("protocol_version", "2024-11-05"),
+            url=spec.get("url", ""),
+            headers=spec.get("headers", {}),
+            transport_type=spec.get("transport_type", "http" if spec.get("url") else "stdio"),
+        )
     else:
         raise TypeError(f"unsupported MCP spec type: {type(spec).__name__}")
 

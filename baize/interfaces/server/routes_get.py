@@ -682,4 +682,12 @@ def dispatch_get(handler, req_path: str, deps: dict[str, Any]) -> None:
         cf = (params.get("compose_file") or [""])[0].strip() or str(cfg.get("BAIZE_COMPOSE_FILE", "") or "").strip()
         return handler._send(200, get_compose_manager().status(ws, compose_file=cf))
 
+    if req_path == "/api/permissions":
+        if not handler._is_authorized():
+            return handler._send(401, {"error": "unauthorized: invalid or missing bearer token"})
+        from ...governance.permissions import load_permissions
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        return handler._send(200, load_permissions(ws, cfg).to_dict())
+
     return handler._send(404, {"error": "not found"})

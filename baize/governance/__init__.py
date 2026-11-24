@@ -38,6 +38,15 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "get_tracer": (".telemetry", "get_tracer"),
     "format_traceparent": (".telemetry", "format_traceparent"),
     "parse_traceparent": (".telemetry", "parse_traceparent"),
+    "PermissionRule": (".permissions", "PermissionRule"),
+    "PermissionDecision": (".permissions", "PermissionDecision"),
+    "PermissionRuleSet": (".permissions", "PermissionRuleSet"),
+    "parse_permission_rule": (".permissions", "parse_permission_rule"),
+    "discover_permissions_file": (".permissions", "discover_permissions_file"),
+    "load_permissions": (".permissions", "load_permissions"),
+    "evaluate_tool_permission": (".permissions", "evaluate_tool_permission"),
+    "MULTI_FILE_BENCH_TASKS": (".eval_harness", "MULTI_FILE_BENCH_TASKS"),
+    "run_multi_file_benchmark": (".eval_harness", "run_multi_file_benchmark"),
 }
 
 __all__ = list(_EXPORTS)

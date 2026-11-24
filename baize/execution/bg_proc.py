@@ -33,6 +33,7 @@ class BackgroundProcess:
     read_cursor: int = 0
     total_lines: int = 0
     stopped_by_user: bool = False
+    master_fd: int | None = None
 
     def status(self) -> str:
         rc = self.process.poll()
@@ -95,7 +96,7 @@ class BackgroundProcessManager:
             "env": child_env,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
-            "stdin": subprocess.DEVNULL,
+            "stdin": subprocess.PIPE,
             "text": True,
             "bufsize": 1,
         }
@@ -134,6 +135,7 @@ class BackgroundProcessManager:
             pid=proc.pid,
             started_at=time.time(),
             process=proc,
+            master_fd=master_fd,
         )
 
         def _reader() -> None:
@@ -159,10 +161,14 @@ class BackgroundProcessManager:
                             entry.ring_lines.append(buf.decode("utf-8", errors="replace").rstrip("\r"))
                             entry.total_lines += 1
                 finally:
-                    try:
-                        os.close(master_fd)
-                    except OSError:
-                        pass
+                    with entry.lock:
+                        fd_to_close = entry.master_fd
+                        entry.master_fd = None
+                    if fd_to_close is not None:
+                        try:
+                            os.close(fd_to_close)
+                        except OSError:
+                            pass
             elif proc.stdout is not None:
                 try:
                     for raw_line in proc.stdout:
@@ -198,6 +204,42 @@ class BackgroundProcessManager:
                 lines = lines[-tail_lines:]
             output = "\n".join(lines)
         return {"ok": True, **entry.to_summary(), "output": output}
+
+    def send_input(
+        self,
+        proc_id: str,
+        text: str,
+        *,
+        append_newline: bool = True,
+        wait_ms: int = 120,
+    ) -> dict[str, Any]:
+        """Write interactive stdin text into a running background process (PTY master_fd or stdin pipe)."""
+        with self._lock:
+            entry = self._procs.get(proc_id)
+        if entry is None:
+            return {"ok": False, "error": "not_found", "message": f"Unknown background process: {proc_id}"}
+        if entry.process.poll() is not None:
+            return {"ok": False, "error": "process_exited", "message": f"Background process {proc_id} has already exited."}
+        payload = str(text)
+        if append_newline and not payload.endswith("\n"):
+            payload += "\n"
+        try:
+            with entry.lock:
+                fd = entry.master_fd
+            if fd is not None:
+                os.write(fd, payload.encode("utf-8"))
+            elif entry.process.stdin is not None:
+                entry.process.stdin.write(payload)
+                entry.process.stdin.flush()
+            else:
+                return {"ok": False, "error": "stdin_unavailable", "message": "Process stdin is closed or unavailable."}
+        except Exception as exc:
+            return {"ok": False, "error": "write_failed", "message": f"Failed to send input: {exc}"}
+        if wait_ms > 0:
+            time.sleep(min(wait_ms, 5000) / 1000.0)
+        with entry.lock:
+            output = "\n".join(list(entry.ring_lines)[-40:])
+        return {"ok": True, **entry.to_summary(), "bytes_sent": len(payload.encode("utf-8")), "output": output}
 
     def stop(self, proc_id: str, *, timeout: float = 3.0) -> dict[str, Any]:
         with self._lock:

@@ -12,9 +12,9 @@ Baize-Agent is an autonomous agent engineering runtime built on three pillars:
 ## 2. Modular Package Structure
 
 ```text
-baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (75 modules)
-├── core/                           # 10 modules: agent loop, context engine, cost ledger, plugin lifecycle, LLM client, config, sessions, autonomy
-│   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  cost_ledger.py  llm.py  plugin.py  plugin_lifecycle.py  sessions.py
+baize/                              # 0 flat modules + __main__.py, 8 domain subpackages (77 modules)
+├── core/                           # 11 modules: agent loop, runtime_ctx (contextvars/file locks/atomic writes), context engine, cost ledger, plugin lifecycle, LLM client, config, sessions, autonomy
+│   ├── agent.py  autonomy.py  component.py  config.py  context_engine.py  cost_ledger.py  llm.py  plugin.py  plugin_lifecycle.py  runtime_ctx.py  sessions.py
 ├── orchestration/                  # 8 modules: Director->Executor->Verifier DAG, spec hard-gate, contracts, hooks, ledger
 │   ├── automations.py  contract.py  hooks.py  orchestrator.py  run_ledger.py  spec_workflow.py  system1.py  team.py
 ├── execution/                      # 13 modules: tools, bg_proc, worktree pool, stateful CDP E2E & visual verify, mobile bridge, Compose stack, cross-OS native sandbox, Git checkpoints, proc, PowerShell, Docker pool
@@ -30,8 +30,8 @@ baize/                              # 0 flat modules + __main__.py, 8 domain sub
 │   └── workspace_search.py         # zero-dependency workspace grep & glob search
 ├── knowledge/                      # 7 modules: layered + SQLite WAL + bounded memory, FTS5+Embedding hybrid index, graph, RAG/TF-IDF, skills & runner
 │   ├── doc_crawler.py  graph.py  hybrid_index.py  memory.py  rag.py  skill_runner.py  skills.py
-├── governance/                     # 8 modules: NO FAKE DONE gate, bench, eval harness, doctor, mutation, obs, dlp, telemetry
-│   ├── bench.py  dlp.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py  telemetry.py
+├── governance/                     # 9 modules: NO FAKE DONE gate, permissions engine, bench, eval harness, doctor, mutation, obs, dlp, telemetry
+│   ├── bench.py  dlp.py  doctor.py  eval_harness.py  gate.py  mutation.py  observability.py  permissions.py  telemetry.py
 ├── interfaces/                     # 13 modules: CLI, REPL, Diff approval, JSONL RPC, HTTP/SSE server, jobs, ops, desktop, UI
 │   ├── approval.py  cli.py  desktop.py  repl.py  rpc.py  serve.py  ui.py
 │   └── server/                     # decomposed HTTP server subpackage

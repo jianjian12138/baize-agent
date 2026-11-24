@@ -1114,6 +1114,7 @@ __STYLE_BLOCK__
               <div class="helios-btn-group">
                 <button class="chip-btn" onclick="loadHeliosBrowserSessions()">刷新会话池</button>
                 <button class="chip-btn" onclick="runHeliosBrowserAction('snapshot')">抓取快照</button>
+                <button class="chip-btn" onclick="runHeliosBrowserAction('aria_snapshot')">ARIA 树 (@eN)</button>
                 <button class="chip-btn" onclick="runHeliosBrowserAction('close')">关闭会话</button>
               </div>
             </div>
@@ -1126,6 +1127,7 @@ __STYLE_BLOCK__
                 <option value="wait">wait</option>
                 <option value="eval_assert">eval_assert</option>
                 <option value="snapshot">snapshot</option>
+                <option value="aria_snapshot">aria_snapshot</option>
                 <option value="screenshot">screenshot</option>
                 <option value="close">close</option>
               </select>
@@ -1189,6 +1191,24 @@ __STYLE_BLOCK__
               </div>
             </div>
             <pre id="helios-v48-posture-out" class="helios-code-box">点击「刷新跨平台态势」查看当前宿主机沙盒机制与项目语言指纹...</pre>
+          </div>
+
+          <div class="helios-card">
+            <div class="helios-card-head">
+              <div>
+                <h3>三态细粒度权限规则引擎 (.baize/permissions.json · V49 Zenith)</h3>
+                <span class="helios-hint">按 deny &gt; ask &gt; allow 优先级匹配工具、命令前缀与文件路径 glob（如 Bash(pytest:*)、Edit(src/**)）</span>
+              </div>
+              <div class="helios-btn-group">
+                <button class="chip-btn" onclick="loadHeliosPermissions()">查看生效规则</button>
+                <button class="chip-btn" onclick="checkHeliosPermission()">模拟鉴权</button>
+              </div>
+            </div>
+            <div class="helios-form-row">
+              <input id="helios-perm-tool" type="text" value="bash" placeholder="工具名 (如 bash / write_file / read_file)" style="max-width:180px;" />
+              <input id="helios-perm-target" type="text" placeholder="目标命令或路径 (如 pytest -q 或 src/app.py)" />
+            </div>
+            <pre id="helios-perm-out" class="helios-code-box">点击「查看生效规则」或输入工具与目标参数进行权限模拟评测...</pre>
           </div>
         </div>
       </div>

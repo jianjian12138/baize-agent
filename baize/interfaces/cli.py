@@ -1186,7 +1186,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     br_p = sub.add_parser("browser", help="interactive stateful CDP browser E2E actions (V47 Horizon)")
     br_p.add_argument("action", nargs="?", default="status",
-                      choices=["status", "navigate", "click", "fill", "wait", "eval_assert", "snapshot", "screenshot", "close"])
+                      choices=["status", "navigate", "click", "fill", "wait", "eval_assert", "snapshot", "aria_snapshot", "screenshot", "close"])
     br_p.add_argument("--session", default="default", help="browser session id")
     br_p.add_argument("--url", default="", help="target URL for navigate")
     br_p.add_argument("--selector", default="", help="CSS selector for click/fill/wait")
@@ -1220,6 +1220,12 @@ def build_parser() -> argparse.ArgumentParser:
     comp_p.add_argument("--volumes", action="store_true", help="remove volumes on down")
     comp_p.add_argument("--timeout", type=int, default=60, help="operation timeout seconds")
     comp_p.add_argument("--json", action="store_true", help="output JSON")
+
+    perm_p = sub.add_parser("permissions", help="inspect or test .baize/permissions.json allow/ask/deny rules (V49 Zenith)")
+    perm_p.add_argument("action", nargs="?", default="show", choices=["show", "check"])
+    perm_p.add_argument("--tool", default="", help="tool name to test (for check)")
+    perm_p.add_argument("--target", default="", help="command/path/url target to test (for check)")
+    perm_p.add_argument("--json", action="store_true", help="output JSON")
 
     return p
 
@@ -1666,6 +1672,34 @@ def cmd_compose(args) -> int:
     return 0 if res.get("ok") else 1
 
 
+
+def cmd_permissions(args) -> int:
+    from ..core.config import load_config
+    from ..governance.permissions import evaluate_tool_permission, load_permissions
+    cfg = load_config()
+    ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+    if args.action == "check":
+        if not args.tool:
+            print("error: --tool is required for 'permissions check'", file=sys.stderr)
+            return 2
+        eval_args = {"command": args.target, "path": args.target, "url": args.target} if args.target else {}
+        dec = evaluate_tool_permission(args.tool, eval_args, workspace=ws, cfg=cfg).to_dict()
+        if args.json:
+            print(json.dumps(dec, indent=2, ensure_ascii=False))
+        else:
+            print(f"Permission Decision [{dec['tool']}]: {dec['action']} (rule={dec['matched_rule'] or 'default'}, target={dec['target'] or '-'})")
+        return 0 if dec["action"] != "deny" else 1
+    ruleset = load_permissions(ws, cfg).to_dict()
+    if args.json:
+        print(json.dumps(ruleset, indent=2, ensure_ascii=False))
+    else:
+        print(f"Permissions file: {ruleset['source'] or '(none)'} (allow={len(ruleset['allow'])}, ask={len(ruleset['ask'])}, deny={len(ruleset['deny'])})")
+        for bucket in ("deny", "ask", "allow"):
+            for r in ruleset[bucket]:
+                print(f"  [{bucket}] {r}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     if not actual_argv:
@@ -1673,7 +1707,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl()
     args = build_parser().parse_args(argv)
     # Fail-fast configuration guard for every command except diagnostics, setup, and desktop launcher
-    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces", "spec", "lsp", "verify-ui", "browser", "mobile", "compose"):
+    if args.command not in ("doctor", "mcp", "chat", "setup", "configure", "desktop", "impact", "blast", "eval", "rollback", "diagnose", "rpc", "worktree", "budget", "audit", "traces", "spec", "lsp", "verify-ui", "browser", "mobile", "compose", "permissions"):
         try:
             validate()
         except ConfigError as e:
@@ -1723,6 +1757,7 @@ def main(argv: list[str] | None = None) -> int:
         "browser": cmd_browser,
         "mobile": cmd_mobile,
         "compose": cmd_compose,
+        "permissions": cmd_permissions,
     }
     return handlers[args.command](args)
 

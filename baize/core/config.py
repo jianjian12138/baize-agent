@@ -199,6 +199,12 @@ _DEFAULTS = {
     "BAIZE_COMPOSE_FILE": "",                # compose_stack.py: optional explicit docker-compose file path
     "BAIZE_COMPOSE_TIMEOUT": "60",           # compose_stack.py: default compose up/port-wait timeout seconds
     "BAIZE_WIN_SANDBOX_RESTRICTED_TOKEN": "0",  # sandbox.py: 1 = also drop Win32 privileges via CreateRestrictedToken
+    # --- V49.0.0 Zenith (Context Isolation, File Locks, Permissions Engine, Retry & Streaming) ---
+    "BAIZE_REQUIRE_READ_BEFORE_EDIT": "0",   # tools.py: 1 = strictly require read_file before editing existing files
+    "BAIZE_PERMISSIONS_FILE": "",            # permissions.py: optional explicit path to permissions.json
+    "BAIZE_LLM_RETRY_MAX": "3",              # llm.py: max transient retry attempts (honoring Retry-After)
+    "BAIZE_LLM_RETRY_BASE_S": "1.0",         # llm.py: base exponential backoff seconds for transient LLM errors
+    "BAIZE_STREAM_TOOL_OUTPUT": "1",         # tools.py: 1 = stream live stdout chunks via ExecutionContext callback
 }
 
 
@@ -384,6 +390,12 @@ SCHEMA: dict[str, tuple[str, object]] = {
     "BAIZE_COMPOSE_FILE": ("any", None),
     "BAIZE_COMPOSE_TIMEOUT": ("int_range", (5, 600)),
     "BAIZE_WIN_SANDBOX_RESTRICTED_TOKEN": ("bool", None),
+    # --- V49.0.0 Zenith ---
+    "BAIZE_REQUIRE_READ_BEFORE_EDIT": ("bool", None),
+    "BAIZE_PERMISSIONS_FILE": ("any", None),
+    "BAIZE_LLM_RETRY_MAX": ("int_range", (0, 10)),
+    "BAIZE_LLM_RETRY_BASE_S": ("float_range", (0.05, 30.0)),
+    "BAIZE_STREAM_TOOL_OUTPUT": ("bool", None),
 }
 
 

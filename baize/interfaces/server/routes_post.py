@@ -859,4 +859,20 @@ def dispatch_post(handler, req_path: str, data: dict, deps: dict[str, Any]) -> N
             return handler._send(400, {"error": f"invalid compose action: {action}"})
         return handler._send(200, res)
 
+    if req_path == "/api/permissions/check":
+        from ...governance.permissions import evaluate_tool_permission
+        cfg = load_config()
+        ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+        tool_name = str(data.get("tool") or data.get("tool_name") or "").strip()
+        if not tool_name:
+            return handler._send(400, {"error": "missing required field: tool"})
+        raw_args = data.get("args")
+        if isinstance(raw_args, dict):
+            eval_args = dict(raw_args)
+        else:
+            target = str(data.get("target") or "").strip()
+            eval_args = {"command": target, "path": target, "url": target} if target else {}
+        decision = evaluate_tool_permission(tool_name, eval_args, workspace=ws, cfg=cfg)
+        return handler._send(200, decision.to_dict())
+
     return handler._send(404, {"error": "not found"})

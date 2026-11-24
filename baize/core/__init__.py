@@ -47,6 +47,17 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "encode_image_part": (".llm", "encode_image_part"),
     "ProviderCircuitBreaker": (".llm", "ProviderCircuitBreaker"),
     "get_circuit_breaker": (".llm", "get_circuit_breaker"),
+    "ExecutionContext": (".runtime_ctx", "ExecutionContext"),
+    "FileReadSnapshot": (".runtime_ctx", "FileReadSnapshot"),
+    "FileReadTracker": (".runtime_ctx", "FileReadTracker"),
+    "execution_context": (".runtime_ctx", "execution_context"),
+    "get_execution_context": (".runtime_ctx", "get_execution_context"),
+    "current_workspace": (".runtime_ctx", "current_workspace"),
+    "current_session_id": (".runtime_ctx", "current_session_id"),
+    "emit_tool_output": (".runtime_ctx", "emit_tool_output"),
+    "get_file_read_tracker": (".runtime_ctx", "get_file_read_tracker"),
+    "atomic_write_bytes": (".runtime_ctx", "atomic_write_bytes"),
+    "atomic_write_text": (".runtime_ctx", "atomic_write_text"),
 }
 
 __all__ = list(_EXPORTS)

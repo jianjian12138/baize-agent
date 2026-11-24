@@ -382,6 +382,7 @@ class InteractiveBrowserSession:
         self.client = CDPBrowserClient(ws_url=ws_url, browser_binary=browser_binary, timeout=timeout)
         self.current_url: str = ""
         self.last_screenshot: str = ""
+        self._aria_refs: dict[str, dict[str, Any]] = {}
         self.action_count: int = 0
         self.last_used: float = time.monotonic()
         self._connected = False
@@ -409,6 +410,106 @@ class InteractiveBrowserSession:
             details = res["exceptionDetails"] or {}
             raise RuntimeError(str(details.get("text") or "JS evaluation error"))
         return (res.get("result") or {}).get("value")
+
+    _ARIA_INTERACTIVE_ROLES = frozenset({
+        "button", "link", "textbox", "searchbox", "combobox", "checkbox",
+        "radio", "menuitem", "tab", "switch", "option", "slider", "spinbutton",
+        "heading", "dialog", "alert", "navigation", "main", "form",
+    })
+
+    def _resolve_aria_ref(self, selector: str) -> dict[str, Any] | None:
+        s = selector.strip()
+        key = s[1:] if s.startswith("@") else s
+        if len(key) >= 2 and key[0] == "e" and key[1:].isdigit():
+            return self._aria_refs.get(key)
+        return None
+
+    def _run_on_aria_ref(self, ref_info: dict[str, Any], fn_decl: str, arguments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        backend_id = ref_info.get("backendDOMNodeId")
+        if backend_id:
+            try:
+                resolved = self.client.send_command("DOM.resolveNode", {"backendNodeId": int(backend_id)})
+                obj_id = (resolved.get("object") or {}).get("objectId")
+                if obj_id:
+                    call_res = self.client.send_command("Runtime.callFunctionOn", {
+                        "objectId": obj_id,
+                        "functionDeclaration": fn_decl,
+                        "arguments": arguments or [],
+                        "returnByValue": True,
+                    })
+                    val = (call_res.get("result") or {}).get("value")
+                    if isinstance(val, dict):
+                        return val
+            except Exception:
+                pass
+        ref_key = ref_info.get("ref", "")
+        if ref_key:
+            sel_json = json.dumps(f'[data-baize-ref="{ref_key}"]')
+            arg_vals = ", ".join(json.dumps(a.get("value")) for a in (arguments or []))
+            call_args = (", " + arg_vals) if arg_vals else ""
+            js = f"(() => {{ const el = document.querySelector({sel_json}); if (!el) return {{found: false}}; return ({fn_decl}).call(el{call_args}); }})()"
+            val = self._eval(js)
+            if isinstance(val, dict):
+                return val
+        return {"found": False}
+
+    def _capture_aria_tree(self, max_nodes: int = 80) -> tuple[list[dict[str, Any]], str, str]:
+        nodes_out: list[dict[str, Any]] = []
+        source = "cdp-axtree"
+        try:
+            try:
+                self.client.send_command("Accessibility.enable")
+            except Exception:
+                pass
+            ax = self.client.send_command("Accessibility.getFullAXTree")
+            raw_nodes = ax.get("nodes") if isinstance(ax, dict) else None
+            if isinstance(raw_nodes, list) and raw_nodes:
+                self._aria_refs = {}
+                idx = 0
+                for n in raw_nodes:
+                    if not isinstance(n, dict) or n.get("ignored"):
+                        continue
+                    role_obj = n.get("role") or {}
+                    role = str(role_obj.get("value") if isinstance(role_obj, dict) else role_obj or "").lower()
+                    if role not in self._ARIA_INTERACTIVE_ROLES:
+                        continue
+                    name_obj = n.get("name") or {}
+                    name = str(name_obj.get("value") if isinstance(name_obj, dict) else name_obj or "").strip()[:120]
+                    backend_id = n.get("backendDOMNodeId")
+                    if not name and not backend_id:
+                        continue
+                    idx += 1
+                    ref_key = f"e{idx}"
+                    entry = {"ref": ref_key, "role": role, "name": name, "backendDOMNodeId": backend_id}
+                    self._aria_refs[ref_key] = entry
+                    nodes_out.append(entry)
+                    if idx >= max_nodes:
+                        break
+        except Exception:
+            nodes_out = []
+
+        if not nodes_out:
+            source = "dom-fallback"
+            js = """(() => {
+              const els = Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[aria-label],h1,h2,h3')).slice(0, 80);
+              return els.map((el, i) => {
+                const ref = 'e' + (i + 1);
+                el.setAttribute('data-baize-ref', ref);
+                const role = (el.getAttribute('role') || el.tagName || '').toLowerCase();
+                const name = (el.getAttribute('aria-label') || el.innerText || el.placeholder || el.value || '').trim().slice(0, 120);
+                return { ref, role, name, backendDOMNodeId: null };
+              });
+            })()"""
+            raw_dom = self._eval(js) or []
+            self._aria_refs = {}
+            if isinstance(raw_dom, list):
+                for item in raw_dom[:max_nodes]:
+                    if isinstance(item, dict) and item.get("ref"):
+                        self._aria_refs[str(item["ref"])] = item
+                        nodes_out.append(item)
+
+        lines = [f"[{n['ref']}] {n['role']} {json.dumps(n['name'], ensure_ascii=False)}" for n in nodes_out]
+        return nodes_out, "\n".join(lines), source
 
     def execute(
         self,
@@ -462,16 +563,26 @@ class InteractiveBrowserSession:
 
             if act == "click":
                 if not selector.strip():
-                    return {"ok": False, "action": act, "error": "click requires CSS selector"}
-                sel_json = json.dumps(selector.strip())
-                js = (
-                    f"(() => {{ const el = document.querySelector({sel_json}); "
-                    f"if (!el) return {{found: false}}; "
-                    f"if (el.scrollIntoView) el.scrollIntoView({{block: 'center'}}); "
-                    f"el.click(); "
-                    f"return {{found: true, tag: el.tagName, text: (el.innerText || el.value || '').slice(0, 120)}}; }})()"
-                )
-                r = self._eval(js) or {}
+                    return {"ok": False, "action": act, "error": "click requires CSS selector or ARIA ref (e.g. e1 / @e1)"}
+                ref_info = self._resolve_aria_ref(selector)
+                if ref_info is not None:
+                    fn_decl = (
+                        "function() { "
+                        "if (this.scrollIntoView) this.scrollIntoView({block: 'center'}); "
+                        "if (this.click) this.click(); "
+                        "return {found: true, ref: " + json.dumps(ref_info["ref"]) + ", tag: this.tagName || '', text: (this.innerText || this.value || '').slice(0, 120)}; }"
+                    )
+                    r = self._run_on_aria_ref(ref_info, fn_decl)
+                else:
+                    sel_json = json.dumps(selector.strip())
+                    js = (
+                        f"(() => {{ const el = document.querySelector({sel_json}); "
+                        f"if (!el) return {{found: false}}; "
+                        f"if (el.scrollIntoView) el.scrollIntoView({{block: 'center'}}); "
+                        f"el.click(); "
+                        f"return {{found: true, tag: el.tagName, text: (el.innerText || el.value || '').slice(0, 120)}}; }})()"
+                    )
+                    r = self._eval(js) or {}
                 found = bool(isinstance(r, dict) and r.get("found"))
                 return {
                     "ok": found,
@@ -486,19 +597,31 @@ class InteractiveBrowserSession:
 
             if act == "fill":
                 if not selector.strip():
-                    return {"ok": False, "action": act, "error": "fill requires CSS selector"}
-                sel_json = json.dumps(selector.strip())
-                val_json = json.dumps(str(value))
-                js = (
-                    f"(() => {{ const el = document.querySelector({sel_json}); "
-                    f"if (!el) return {{found: false}}; "
-                    f"el.focus && el.focus(); "
-                    f"el.value = {val_json}; "
-                    f"el.dispatchEvent(new Event('input', {{bubbles: true}})); "
-                    f"el.dispatchEvent(new Event('change', {{bubbles: true}})); "
-                    f"return {{found: true, tag: el.tagName, length: String(el.value).length}}; }})()"
-                )
-                r = self._eval(js) or {}
+                    return {"ok": False, "action": act, "error": "fill requires CSS selector or ARIA ref (e.g. e2 / @e2)"}
+                ref_info = self._resolve_aria_ref(selector)
+                if ref_info is not None:
+                    fn_decl = (
+                        "function(val) { "
+                        "if (this.focus) this.focus(); "
+                        "this.value = val; "
+                        "this.dispatchEvent(new Event('input', {bubbles: true})); "
+                        "this.dispatchEvent(new Event('change', {bubbles: true})); "
+                        "return {found: true, ref: " + json.dumps(ref_info["ref"]) + ", tag: this.tagName || '', length: String(this.value).length}; }"
+                    )
+                    r = self._run_on_aria_ref(ref_info, fn_decl, [{"value": str(value)}])
+                else:
+                    sel_json = json.dumps(selector.strip())
+                    val_json = json.dumps(str(value))
+                    js = (
+                        f"(() => {{ const el = document.querySelector({sel_json}); "
+                        f"if (!el) return {{found: false}}; "
+                        f"el.focus && el.focus(); "
+                        f"el.value = {val_json}; "
+                        f"el.dispatchEvent(new Event('input', {{bubbles: true}})); "
+                        f"el.dispatchEvent(new Event('change', {{bubbles: true}})); "
+                        f"return {{found: true, tag: el.tagName, length: String(el.value).length}}; }})()"
+                    )
+                    r = self._eval(js) or {}
                 found = bool(isinstance(r, dict) and r.get("found"))
                 return {
                     "ok": found,
@@ -587,11 +710,26 @@ class InteractiveBrowserSession:
                     "network_errors": list(self.client.network_errors),
                 }
 
+            if act == "aria_snapshot":
+                nodes_out, tree_text, source = self._capture_aria_tree()
+                return {
+                    "ok": True,
+                    "session_id": self.session_id,
+                    "action": "aria_snapshot",
+                    "source": source,
+                    "node_count": len(nodes_out),
+                    "nodes": nodes_out,
+                    "tree": tree_text,
+                    "console_errors": list(self.client.console_errors),
+                    "exceptions": list(self.client.exceptions),
+                    "network_errors": list(self.client.network_errors),
+                }
+
             return {
                 "ok": False,
                 "session_id": self.session_id,
                 "action": act,
-                "error": f"unsupported browser action '{act}'. Valid: navigate, click, fill, wait, eval_assert, screenshot, snapshot, close.",
+                "error": f"unsupported browser action '{act}'. Valid: navigate, click, fill, wait, eval_assert, screenshot, snapshot, aria_snapshot, close.",
             }
 
     def status(self) -> dict[str, Any]:

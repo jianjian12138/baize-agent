@@ -1,6 +1,6 @@
 # ⚡ Baize Agent — 60-Second Quickstart Guide
 
-Welcome to **Baize Agent (V48.0.0 Apex)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
+Welcome to **Baize Agent (V49.0.0 Zenith)** — The zero-dependency, white-box autonomous AI software engineer built in pure Python standard library.
 
 ---
 

@@ -786,3 +786,210 @@ def run_coding_benchmark(
     if persist_history:
         store.record(report)
     return report
+
+
+
+# ===========================================================================
+# V49.0.0 Zenith: Multi-File Cross-Module Engineering Benchmark
+# ===========================================================================
+
+MULTI_FILE_BENCH_TASKS: list[EvalTask] = [
+    EvalTask(
+        task_id="mf_auth_token_service",
+        title="Fix cross-module HMAC token verification and expiry check",
+        category="multi_file_security",
+        goal="Fix token signing and expiration verification across auth/crypto.py and auth/service.py so tests/test_auth.py passes.",
+        initial_files={
+            "auth/__init__.py": "",
+            "auth/crypto.py": (
+                "import hashlib, hmac\n"
+                "def sign_payload(payload: str, secret: str) -> str:\n"
+                "    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()\n"
+                "def verify_sig(payload: str, sig: str, secret: str) -> bool:\n"
+                "    return sign_payload(payload, secret) != sig\n"
+            ),
+            "auth/service.py": (
+                "from auth.crypto import sign_payload, verify_sig\n"
+                "def issue_token(user: str, exp: int, secret: str) -> str:\n"
+                "    body = f'{user}:{exp}'\n"
+                "    return f'{body}.{sign_payload(body, secret)}'\n"
+                "def authenticate(token: str, now: int, secret: str) -> str | None:\n"
+                "    if '.' not in token: return None\n"
+                "    body, sig = token.rsplit('.', 1)\n"
+                "    if not verify_sig(body, sig, secret): return None\n"
+                "    user, exp_s = body.split(':', 1)\n"
+                "    if int(exp_s) > now: return None\n"
+                "    return user\n"
+            ),
+            "tests/test_auth.py": (
+                "import sys; sys.path.insert(0, '.')\n"
+                "from auth.service import issue_token, authenticate\n"
+                "tok = issue_token('alice', 2000, 'sec')\n"
+                "assert authenticate(tok, 1500, 'sec') == 'alice'\n"
+                "assert authenticate(tok, 2500, 'sec') is None\n"
+                "assert authenticate(tok + 'x', 1500, 'sec') is None\n"
+            ),
+        },
+        test_command=[sys.executable, "tests/test_auth.py"],
+        oracle_files={
+            "auth/crypto.py": (
+                "import hashlib, hmac\n"
+                "def sign_payload(payload: str, secret: str) -> str:\n"
+                "    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()\n"
+                "def verify_sig(payload: str, sig: str, secret: str) -> bool:\n"
+                "    return hmac.compare_digest(sign_payload(payload, secret), sig)\n"
+            ),
+            "auth/service.py": (
+                "from auth.crypto import sign_payload, verify_sig\n"
+                "def issue_token(user: str, exp: int, secret: str) -> str:\n"
+                "    body = f'{user}:{exp}'\n"
+                "    return f'{body}.{sign_payload(body, secret)}'\n"
+                "def authenticate(token: str, now: int, secret: str) -> str | None:\n"
+                "    if '.' not in token: return None\n"
+                "    body, sig = token.rsplit('.', 1)\n"
+                "    if not verify_sig(body, sig, secret): return None\n"
+                "    user, exp_s = body.split(':', 1)\n"
+                "    if int(exp_s) <= now: return None\n"
+                "    return user\n"
+            ),
+        },
+    ),
+    EvalTask(
+        task_id="mf_pricing_discount_pipeline",
+        title="Fix multi-module cart pricing, discount cap, and tax rounding",
+        category="multi_file_domain",
+        goal="Fix cart subtotal calculation in billing/pricing.py and discount capping in billing/discounts.py so tests/test_billing.py passes.",
+        initial_files={
+            "billing/__init__.py": "",
+            "billing/discounts.py": (
+                "def apply_coupon(cents: int, pct: int) -> int:\n"
+                "    pct = min(max(pct, 0), 100)\n"
+                "    return cents + (cents * pct) // 100\n"
+            ),
+            "billing/pricing.py": (
+                "from billing.discounts import apply_coupon\n"
+                "def checkout_total(items: list[tuple[int, int]], coupon_pct: int, tax_bps: int) -> int:\n"
+                "    sub = sum(price for price, qty in items)\n"
+                "    discounted = apply_coupon(sub, coupon_pct)\n"
+                "    tax = (discounted * tax_bps + 5000) // 10000\n"
+                "    return discounted + tax\n"
+            ),
+            "tests/test_billing.py": (
+                "import sys; sys.path.insert(0, '.')\n"
+                "from billing.pricing import checkout_total\n"
+                "assert checkout_total([(1000, 2), (500, 1)], 10, 800) == 2430\n"
+                "assert checkout_total([(1000, 1)], 150, 1000) == 0\n"
+            ),
+        },
+        test_command=[sys.executable, "tests/test_billing.py"],
+        oracle_files={
+            "billing/discounts.py": (
+                "def apply_coupon(cents: int, pct: int) -> int:\n"
+                "    pct = min(max(pct, 0), 100)\n"
+                "    return max(0, cents - (cents * pct) // 100)\n"
+            ),
+            "billing/pricing.py": (
+                "from billing.discounts import apply_coupon\n"
+                "def checkout_total(items: list[tuple[int, int]], coupon_pct: int, tax_bps: int) -> int:\n"
+                "    sub = sum(price * qty for price, qty in items)\n"
+                "    discounted = apply_coupon(sub, coupon_pct)\n"
+                "    tax = (discounted * tax_bps + 5000) // 10000\n"
+                "    return discounted + tax\n"
+            ),
+        },
+    ),
+    EvalTask(
+        task_id="mf_cache_repository_invalidation",
+        title="Fix cross-module cache invalidation on repository write",
+        category="multi_file_state",
+        goal="Fix cache invalidation between storage/cache.py and storage/repo.py so updated records are never served stale in tests/test_repo.py.",
+        initial_files={
+            "storage/__init__.py": "",
+            "storage/cache.py": (
+                "class SimpleCache:\n"
+                "    def __init__(self): self._d = {}\n"
+                "    def get(self, k): return self._d.get(k)\n"
+                "    def set(self, k, v): self._d[k] = v\n"
+                "    def delete(self, k): pass\n"
+            ),
+            "storage/repo.py": (
+                "from storage.cache import SimpleCache\n"
+                "class UserRepo:\n"
+                "    def __init__(self):\n"
+                "        self._db = {}\n"
+                "        self._cache = SimpleCache()\n"
+                "    def save(self, uid: str, name: str) -> None:\n"
+                "        self._db[uid] = name\n"
+                "    def get(self, uid: str) -> str | None:\n"
+                "        hit = self._cache.get(uid)\n"
+                "        if hit is not None: return hit\n"
+                "        val = self._db.get(uid)\n"
+                "        if val is not None: self._cache.set(uid, val)\n"
+                "        return val\n"
+            ),
+            "tests/test_repo.py": (
+                "import sys; sys.path.insert(0, '.')\n"
+                "from storage.repo import UserRepo\n"
+                "r = UserRepo()\n"
+                "r.save('u1', 'Alice')\n"
+                "assert r.get('u1') == 'Alice'\n"
+                "r.save('u1', 'Alice-Updated')\n"
+                "assert r.get('u1') == 'Alice-Updated'\n"
+            ),
+        },
+        test_command=[sys.executable, "tests/test_repo.py"],
+        oracle_files={
+            "storage/cache.py": (
+                "class SimpleCache:\n"
+                "    def __init__(self): self._d = {}\n"
+                "    def get(self, k): return self._d.get(k)\n"
+                "    def set(self, k, v): self._d[k] = v\n"
+                "    def delete(self, k): self._d.pop(k, None)\n"
+            ),
+            "storage/repo.py": (
+                "from storage.cache import SimpleCache\n"
+                "class UserRepo:\n"
+                "    def __init__(self):\n"
+                "        self._db = {}\n"
+                "        self._cache = SimpleCache()\n"
+                "    def save(self, uid: str, name: str) -> None:\n"
+                "        self._db[uid] = name\n"
+                "        self._cache.delete(uid)\n"
+                "    def get(self, uid: str) -> str | None:\n"
+                "        hit = self._cache.get(uid)\n"
+                "        if hit is not None: return hit\n"
+                "        val = self._db.get(uid)\n"
+                "        if val is not None: self._cache.set(uid, val)\n"
+                "        return val\n"
+            ),
+        },
+    ),
+]
+
+
+def run_multi_file_benchmark(*, mode: str = "offline", cfg: dict[str, Any] | None = None, persist_history: bool = True) -> dict[str, Any]:
+    """Run V49 Multi-File Cross-Module Engineering Benchmark (offline oracle or live LLM)."""
+    import uuid
+    c = cfg if cfg is not None else load_config()
+    eff_mode = "oracle" if mode in ("offline", "oracle") else "live"
+    summary = run_eval_suite(mode=eff_mode, tasks=MULTI_FILE_BENCH_TASKS, cfg=c, persist=False)
+    model_label = "offline-oracle" if eff_mode == "oracle" else str(c.get("BAIZE_MODEL_NAME") or "live")
+    store = EvalHistoryStore(cfg=c)
+    report = {
+        "run_id": f"eval-mf-{uuid.uuid4().hex[:8]}",
+        "ts": round(time.time(), 3),
+        "suite": "multi_file_v49",
+        "mode": mode,
+        "model": model_label,
+        "total_tasks": summary.total_tasks,
+        "passed_tasks": summary.passed_tasks,
+        "pass_rate": summary.pass_rate,
+        "avg_duration_ms": summary.avg_duration_ms,
+        "tasks": [
+            {"task_id": r.task_id, "title": r.title, "category": r.category, "passed": r.passed, "duration_ms": r.duration_ms, "error": r.stopped_reason}
+            for r in summary.results
+        ],
+    }
+    if persist_history:
+        store.record(report)
+    return report

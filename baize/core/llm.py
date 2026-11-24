@@ -248,6 +248,80 @@ class LLMError(RuntimeError):
     """Raised when the model endpoint cannot produce a usable response."""
 
 
+_RETRYABLE_HTTP_CODES = frozenset({408, 425, 429, 500, 502, 503, 504, 529})
+_NON_RETRYABLE_HTTP_CODES = frozenset({400, 401, 403, 404, 405, 422})
+
+
+def _extract_http_status(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code
+    status = getattr(exc, "status", None)
+    if isinstance(status, int):
+        return status
+    m = re.search(r"\bHTTP\s+(\d{3})\b", str(exc))
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_retry_after(exc: Exception) -> float | None:
+    headers = getattr(exc, "headers", None)
+    raw = None
+    if headers is not None:
+        try:
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+        except Exception:
+            raw = None
+    if raw is None:
+        m = re.search(r"retry[-_ ]after[:=]\s*([0-9]+(?:\.[0-9]+)?)", str(exc), re.I)
+        if m:
+            raw = m.group(1)
+    if not raw:
+        return None
+    text = str(raw).strip()
+    try:
+        return max(0.0, min(float(text), 60.0))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        delta = parsedate_to_datetime(text).timestamp() - time.time()
+        return max(0.0, min(delta, 60.0))
+    except Exception:
+        return None
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    code = _extract_http_status(exc)
+    if code is not None:
+        if code in _NON_RETRYABLE_HTTP_CODES:
+            return False
+        return code in _RETRYABLE_HTTP_CODES or code >= 500
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError, http.client.HTTPException, urllib.error.URLError)):
+        return True
+    low = str(exc).lower()
+    if any(tok in low for tok in ("401", "403", "404", "400", "invalid_api_key", "unauthorized", "egress blocked")):
+        return False
+    if any(tok in low for tok in ("429", "rate limit", "overloaded", "timeout", "timed out", "temporarily", "connection reset", "502", "503", "504", "529")):
+        return True
+    return True
+
+
+def _compute_retry_delay(attempt: int, base_s: float, exc: Exception) -> float:
+    import random as _rnd
+    ra = _parse_retry_after(exc)
+    if ra is not None:
+        return ra
+    base = max(0.05, float(base_s))
+    cap = min(30.0, base * (2 ** max(0, attempt)))
+    jitter = _rnd.uniform(0.0, cap * 0.25)
+    return round(min(30.0, cap + jitter), 4)
+
+
 def _friendly_llm_error(exc: Exception) -> str:
     """Format low-level HTTP/LLM exceptions into clean, human-friendly error messages without exposing raw internal URLs."""
     raw = str(exc)
@@ -382,10 +456,14 @@ def _anthropic_request(spec: "ModelSpec", messages: list[dict],
             _push("user", m.get("content") or "")
         elif role == "assistant":
             tcalls = m.get("tool_calls") or []
-            if not tcalls:
+            thinking_blocks = [
+                dict(tb) for tb in (m.get("thinking_blocks") or [])
+                if isinstance(tb, dict) and tb.get("type") in ("thinking", "redacted_thinking")
+            ]
+            if not tcalls and not thinking_blocks:
                 _push("assistant", m.get("content") or "")
             else:
-                blocks: list[dict] = []
+                blocks: list[dict] = list(thinking_blocks)
                 text_val = m.get("content")
                 if text_val:
                     blocks.append({"type": "text", "text": str(text_val)})
@@ -462,18 +540,27 @@ def _openai_parse(raw: dict) -> dict:
 
 
 def _anthropic_parse(raw: dict) -> dict:
-    """Normalize an Anthropic /v1/messages response to our message shape."""
+    """Normalize an Anthropic /v1/messages response (incl. Extended Thinking blocks)."""
     blocks = raw.get("content", [])
     if not isinstance(blocks, list):
         raise LLMError(f"malformed anthropic response: {str(raw)[:300]}")
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
+    thinking_blocks: list[dict] = []
     tool_calls: list[dict] = []
     for b in blocks:
         if not isinstance(b, dict):
             continue
-        if b.get("type") == "text":
+        btype = b.get("type")
+        if btype == "text":
             text_parts.append(b.get("text", ""))
-        elif b.get("type") == "tool_use":
+        elif btype == "thinking":
+            thinking_blocks.append(dict(b))
+            if b.get("thinking"):
+                thinking_parts.append(str(b.get("thinking", "")))
+        elif btype == "redacted_thinking":
+            thinking_blocks.append(dict(b))
+        elif btype == "tool_use":
             tool_calls.append({
                 "id": b.get("id"),
                 "type": "function",
@@ -483,6 +570,10 @@ def _anthropic_parse(raw: dict) -> dict:
                 },
             })
     out: dict = {"role": "assistant", "content": "".join(text_parts)}
+    if thinking_blocks:
+        out["thinking_blocks"] = thinking_blocks
+    if thinking_parts:
+        out["reasoning_content"] = "\n".join(thinking_parts)
     if tool_calls:
         out["tool_calls"] = tool_calls
     return out
@@ -625,7 +716,11 @@ class LLMClient:
                  stream_transport: StreamTransport | None = None):
         cfg = cfg or load_config()
         self.cfg = cfg
-        self.max_retries = int(cfg.get("BAIZE_LLM_MAX_RETRIES", "2"))
+        _retry_raw = cfg.get("BAIZE_LLM_RETRY_MAX")
+        if _retry_raw is None or str(_retry_raw).strip() == "":
+            _retry_raw = cfg.get("BAIZE_LLM_MAX_RETRIES", "3")
+        self.max_retries = max(0, int(_retry_raw))
+        self.retry_base_s = max(0.05, float(cfg.get("BAIZE_LLM_RETRY_BASE_S", "1.0") or "1.0"))
         self.rate = RateLimiter(
             int(cfg.get("BAIZE_RATE_LIMIT_RPM", "60")),
             int(cfg.get("BAIZE_RATE_LIMIT_TPM", "60000")),
@@ -778,7 +873,7 @@ class LLMClient:
         """
         p = (provider or "").lower()
         caps = {"stream": True, "tools": True}
-        if "deepseek" in p:
+        if "deepseek" in p or "anthropic" in p:
             caps["reasoning"] = True
         return caps
 
@@ -889,10 +984,12 @@ class LLMClient:
                     self.circuit_breaker.record_failure(cb_key)
                     obs.record_error("llm_errors")
                     obs.inc(f"llm_error_{type(exc).__name__}")
-                    with self._telemetry_lock:
-                        self._telemetry["retries"] = int(self._telemetry["retries"]) + 1
+                    if not _is_retryable_error(exc):
+                        break
                     if attempt < self.max_retries:
-                        time.sleep(1.5 * (attempt + 1))
+                        with self._telemetry_lock:
+                            self._telemetry["retries"] = int(self._telemetry["retries"]) + 1
+                        time.sleep(_compute_retry_delay(attempt, self.retry_base_s, exc))
         err_msg = (f"model call failed after {self.max_retries + 1} attempts across "
                    f"{len(self.models)} model(s): {type(last_err).__name__}: {last_err}")
         err_msg = re.sub(r"https?://[^\s\'\",]+", "<api-endpoint>", err_msg)

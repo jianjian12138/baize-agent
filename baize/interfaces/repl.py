@@ -63,6 +63,7 @@ Available Slash Commands:
   /browser [status|navigate|snapshot|close] Drive stateful CDP browser E2E pool (V47)
   /mobile [devices|verify] Probe Android ADB / iOS Simctl or run degraded verify (V47)
   /compose [status|up|logs|down] Control isolated Docker Compose test stack (V48)
+  /permissions [check <tool> <target>] Inspect or test allow/ask/deny permission rules (V49)
   /search <query>      Run persistent SQLite FTS5 + Embedding hybrid search (V42)
   /cost                Inspect session token usage and estimated cost
   /trace               Inspect step-by-step tool execution timeline & latency
@@ -596,6 +597,21 @@ class BaizeREPL:
             else:
                 res = mgr.status(ws)
             print(json.dumps(res, ensure_ascii=False, indent=2)[:2000])
+            return True
+
+        if cmd == "/permissions":
+            from ..governance.permissions import evaluate_tool_permission, load_permissions
+            parts = arg.strip().split(None, 2)
+            ws = self.cfg.get("BAIZE_WORKSPACE_DIR", ".")
+            if parts and parts[0].lower() == "check" and len(parts) >= 2:
+                tool_n = parts[1]
+                tgt = parts[2] if len(parts) >= 3 else ""
+                eval_args = {"command": tgt, "path": tgt, "url": tgt} if tgt else {}
+                dec = evaluate_tool_permission(tool_n, eval_args, workspace=ws, cfg=self.cfg).to_dict()
+                print(json.dumps(dec, ensure_ascii=False, indent=2))
+            else:
+                rs = load_permissions(ws, self.cfg).to_dict()
+                print(json.dumps(rs, ensure_ascii=False, indent=2))
             return True
 
         if cmd == "/traces":

@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .transport import JsonRpcError, Transport, StdioTransport, MemoryTransport
+from .transport import JsonRpcError, Transport, StdioTransport, MemoryTransport, StreamableHttpTransport
 
 PROTOCOL_VERSION = "2024-11-05"
 HANDSHAKE_TIMEOUT = 5.0  # seconds (design §3.5.4)
@@ -25,12 +25,15 @@ TOOL_CALL_TIMEOUT = 30.0  # seconds (design §3.5.4)
 
 @dataclass
 class MCPServerSpec:
-    """Deserialized ``mcp_server.json`` (design §4.2.1)."""
+    """Deserialized ``mcp_server.json`` (stdio or Streamable HTTP/SSE)."""
     name: str
-    command: str
+    command: str = ""
     args: list[str] = field(default_factory=list)
     env: dict = field(default_factory=dict)
     protocol_version: str = PROTOCOL_VERSION
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    transport_type: str = "stdio"
 
 
 @dataclass
@@ -38,6 +41,21 @@ class McpTool:
     name: str
     description: str
     input_schema: dict
+
+
+@dataclass
+class McpResource:
+    uri: str
+    name: str = ""
+    description: str = ""
+    mime_type: str = ""
+
+
+@dataclass
+class McpPrompt:
+    name: str
+    description: str = ""
+    arguments: list[dict] = field(default_factory=list)
 
 
 class MCPClient:
@@ -49,8 +67,10 @@ class MCPClient:
         self.spec = spec
         self._id = _id
         if transport is None:
-            transport = StdioTransport(spec.command, spec.args, spec.env or None,
-                                       timeout=HANDSHAKE_TIMEOUT)
+            if spec.url or spec.transport_type in ("http", "sse", "streamable_http"):
+                transport = StreamableHttpTransport(spec.url, headers=spec.headers or None, timeout=TOOL_CALL_TIMEOUT)
+            else:
+                transport = StdioTransport(spec.command, spec.args, spec.env or None, timeout=HANDSHAKE_TIMEOUT)
         self.transport = transport
         self._tools: list[McpTool] = []
 
@@ -59,9 +79,15 @@ class MCPClient:
                        transport: Transport | None = None) -> "MCPClient":
         raw = json.loads(_read_text(path))
         spec = MCPServerSpec(
-            name=raw["name"], command=raw["command"],
-            args=raw.get("args", []), env=raw.get("env", {}),
-            protocol_version=raw.get("protocol_version", PROTOCOL_VERSION))
+            name=raw["name"],
+            command=raw.get("command", ""),
+            args=raw.get("args", []),
+            env=raw.get("env", {}),
+            protocol_version=raw.get("protocol_version", PROTOCOL_VERSION),
+            url=raw.get("url", ""),
+            headers=raw.get("headers", {}),
+            transport_type=raw.get("transport_type", "http" if raw.get("url") else "stdio"),
+        )
         return cls(spec, transport=transport)
 
     # -- handshake --------------------------------------------------------
@@ -132,6 +158,63 @@ class MCPClient:
         parts = [c.get("text", "") for c in result.get("content", [])
                  if c.get("type") == "text"]
         return "\n".join(parts)
+
+    def list_resources(self) -> list[McpResource]:
+        self._id += 1
+        self.transport.send({"jsonrpc": "2.0", "id": self._id, "method": "resources/list", "params": {}})
+        resp = self.transport.recv()
+        if resp is None or "error" in resp:
+            raise JsonRpcError(f"MCP resources/list failed: {resp}")
+        raw_res = (resp.get("result") or {}).get("resources", [])
+        return [
+            McpResource(
+                uri=str(r.get("uri", "")),
+                name=str(r.get("name", "")),
+                description=str(r.get("description", "")),
+                mime_type=str(r.get("mimeType", "")),
+            )
+            for r in raw_res if isinstance(r, dict)
+        ]
+
+    def read_resource(self, uri: str) -> str:
+        self._id += 1
+        self.transport.send({"jsonrpc": "2.0", "id": self._id, "method": "resources/read", "params": {"uri": str(uri)}})
+        resp = self.transport.recv()
+        if resp is None or "error" in resp:
+            raise JsonRpcError(f"MCP resources/read '{uri}' failed: {resp}")
+        contents = (resp.get("result") or {}).get("contents", [])
+        parts: list[str] = []
+        for item in contents:
+            if isinstance(item, dict):
+                if "text" in item:
+                    parts.append(str(item["text"]))
+                elif "blob" in item:
+                    parts.append(f"[binary:{item.get('mimeType', 'application/octet-stream')} len={len(str(item['blob']))}]")
+        return "\n".join(parts)
+
+    def list_prompts(self) -> list[McpPrompt]:
+        self._id += 1
+        self.transport.send({"jsonrpc": "2.0", "id": self._id, "method": "prompts/list", "params": {}})
+        resp = self.transport.recv()
+        if resp is None or "error" in resp:
+            raise JsonRpcError(f"MCP prompts/list failed: {resp}")
+        raw_prompts = (resp.get("result") or {}).get("prompts", [])
+        return [
+            McpPrompt(
+                name=str(p.get("name", "")),
+                description=str(p.get("description", "")),
+                arguments=list(p.get("arguments") or []),
+            )
+            for p in raw_prompts if isinstance(p, dict)
+        ]
+
+    def get_prompt(self, name: str, arguments: dict | None = None) -> dict:
+        self._id += 1
+        self.transport.send({"jsonrpc": "2.0", "id": self._id, "method": "prompts/get", "params": {"name": str(name), "arguments": dict(arguments or {})}})
+        resp = self.transport.recv()
+        if resp is None or "error" in resp:
+            raise JsonRpcError(f"MCP prompts/get '{name}' failed: {resp}")
+        return dict(resp.get("result") or {})
 
     def register_into(self, registry, prefix: str | None = None) -> list[str]:
         """Wrap every discovered MCP tool as a :class:`baize.execution.tools.Tool` in the
@@ -350,6 +433,7 @@ def check_mcp_health(
     healthy = 0
     for sp in targets:
         name = str(sp.get("name") or sp.get("id") or "unnamed")
+        url = str(sp.get("url") or "").strip()
         cmd = str(sp.get("command") or "").strip()
         cmd_path = shutil.which(cmd) if cmd else None
         req_env = list(sp.get("required_env") or [])
@@ -361,8 +445,11 @@ def check_mcp_health(
                 missing_env.append(var)
 
         issues: list[str] = []
-        if not cmd:
-            issues.append("missing command")
+        if url:
+            if not url.startswith(("http://", "https://")):
+                issues.append(f"invalid url '{url}'")
+        elif not cmd:
+            issues.append("missing command or url")
         elif not cmd_path:
             issues.append(f"binary '{cmd}' not found on PATH")
         if missing_env:
@@ -376,6 +463,9 @@ def check_mcp_health(
                     command=cmd_path or cmd,
                     args=list(sp.get("args") or []),
                     env={k: v for k, v in (sp.get("env") or {}).items() if not str(v).startswith("${")},
+                    url=url,
+                    headers=dict(sp.get("headers") or {}),
+                    transport_type=str(sp.get("transport_type") or ("http" if url else "stdio")),
                 )
                 cli = MCPClient(spec_obj)
                 try:
