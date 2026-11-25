@@ -1,0 +1,34 @@
+{
+  "service_name": "flashcart-demo",
+  "isolate_per_scenario": true,
+  "target": {
+    "mode": "command",
+    "start_cmd": [
+      "{python}",
+      "-m",
+      "demo_sut.server",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}",
+      "--db",
+      "{db_path}"
+    ],
+    "cwd": ".",
+    "db_path": "{tmp_dir}/flashcart.sqlite3",
+    "health_path": "/health",
+    "health_timeout_s": 10.0
+  },
+  "default_headers": {
+    "X-Harness-Client": "baize-test-harness"
+  },
+  "global_oracles": [
+    "demo_sut.oracles:check_inventory_conservation"
+  ],
+  "forbidden_log_markers": [
+    "Traceback (most recent call last)",
+    "INTERNAL_ERROR",
+    " 500 "
+  ],
+  "scenarios_file": "scenarios.example.json"
+}

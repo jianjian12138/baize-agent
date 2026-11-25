@@ -1,0 +1,17 @@
+{
+  "deny": [
+    "Read(.env*)",
+    "Edit(.env*)",
+    "Write(.env*)",
+    "Bash(rm -rf *)"
+  ],
+  "ask": [
+    "Bash(git push *)"
+  ],
+  "allow": [
+    "Bash(python3 *runner.py*)",
+    "Bash(pytest *)",
+    "Bash(node --check *)",
+    "Bash(docker compose *)"
+  ]
+}

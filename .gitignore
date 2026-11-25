@@ -49,3 +49,4 @@ coverage.xml
 # and an endpoint must not be able to add tracked files to the repository.
 tests/generated/
 .baize_checkpoints/
+.artifacts/

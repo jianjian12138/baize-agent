@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>FlashCart Demo SUT</title></head>
+<body>
+  <main role="main" aria-label="FlashCart Storefront">
+    <h1>FlashCart Demo SUT</h1>
+    <div id="error-banner" role="alert" hidden></div>
+    <form id="order-form" aria-label="Create Order Form">
+      <select id="sku-select" aria-label="Product SKU"></select>
+      <input id="qty-input" type="number" min="1" value="1" aria-label="Order Quantity" />
+      <button id="submit-order" type="submit" aria-label="Place Order">Place Order</button>
+    </form>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

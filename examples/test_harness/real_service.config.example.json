@@ -1,0 +1,74 @@
+{
+  "service_name": "my-real-business-api",
+  "isolate_per_scenario": false,
+  "target": {
+    "mode": "external",
+    "base_url": "${TEST_BASE_URL:-http://127.0.0.1:8080}",
+    "health_path": "/health",
+    "health_timeout_s": 15.0
+  },
+  "default_headers": {
+    "Authorization": "Bearer ${TEST_API_TOKEN:-}",
+    "X-Request-Source": "baize-test-harness"
+  },
+  "global_oracles": [],
+  "scenarios": [
+    {
+      "id": "SMOKE_01_health",
+      "suite": "smoke",
+      "description": "Verify real service health endpoint",
+      "steps": [
+        {
+          "name": "health",
+          "type": "http",
+          "method": "GET",
+          "path": "/health",
+          "expect": {
+            "status": 200,
+            "max_latency_ms": 1000
+          }
+        }
+      ]
+    },
+    {
+      "id": "E2E_01_create_and_fetch",
+      "suite": "e2e",
+      "description": "Replace with your real create -> query -> cleanup workflow",
+      "steps": [
+        {
+          "name": "create_resource",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/v1/items",
+          "json": {
+            "name": "harness-{{uuid}}"
+          },
+          "save": {
+            "item_id": "$.id"
+          },
+          "expect": {
+            "status": [
+              200,
+              201
+            ],
+            "json_exists": [
+              "$.id"
+            ]
+          }
+        },
+        {
+          "name": "query_resource",
+          "type": "http",
+          "method": "GET",
+          "path": "/api/v1/items/{{item_id}}",
+          "expect": {
+            "status": 200,
+            "json_equals": {
+              "$.id": "{{item_id}}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

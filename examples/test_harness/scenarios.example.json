@@ -1,0 +1,231 @@
+{
+  "scenarios": [
+    {
+      "id": "S01_health_and_catalog",
+      "suite": "smoke",
+      "description": "Verify service liveness and initial catalog schema",
+      "steps": [
+        {
+          "name": "healthcheck",
+          "type": "http",
+          "method": "GET",
+          "path": "/health",
+          "expect": {
+            "status": 200,
+            "json_equals": {
+              "$.status": "ok"
+            },
+            "max_latency_ms": 1000
+          }
+        },
+        {
+          "name": "list_products",
+          "type": "http",
+          "method": "GET",
+          "path": "/api/products",
+          "expect": {
+            "status": 200,
+            "json_min_length": {
+              "$.products": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "S02_order_and_stock_conservation",
+      "suite": "e2e",
+      "description": "Create order, assert exact total_cents, and verify inventory conservation oracle",
+      "steps": [
+        {
+          "name": "create_order",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders",
+          "json": {
+            "sku": "sku-laptop",
+            "qty": 2,
+            "idempotency_key": "idem-s02-{{uuid}}"
+          },
+          "expect": {
+            "status": 201,
+            "json_equals": {
+              "$.order.sku": "sku-laptop",
+              "$.order.qty": 2,
+              "$.order.total_cents": 259800,
+              "$.order.status": "confirmed",
+              "$.idempotent_replay": false
+            }
+          }
+        },
+        {
+          "name": "sql_non_negative_stock",
+          "type": "sql_invariant",
+          "checks": [
+            {
+              "name": "no_negative_stock",
+              "query": "SELECT sku FROM products WHERE stock < 0",
+              "expect_zero_rows": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S03_idempotency_replay",
+      "suite": "e2e",
+      "description": "Replay same idempotency_key must return original order without double deduction",
+      "steps": [
+        {
+          "name": "first_order",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders",
+          "json": {
+            "sku": "sku-keyboard",
+            "qty": 3,
+            "idempotency_key": "idem-s03-fixed"
+          },
+          "save": {
+            "order_id": "$.order.id"
+          },
+          "expect": {
+            "status": 201,
+            "json_equals": {
+              "$.idempotent_replay": false
+            }
+          }
+        },
+        {
+          "name": "replay_order",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders",
+          "json": {
+            "sku": "sku-keyboard",
+            "qty": 3,
+            "idempotency_key": "idem-s03-fixed"
+          },
+          "expect": {
+            "status": 200,
+            "json_equals": {
+              "$.idempotent_replay": true,
+              "$.order.id": "{{order_id}}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "S04_cancel_and_stock_restoration",
+      "suite": "e2e",
+      "description": "Cancel order restores stock exactly once even on repeated cancel",
+      "steps": [
+        {
+          "name": "create_order",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders",
+          "json": {
+            "sku": "sku-monitor",
+            "qty": 4,
+            "idempotency_key": "idem-s04-cancel"
+          },
+          "save": {
+            "order_id": "$.order.id"
+          },
+          "expect": {
+            "status": 201
+          }
+        },
+        {
+          "name": "cancel_once",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders/{{order_id}}/cancel",
+          "expect": {
+            "status": 200,
+            "json_equals": {
+              "$.order.status": "cancelled",
+              "$.already_cancelled": false
+            }
+          }
+        },
+        {
+          "name": "cancel_twice_idempotent",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders/{{order_id}}/cancel",
+          "expect": {
+            "status": 200,
+            "json_equals": {
+              "$.already_cancelled": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "S05_oversell_and_invalid_input_guards",
+      "suite": "fault",
+      "description": "Reject qty=0 and prevent oversell under 8 concurrent orders on 5-stock SKU",
+      "steps": [
+        {
+          "name": "reject_zero_qty",
+          "type": "http",
+          "method": "POST",
+          "path": "/api/orders",
+          "json": {
+            "sku": "sku-monitor",
+            "qty": 0,
+            "idempotency_key": "idem-zero"
+          },
+          "expect": {
+            "status": 400,
+            "json_equals": {
+              "$.error": "INVALID_QTY"
+            }
+          }
+        },
+        {
+          "name": "concurrent_oversell_stress",
+          "type": "concurrent_http",
+          "count": 8,
+          "workers": 8,
+          "method": "POST",
+          "path": "/api/orders",
+          "json": {
+            "sku": "sku-monitor",
+            "qty": 1,
+            "idempotency_key": "idem-conc-{{idx}}"
+          },
+          "expect_status_counts": {
+            "201": 5,
+            "409": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "S06_storefront_ui_and_aria_contract",
+      "suite": "e2e",
+      "description": "Verify HTML/ARIA accessibility landmarks and storefront JS payload validation",
+      "steps": [
+        {
+          "name": "ui_aria_and_js",
+          "type": "ui_contract",
+          "path": "/",
+          "required_markers": [
+            "role=\"main\"",
+            "role=\"alert\"",
+            "aria-label=\"Create Order Form\"",
+            "aria-label=\"Order Quantity\"",
+            "aria-label=\"Place Order\""
+          ],
+          "js_file": "demo_sut/static/app.js",
+          "node_eval": "const m = require(JS_FILE); if (!m.buildOrderPayload('sku-laptop', 2, 't').ok) process.exit(1); if (m.buildOrderPayload('sku-laptop', 0, 't').ok !== false) process.exit(2); if (m.formatPrice(129900) !== '$1299.00') process.exit(3);"
+        }
+      ]
+    }
+  ]
+}
