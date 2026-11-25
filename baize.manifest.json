@@ -1,6 +1,6 @@
 {
   "project": "baize-agent",
-  "version": "49.0.0",
+  "version": "49.0.1",
   "phases": [
     {
       "id": "V68",
@@ -700,7 +700,8 @@
         "baize/interfaces/repl.py",
         "tests/core/test_v49_context_isolation_and_file_locks.py",
         "tests/governance/test_v49_permissions_and_multifile_eval.py",
-        "tests/execution/test_v49_pty_aria_retry_and_mcp_http.py"
+        "tests/execution/test_v49_pty_aria_retry_and_mcp_http.py",
+        "tests/governance/test_v49_dogfood_fixes.py"
       ]
     }
   ]

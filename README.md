@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🏛️ 白泽引擎 (Baize Agent) — V49.0.0 Zenith
+# 🏛️ 白泽引擎 (Baize Agent) — V49.0.1 Zenith
 
 **零第三方运行依赖 · 强物理门禁 (`NO FAKE DONE`) · 8 域 58 模块的工业级纯 Python 自治工程运行时**
 
-[![Version](https://img.shields.io/badge/version-V49.0.0--Zenith-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1376%2F1376%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
+[![Version](https://img.shields.io/badge/version-V49.0.1--Zenith-orange?style=flat-square)](baize/__init__.py)
+[![Tests](https://img.shields.io/badge/tests-1381%2F1381%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)

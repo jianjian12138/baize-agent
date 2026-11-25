@@ -37,7 +37,7 @@ class DoctorReport:
         self.results.append(CheckResult(name, ok, required, detail))
 
 
-def run_checks(cfg: dict | None = None) -> DoctorReport:
+def run_checks(cfg: dict | None = None, *, fix: bool = False) -> DoctorReport:
     cfg = cfg or load_config()
     report = DoctorReport()
 
@@ -48,17 +48,35 @@ def run_checks(cfg: dict | None = None) -> DoctorReport:
         detail=f"found {sys.version_info.major}.{sys.version_info.minor}",
     )
 
-    # 2. .env exists (copy from .env.example if missing)
-    env_ok = ENV_FILE.exists()
-    report.add(
-        ".env present", env_ok, required=False,
-        detail="copy .env.example to .env and adjust" if not env_ok else str(ENV_FILE),
-    )
+    # 2. .env exists in active workspace OR package root
+    ws_raw = str(cfg.get("BAIZE_WORKSPACE_DIR", ".") or ".")
+    ws_env = Path(ws_raw).resolve() / ".env"
+    if ws_env.is_file():
+        env_ok, env_detail = True, str(ws_env)
+    elif ENV_FILE.exists():
+        env_ok, env_detail = True, str(ENV_FILE)
+    else:
+        env_ok, env_detail = False, "copy .env.example to .env in workspace or repo root and adjust"
+    report.add(".env present", env_ok, required=False, detail=env_detail)
 
-    # 3. Core directories exist
+    # 3. Core directories exist (auto-create when fix=True)
     for key in ("BAIZE_PERSISTENCE_DIR", "BAIZE_PROJECTS_DIR", "BAIZE_ASSETS_DIR"):
         p = Path(cfg[key])
-        report.add(f"dir {key}", p.is_dir(), required=True, detail=str(p))
+        created = False
+        if fix and not p.is_dir():
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+                created = True
+            except OSError:
+                created = False
+        exists = p.is_dir()
+        if exists and created:
+            detail = f"{p} (created via --fix)"
+        elif exists:
+            detail = str(p)
+        else:
+            detail = f"{p} (missing — run 'baize doctor --fix' or mkdir -p)"
+        report.add(f"dir {key}", exists, required=True, detail=detail)
 
     # 4. Persistence directory is writable (real write probe)
     persistence = Path(cfg["BAIZE_PERSISTENCE_DIR"])
@@ -69,7 +87,11 @@ def run_checks(cfg: dict | None = None) -> DoctorReport:
                 writable = True
         except OSError:
             writable = False
-    report.add("persistence writable", writable, required=True, detail=str(persistence))
+    p_detail = str(persistence) if writable else (
+        f"{persistence} (directory missing — run 'baize doctor --fix')"
+        if not persistence.is_dir() else f"{persistence} (not writable)"
+    )
+    report.add("persistence writable", writable, required=True, detail=p_detail)
 
     # 5. Skill libraries reachable (required only if configured)
     libs = skill_library_paths(cfg)

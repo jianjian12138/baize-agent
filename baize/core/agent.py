@@ -466,6 +466,29 @@ class Agent:
         self.on_event(event, detail)
         return self.hooks.dispatch(event, {"detail": detail, **payload})
 
+    def _record_security_audit(
+        self,
+        event_type: str,
+        target: str,
+        outcome: str = "denied",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist blocked/denied security gate events into the tamper-evident audit chain."""
+        try:
+            from ..governance.dlp import get_audit_ledger
+            payload = {"session_id": self.session.id}
+            if details:
+                payload.update(details)
+            get_audit_ledger(self.cfg).append(
+                event_type,
+                actor=self.role,
+                target=target,
+                outcome=outcome,
+                details=payload,
+            )
+        except Exception:
+            pass
+
     def _tool_permitted(self, name: str, args: dict) -> tuple[bool, str]:
         """Plan Mode + autonomy gate (fail-closed). Returns (allow, reason)."""
         if self.plan_mode and name not in READONLY_TOOLS:
@@ -930,6 +953,7 @@ class Agent:
                 if not _spec_ok:
                     obs.inc("tool_blocked_spec_gate")
                     self._emit("spec_locked", f"{name}: {_spec_reason}")
+                    self._record_security_audit("spec_gate_locked", name, outcome="denied", details={"reason": _spec_reason})
                     self.session.append({
                         "role": "tool",
                         "tool_call_id": call.get("id", ""),
@@ -952,6 +976,16 @@ class Agent:
                 if _perm_action == "deny":
                     obs.inc("tool_blocked_permission")
                     self._emit("permission_denied", f"{name}: {_perm_reason}")
+                    self._record_security_audit(
+                        "permission_denied",
+                        name,
+                        outcome="denied",
+                        details={
+                            "reason": _perm_reason,
+                            "matched_rule": getattr(_p_dec, "matched_rule", "") if "_p_dec" in locals() else "",
+                            "rule_target": getattr(_p_dec, "target", "") if "_p_dec" in locals() else "",
+                        },
+                    )
                     self.session.append({
                         "role": "tool",
                         "tool_call_id": call.get("id", ""),
@@ -966,6 +1000,7 @@ class Agent:
                 if not permit:
                     obs.inc("tool_blocked_policy")
                     self._emit("tool_blocked", f"{name}: {reason}")
+                    self._record_security_audit("policy_blocked", name, outcome="denied", details={"reason": reason})
                     self.session.append({
                         "role": "tool",
                         "tool_call_id": call.get("id", ""),
@@ -983,6 +1018,7 @@ class Agent:
                 if _perm_action == "ask" and _active_apr_cb is None and not _yolo:
                     obs.inc("tool_approval_denied")
                     self._emit("approval_denied", f"{name}: {_perm_reason} (no interactive approver attached)")
+                    self._record_security_audit("approval_denied", name, outcome="denied", details={"reason": f"{_perm_reason} (no interactive approver attached)"})
                     self.session.append({
                         "role": "tool",
                         "tool_call_id": call.get("id", ""),
@@ -1009,6 +1045,7 @@ class Agent:
                         deny_reason = getattr(apr_dec, "reason", "") or "denied by user"
                         obs.inc("tool_approval_denied")
                         self._emit("approval_denied", f"{name}: {deny_reason}")
+                        self._record_security_audit("approval_denied", name, outcome="denied", details={"reason": deny_reason})
                         self.session.append({
                             "role": "tool",
                             "tool_call_id": call.get("id", ""),

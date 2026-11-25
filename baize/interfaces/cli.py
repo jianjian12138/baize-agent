@@ -45,8 +45,8 @@ from ..core.plugin import registry
 from .ui import ProgressUI
 
 
-def cmd_doctor(_args) -> int:
-    report = doctor_mod.run_checks()
+def cmd_doctor(args) -> int:
+    report = doctor_mod.run_checks(fix=bool(getattr(args, "fix", False)))
     print(doctor_mod.format_report(report))
     return 0 if report.passed else 1
 
@@ -933,7 +933,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"baize {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("doctor", help="run environment checks")
+    doc_p = sub.add_parser("doctor", help="run environment checks")
+    doc_p.add_argument("--fix", action="store_true", help="auto-create missing workspace/persistence directories")
 
     ip = sub.add_parser("index", help="skill index operations")
     ip.add_argument("action", choices=["build", "search"])
@@ -1444,8 +1445,13 @@ def cmd_diagnose(args) -> int:
 
 
 def cmd_impact(args) -> int:
+    from pathlib import Path
     from ..codebase.impact import analyze_test_impact
-    res = analyze_test_impact(args.target)
+    from ..core.config import load_config
+    cfg = load_config()
+    ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+    root_dir = str(Path(ws).resolve()) if ws and ws != "." else str(Path.cwd().resolve())
+    res = analyze_test_impact(args.target, root_dir=root_dir, cfg=cfg)
     if args.json:
         print(json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
     else:
@@ -1454,14 +1460,24 @@ def cmd_impact(args) -> int:
         import subprocess
         cmd = res.recommended_command
         print(f"\n🚀 [Executing impacted tests] {cmd}")
-        p = subprocess.run(cmd, shell=True)
+        p = subprocess.run(cmd, shell=True, cwd=root_dir)
         return p.returncode
     return 0
 
 
 def cmd_blast(args) -> int:
+    from pathlib import Path
     from ..codebase.impact import analyze_blast_radius
-    rep = analyze_blast_radius(target_symbol=args.target, target_file=args.file)
+    from ..core.config import load_config
+    cfg = load_config()
+    ws = cfg.get("BAIZE_WORKSPACE_DIR", ".")
+    root_dir = str(Path(ws).resolve()) if ws and ws != "." else str(Path.cwd().resolve())
+    rep = analyze_blast_radius(
+        target_symbol=args.target,
+        target_file=args.file,
+        workspace_dir=root_dir,
+        cfg=cfg,
+    )
     if args.json:
         print(json.dumps(rep.to_dict(), indent=2, ensure_ascii=False))
     else:
@@ -1469,7 +1485,7 @@ def cmd_blast(args) -> int:
         if warning:
             print(warning)
         else:
-            print(f"[💥 BLAST RADIUS] Symbol '{args.target}' has {len(rep.direct_callers)} direct callers across {len(rep.impacted_files)} external files. Risk: {rep.risk_level}.")
+            print(f"[💥 BLAST RADIUS] Target '{args.target}' has {len(rep.direct_callers)} direct callers across {len(rep.impacted_files)} external files. Risk: {rep.risk_level}.")
     return 0
 
 

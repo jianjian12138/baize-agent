@@ -48,7 +48,7 @@ _DEFAULTS = {
     "BAIZE_MODEL_BASE_URL": "",          # OpenAI-compatible endpoint base
     "BAIZE_MODEL_API_KEY": "",
     "BAIZE_MODEL_NAME": "",
-    "BAIZE_LLM_MAX_RETRIES": "2",
+    "BAIZE_LLM_MAX_RETRIES": "3",            # deprecated alias for BAIZE_LLM_RETRY_MAX
     "BAIZE_AGENT_MAX_STEPS": "24",       # hard cap per agent run
     "BAIZE_WORKSPACE_DIR": str(ROOT),    # tool sandbox root
     "BAIZE_ALLOW_OUTSIDE_WORKSPACE": "0",

@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🏛️ Baize Agent — V49.0.0 Zenith
+# 🏛️ Baize Agent — V49.0.1 Zenith
 
 **Zero Runtime Dependencies · Physical Verification Gates (`NO FAKE DONE`) · 8-Domain, 58-Module Industrial Pure-Python Autonomous Engineering Runtime**
 
-[![Version](https://img.shields.io/badge/version-V49.0.0--Zenith-orange?style=flat-square)](baize/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1376%2F1376%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
+[![Version](https://img.shields.io/badge/version-V49.0.1--Zenith-orange?style=flat-square)](baize/__init__.py)
+[![Tests](https://img.shields.io/badge/tests-1381%2F1381%20passed%20(100%25)-brightgreen?style=flat-square)](tests/)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20third--party%20(stdlib%20only)-blue?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)

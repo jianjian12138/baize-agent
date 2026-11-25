@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -716,9 +717,22 @@ class LLMClient:
                  stream_transport: StreamTransport | None = None):
         cfg = cfg or load_config()
         self.cfg = cfg
-        _retry_raw = cfg.get("BAIZE_LLM_RETRY_MAX")
-        if _retry_raw is None or str(_retry_raw).strip() == "":
-            _retry_raw = cfg.get("BAIZE_LLM_MAX_RETRIES", "3")
+        # Honor canonical BAIZE_LLM_RETRY_MAX; fall back cleanly to deprecated alias
+        # BAIZE_LLM_MAX_RETRIES when the caller explicitly overrides only the legacy key.
+        _env_new = os.environ.get("BAIZE_LLM_RETRY_MAX", "").strip()
+        _env_old = os.environ.get("BAIZE_LLM_MAX_RETRIES", "").strip()
+        _cfg_new = str(cfg.get("BAIZE_LLM_RETRY_MAX", "") or "").strip()
+        _cfg_old = str(cfg.get("BAIZE_LLM_MAX_RETRIES", "") or "").strip()
+        if _env_new:
+            _retry_raw = _env_new
+        elif _cfg_new and (_cfg_new != "3" or not _cfg_old or _cfg_old == "3"):
+            _retry_raw = _cfg_new
+        elif _env_old:
+            _retry_raw = _env_old
+        elif _cfg_old:
+            _retry_raw = _cfg_old
+        else:
+            _retry_raw = "3"
         self.max_retries = max(0, int(_retry_raw))
         self.retry_base_s = max(0.05, float(cfg.get("BAIZE_LLM_RETRY_BASE_S", "1.0") or "1.0"))
         self.rate = RateLimiter(

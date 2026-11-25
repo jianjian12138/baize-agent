@@ -143,6 +143,44 @@ class BlastRadiusReport:
         return "\n".join(lines)
 
 
+_SOURCE_FILE_EXTS = (
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java",
+    ".dart", ".kt", ".kts", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
+)
+
+
+def _is_file_like_target(target: str) -> bool:
+    t = (target or "").strip()
+    if not t:
+        return False
+    return t.endswith(_SOURCE_FILE_EXTS) or "/" in t or "\\" in t
+
+
+def _resolve_impact_root(
+    root_dir: str | Path | None = None,
+    cfg: dict | None = None,
+) -> Path:
+    """Resolve the active workspace root for blast-radius & TIA analysis."""
+    if root_dir is not None and str(root_dir).strip():
+        return Path(root_dir).resolve()
+    try:
+        from ..core.runtime_ctx import current_workspace
+        ws = current_workspace(cfg)
+        if ws and ws.is_dir():
+            return ws.resolve()
+    except Exception:
+        pass
+    env_ws = (cfg or {}).get("BAIZE_WORKSPACE_DIR") if isinstance(cfg, dict) else None
+    if not env_ws:
+        env_ws = os.environ.get("BAIZE_WORKSPACE_DIR", "")
+    if env_ws and str(env_ws).strip() and str(env_ws).strip() != ".":
+        p = Path(str(env_ws)).resolve()
+        if p.is_dir():
+            return p
+    cwd = Path.cwd().resolve()
+    return cwd if cwd.is_dir() else ROOT
+
+
 class BlastRadiusAnalyzer:
     """Analyzes symbol usage and calculates call-hierarchy blast radius."""
 
@@ -154,7 +192,7 @@ class BlastRadiusAnalyzer:
         if graph is not None:
             self.graph = graph
         else:
-            root_path = Path(workspace_root) if workspace_root else ROOT
+            root_path = _resolve_impact_root(workspace_root)
             self.graph = SymbolGraph(root_dir=root_path)
             self.graph.build()
         self._inverted_calls: dict[str, list[CallerReference]] = collections.defaultdict(list)
@@ -181,14 +219,84 @@ class BlastRadiusAnalyzer:
 
         self._indexed = True
 
+    def analyze_file(self, target_file: str) -> BlastRadiusReport:
+        """Aggregate blast radius across all symbols defined in a source file."""
+        t0 = time.perf_counter()
+        self.build_inverted_index()
+        norm_target = target_file.strip().replace("\\", "/")
+        if norm_target.startswith("./"):
+            norm_target = norm_target[2:]
+        if self.graph.root_dir:
+            try:
+                p = Path(target_file)
+                if not p.is_absolute():
+                    p = (self.graph.root_dir / p).resolve()
+                norm_target = str(p.relative_to(self.graph.root_dir.resolve())).replace("\\", "/")
+            except Exception:
+                pass
+
+        # Match normalized path or suffix match in graph.file_symbols
+        nodes = self.graph.file_symbols.get(norm_target)
+        matched_file = norm_target
+        if nodes is None:
+            for fp, sym_list in self.graph.file_symbols.items():
+                fp_norm = fp.replace("\\", "/")
+                if fp_norm == norm_target or fp_norm.endswith("/" + norm_target):
+                    nodes = sym_list
+                    matched_file = fp_norm
+                    break
+        nodes = nodes or []
+
+        seen_direct: set[tuple[str, int, str]] = set()
+        direct: list[CallerReference] = []
+        transitive_set: set[str] = set()
+        defined_names = {n.name for n in nodes} | {n.name.split(".")[-1] for n in nodes}
+
+        for node in nodes:
+            simple_name = node.name.split(".")[-1]
+            for r in self._inverted_calls.get(simple_name, []):
+                r_fp = r.file_path.replace("\\", "/")
+                if r_fp == matched_file:
+                    continue
+                key = (r_fp, r.line_number, r.caller_symbol)
+                if key not in seen_direct:
+                    seen_direct.add(key)
+                    direct.append(r)
+                for tr in self._inverted_calls.get(r.caller_symbol.split(".")[-1], []):
+                    if tr.caller_symbol not in defined_names and tr.caller_symbol != r.caller_symbol:
+                        transitive_set.add(tr.caller_symbol)
+
+        impacted_files = sorted({c.file_path.replace("\\", "/") for c in direct if c.file_path.replace("\\", "/") != matched_file})
+        caller_count = len(direct)
+        if caller_count == 0:
+            risk = "LOW"
+        elif caller_count < 4 and len(impacted_files) <= 1:
+            risk = "LOW"
+        elif caller_count < 10 and len(impacted_files) <= 3:
+            risk = "MEDIUM"
+        elif caller_count < 25 or len(impacted_files) <= 6:
+            risk = "HIGH"
+        else:
+            risk = "CRITICAL"
+
+        return BlastRadiusReport(
+            target_symbol=matched_file,
+            target_file=matched_file,
+            direct_callers=direct,
+            transitive_callers=sorted(transitive_set),
+            impacted_files=impacted_files,
+            risk_level=risk,
+            latency_ms=(time.perf_counter() - t0) * 1000.0,
+        )
+
     def analyze_symbol(self, symbol_name: str, target_file: str = "") -> BlastRadiusReport:
-        """Compute direct and transitive callers for a specific symbol."""
+        """Compute direct and transitive callers for a specific symbol (or source file)."""
+        # If caller passed a bare file path with no symbol, expand all symbols in that file
+        if _is_file_like_target(symbol_name) and not target_file:
+            return self.analyze_file(symbol_name)
         # Detect if caller passed (file, symbol) instead of (symbol, file)
-        if ("." in symbol_name or "/" in symbol_name or "\\" in symbol_name) and (
-            symbol_name.endswith((".py", ".ts", ".js", ".go", ".rs", ".java")) or "/" in symbol_name or "\\" in symbol_name
-        ):
-            if target_file and not (target_file.endswith((".py", ".ts", ".js", ".go", ".rs", ".java")) or "/" in target_file or "\\" in target_file):
-                symbol_name, target_file = target_file, symbol_name
+        if _is_file_like_target(symbol_name) and target_file and not _is_file_like_target(target_file):
+            symbol_name, target_file = target_file, symbol_name
 
         t0 = time.perf_counter()
         self.build_inverted_index()
@@ -324,8 +432,9 @@ def analyze_blast_radius(
     workspace_dir: str | Path | None = None,
     cfg: dict | None = None,
 ) -> BlastRadiusReport:
-    """Convenience helper to analyze blast radius for a symbol."""
-    graph = get_cached_symbol_graph(root_dir=workspace_dir, cfg=cfg)
+    """Convenience helper to analyze blast radius for a symbol or source file."""
+    resolved_root = _resolve_impact_root(workspace_dir, cfg=cfg)
+    graph = get_cached_symbol_graph(root_dir=resolved_root, cfg=cfg)
     analyzer = BlastRadiusAnalyzer(graph)
     return analyzer.analyze_symbol(target_symbol, target_file=target_file)
 
@@ -394,7 +503,7 @@ class TestImpactMatrix:
     __test__ = False
 
     def __init__(self, root_dir: str | Path | None = None):
-        self.root_dir = Path(root_dir).resolve() if root_dir else ROOT
+        self.root_dir = _resolve_impact_root(root_dir)
         self._test_files: list[str] = []
         # file_path -> list[imported_module_name]
         self._test_imports: dict[str, list[str]] = collections.defaultdict(list)
@@ -645,11 +754,13 @@ class TestImpactMatrix:
 def analyze_test_impact(
     target: str,
     root_dir: str | Path | None = None,
+    cfg: dict | None = None,
 ) -> TestImpactResult:
-    """Analyze impacted tests for a file path or symbol name."""
-    matrix = TestImpactMatrix(root_dir=root_dir)
+    """Analyze impacted tests for a file path or symbol name in the active workspace."""
+    resolved_root = _resolve_impact_root(root_dir, cfg=cfg)
+    matrix = TestImpactMatrix(root_dir=resolved_root)
     target_clean = target.strip()
-    if target_clean.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".dart", ".c", ".cpp")) or "/" in target_clean or "\\" in target_clean:
+    if _is_file_like_target(target_clean):
         return matrix.get_impacted_tests(changed_files=[target_clean])
     return matrix.get_impacted_tests(changed_symbols=[target_clean])
 
